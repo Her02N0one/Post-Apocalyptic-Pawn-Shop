@@ -1,0 +1,179 @@
+# data/items.toml — Item templates
+# Each top-level key is an item ID.
+# Top-level fields: type, style (melee/ranged), damage, defense, reach, heal
+# Ranged weapons also use: proj_speed, accuracy (0-1), range, proj_char, proj_color
+# cooldown: seconds between attacks (default 0.25 melee, 0.4 ranged)
+# knockback: force multiplier on hit (default 3.0)
+# crit_chance: 0-1 critical hit probability (default 0.1)
+# crit_mult: critical damage multiplier (default 1.5)
+# Sub-tables [id.identity] and [id.sprite] map to ECS components.
+
+# ── Melee Weapons ────────────────────────────────────────────────────
+
+[knife]
+type     = "weapon"
+style    = "melee"
+damage   = 12.0
+reach    = 1.2
+cooldown = 0.2
+knockback = 2.0
+crit_chance = 0.15
+crit_mult = 2.0
+[knife.identity]
+name = "Knife"
+kind = "item"
+[knife.sprite]
+char  = "k"
+color = [200, 200, 210]
+
+[hoe]
+type     = "weapon"
+style    = "melee"
+damage   = 8.0
+reach    = 1.5
+cooldown = 0.35
+knockback = 4.0
+[hoe.identity]
+name = "Hoe"
+kind = "item"
+[hoe.sprite]
+char  = "h"
+color = [140, 100, 60]
+
+[bat]
+type     = "weapon"
+style    = "melee"
+damage   = 14.0
+reach    = 1.6
+cooldown = 0.3
+knockback = 5.0
+[bat.identity]
+name = "Baseball Bat"
+kind = "item"
+[bat.sprite]
+char  = "/"
+color = [170, 130, 80]
+
+# ── Ranged Weapons ───────────────────────────────────────────────────
+
+[pistol]
+type       = "weapon"
+style      = "ranged"
+damage     = 20.0
+reach      = 2.0
+proj_speed = 16.0
+accuracy   = 0.85
+range      = 12.0
+cooldown   = 0.35
+proj_char  = "."
+proj_color = [255, 255, 150]
+[pistol.identity]
+name = "Pistol"
+kind = "item"
+[pistol.sprite]
+char  = "p"
+color = [160, 160, 170]
+
+[rifle]
+type       = "weapon"
+style      = "ranged"
+damage     = 35.0
+reach      = 2.0
+proj_speed = 22.0
+accuracy   = 0.92
+range      = 18.0
+cooldown   = 0.7
+proj_char  = "-"
+proj_color = [255, 220, 100]
+[rifle.identity]
+name = "Hunting Rifle"
+kind = "item"
+[rifle.sprite]
+char  = "r"
+color = [120, 100, 80]
+
+[shotgun]
+type       = "weapon"
+style      = "ranged"
+damage     = 12.0
+reach      = 1.5
+proj_speed = 14.0
+accuracy   = 0.6
+range      = 6.0
+cooldown   = 0.55
+pellets    = 5
+proj_char  = "*"
+proj_color = [255, 200, 100]
+knockback  = 4.5
+[shotgun.identity]
+name = "Shotgun"
+kind = "item"
+[shotgun.sprite]
+char  = "S"
+color = [140, 120, 100]
+
+# ── Consumables ──────────────────────────────────────────────────────
+
+[canned_beans]
+type = "consumable"
+heal = 15.0
+food_value = 30.0
+[canned_beans.identity]
+name = "Canned Beans"
+kind = "item"
+[canned_beans.sprite]
+char  = "b"
+color = [200, 150, 50]
+
+[dried_meat]
+type = "consumable"
+heal = 10.0
+food_value = 20.0
+[dried_meat.identity]
+name = "Dried Meat"
+kind = "item"
+[dried_meat.sprite]
+char  = "m"
+color = [180, 80, 80]
+
+[stew]
+type = "consumable"
+heal = 20.0
+food_value = 45.0
+[stew.identity]
+name = "Communal Stew"
+kind = "item"
+[stew.sprite]
+char  = "s"
+color = [180, 120, 60]
+
+[ration]
+type = "consumable"
+heal = 5.0
+food_value = 15.0
+[ration.identity]
+name = "Daily Ration"
+kind = "item"
+[ration.sprite]
+char  = "r"
+color = [160, 140, 100]
+
+[bandages]
+type = "consumable"
+heal = 25.0
+[bandages.identity]
+name = "Bandages"
+kind = "item"
+[bandages.sprite]
+char  = "+"
+color = [255, 200, 200]
+
+[antibiotics]
+type = "consumable"
+heal = 40.0
+[antibiotics.identity]
+name = "Antibiotics"
+kind = "item"
+[antibiotics.sprite]
+char  = "+"
+color = [100, 255, 100]

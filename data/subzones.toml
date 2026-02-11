@@ -1,0 +1,194 @@
+# data/subzones.toml — World topology for the simulation layer.
+#
+# 3 zones: settlement, road, ruins
+# 15 subzone nodes with cross-zone connections.
+#
+# Zone ↔ Zone teleporter links:
+#   settlement/gate  ←→  road/settlement_road
+#   road/ruins_approach  ←→  ruins/entrance
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# SETTLEMENT — walled community, safe interior
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[nodes.sett_gate]
+zone           = "settlement"
+anchor         = [20, 2]
+threat_level   = 0.0
+resource_nodes = []
+shelter        = false
+visibility     = 0.9
+[nodes.sett_gate.connections]
+sett_market    = 2.0
+sett_farm      = 3.0
+road_sett_end  = 1.5
+
+[nodes.sett_market]
+zone           = "settlement"
+anchor         = [20, 22]
+threat_level   = 0.0
+resource_nodes = []
+shelter        = true
+visibility     = 0.8
+[nodes.sett_market.connections]
+sett_gate      = 2.0
+sett_well      = 1.5
+sett_residential = 2.0
+sett_storehouse  = 2.0
+
+[nodes.sett_farm]
+zone           = "settlement"
+anchor         = [8, 10]
+threat_level   = 0.0
+resource_nodes = ["wheat", "corn"]
+shelter        = false
+visibility     = 1.0
+[nodes.sett_farm.connections]
+sett_gate      = 3.0
+sett_well      = 2.0
+
+[nodes.sett_well]
+zone           = "settlement"
+anchor         = [10, 16]
+threat_level   = 0.0
+resource_nodes = ["clean_water"]
+shelter        = false
+visibility     = 0.8
+[nodes.sett_well.connections]
+sett_farm      = 2.0
+sett_market    = 1.5
+
+[nodes.sett_residential]
+zone           = "settlement"
+anchor         = [6, 30]
+threat_level   = 0.0
+resource_nodes = []
+shelter        = true
+visibility     = 0.4
+[nodes.sett_residential.connections]
+sett_market    = 2.0
+sett_storehouse = 1.5
+
+[nodes.sett_storehouse]
+zone           = "settlement"
+anchor         = [31, 31]
+threat_level   = 0.0
+resource_nodes = []
+shelter        = true
+visibility     = 0.3
+[nodes.sett_storehouse.connections]
+sett_market    = 2.0
+sett_residential = 1.5
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ROAD — exposed wasteland connecting settlement ↔ ruins
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[nodes.road_sett_end]
+zone           = "road"
+anchor         = [3, 10]
+threat_level   = 0.1
+resource_nodes = []
+shelter        = false
+visibility     = 1.0
+[nodes.road_sett_end.connections]
+sett_gate       = 1.5
+road_crossroads = 3.0
+
+[nodes.road_crossroads]
+zone           = "road"
+anchor         = [30, 10]
+threat_level   = 0.15
+resource_nodes = []
+shelter        = false
+visibility     = 1.0
+[nodes.road_crossroads.connections]
+road_sett_end     = 3.0
+road_ruins_end    = 3.0
+road_hidden_cache = 2.0
+
+[nodes.road_hidden_cache]
+zone           = "road"
+anchor         = [30, 16]
+threat_level   = 0.1
+resource_nodes = ["scrap_metal"]
+shelter        = true
+visibility     = 0.3
+[nodes.road_hidden_cache.connections]
+road_crossroads = 2.0
+
+[nodes.road_ruins_end]
+zone           = "road"
+anchor         = [57, 10]
+threat_level   = 0.25
+resource_nodes = []
+shelter        = false
+visibility     = 1.0
+[nodes.road_ruins_end.connections]
+road_crossroads  = 3.0
+ruins_entrance   = 1.5
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# RUINS — dangerous, loot-rich area
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[nodes.ruins_entrance]
+zone           = "ruins"
+anchor         = [5, 20]
+threat_level   = 0.2
+resource_nodes = []
+shelter        = false
+visibility     = 0.7
+[nodes.ruins_entrance.connections]
+road_ruins_end       = 1.5
+ruins_collapsed_bldg = 2.0
+ruins_raider_camp    = 4.0
+
+[nodes.ruins_collapsed_bldg]
+zone           = "ruins"
+anchor         = [13, 16]
+threat_level   = 0.3
+resource_nodes = ["scrap_metal", "old_electronics"]
+shelter        = true
+visibility     = 0.3
+[nodes.ruins_collapsed_bldg.connections]
+ruins_entrance    = 2.0
+ruins_deep        = 3.0
+ruins_raider_camp = 3.0
+
+[nodes.ruins_raider_camp]
+zone           = "ruins"
+anchor         = [30, 7]
+threat_level   = 0.7
+resource_nodes = []
+shelter        = true
+visibility     = 0.5
+[nodes.ruins_raider_camp.connections]
+ruins_entrance       = 4.0
+ruins_collapsed_bldg = 3.0
+ruins_deep           = 2.5
+
+[nodes.ruins_deep]
+zone           = "ruins"
+anchor         = [30, 30]
+threat_level   = 0.5
+resource_nodes = ["scrap_metal", "old_electronics", "medical_supplies"]
+shelter        = true
+visibility     = 0.2
+[nodes.ruins_deep.connections]
+ruins_collapsed_bldg = 3.0
+ruins_raider_camp    = 2.5
+ruins_pharmacy       = 1.0
+
+[nodes.ruins_pharmacy]
+zone           = "ruins"
+anchor         = [33, 35]
+threat_level   = 0.4
+resource_nodes = ["medical_supplies", "antibiotics"]
+shelter        = true
+visibility     = 0.2
+[nodes.ruins_pharmacy.connections]
+ruins_deep = 1.0

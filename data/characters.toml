@@ -1,0 +1,677 @@
+# data/characters.toml — Starting characters
+# Same world state every playthrough. What happens next is simulation.
+#
+# NPCs spawn with SubzonePos (low-LOD) so the scheduler drives them.
+# When the player enters a zone, matching entities are promoted to
+# high-LOD with real Position + active Brain.
+
+# ═══════════════════════════════════════════════════════════════════
+#  SETTLEMENT — friendly settlers
+# ═══════════════════════════════════════════════════════════════════
+
+# ── Farmer 1: Old Pete ───────────────────────────────────────────
+[old_pete]
+world_memory = true
+[old_pete.identity]
+name  = "Old Pete"
+kind  = "npc"
+[old_pete.subzone_pos]
+zone    = "settlement"
+subzone = "sett_farm"
+[old_pete.home]
+zone    = "settlement"
+subzone = "sett_farm"
+[old_pete.meta]
+zone = "settlement"
+abstract = false
+spawn_radius = 6
+[old_pete.brain]
+kind   = "villager"
+active = false
+[old_pete.patrol]
+radius = 6.0
+speed  = 1.8
+[old_pete.sprite]
+char  = "P"
+color = [150, 150, 100]
+layer = 1
+[old_pete.health]
+current = 100.0
+maximum = 100.0
+[old_pete.combat]
+damage  = 6.0
+defense = 1.0
+[old_pete.hunger]
+current = 85.0
+maximum = 100.0
+rate    = 0.03
+[old_pete.inventory]
+[old_pete.inventory.items]
+canned_beans = 5
+dried_meat   = 4
+hoe          = 1
+[old_pete.equipment]
+weapon = "hoe"
+[old_pete.faction]
+group            = "settlers"
+disposition      = "friendly"
+home_disposition = "friendly"
+[old_pete.dialogue]
+greeting  = "Mornin'. Crops aren't what they used to be, but we get by."
+can_trade = true
+
+# ── Farmer 2: Maria ─────────────────────────────────────────────
+[maria]
+world_memory = true
+[maria.identity]
+name  = "Maria"
+kind  = "npc"
+[maria.subzone_pos]
+zone    = "settlement"
+subzone = "sett_farm"
+[maria.home]
+zone    = "settlement"
+subzone = "sett_residential"
+[maria.meta]
+zone = "settlement"
+abstract = false
+spawn_radius = 6
+[maria.brain]
+kind   = "villager"
+active = false
+[maria.patrol]
+radius = 5.0
+speed  = 2.0
+[maria.sprite]
+char  = "M"
+color = [180, 130, 100]
+layer = 1
+[maria.health]
+current = 90.0
+maximum = 90.0
+[maria.combat]
+damage  = 5.0
+defense = 0.0
+[maria.hunger]
+current = 80.0
+maximum = 100.0
+rate    = 0.03
+[maria.inventory]
+[maria.inventory.items]
+canned_beans = 4
+dried_meat   = 3
+[maria.faction]
+group            = "settlers"
+disposition      = "friendly"
+home_disposition = "friendly"
+[maria.dialogue]
+greeting  = "Watch your step near the fields. We can't afford to lose any plants."
+can_trade = false
+
+# ── Guard: Beck ──────────────────────────────────────────────────
+[beck]
+world_memory = true
+[beck.identity]
+name  = "Beck"
+kind  = "npc"
+[beck.subzone_pos]
+zone    = "settlement"
+subzone = "sett_gate"
+[beck.home]
+zone    = "settlement"
+subzone = "sett_gate"
+[beck.meta]
+zone = "settlement"
+abstract = false
+spawn_radius = 4
+[beck.brain]
+kind   = "villager"
+active = false
+[beck.patrol]
+radius = 4.0
+speed  = 2.0
+[beck.threat]
+aggro_radius    = 10.0
+leash_radius    = 16.0
+flee_threshold  = 0.15
+[beck.attack_config]
+attack_type = "ranged"
+range       = 8.0
+cooldown    = 0.6
+[beck.sprite]
+char  = "B"
+color = [100, 180, 220]
+layer = 1
+[beck.health]
+current = 130.0
+maximum = 130.0
+[beck.combat]
+damage  = 15.0
+defense = 4.0
+[beck.hunger]
+current = 90.0
+maximum = 100.0
+rate    = 0.03
+[beck.inventory]
+[beck.inventory.items]
+pistol   = 1
+dried_meat = 5
+canned_beans = 3
+bandages = 2
+[beck.equipment]
+weapon = "pistol"
+[beck.faction]
+group            = "settlers"
+disposition      = "friendly"
+home_disposition = "friendly"
+[beck.dialogue]
+greeting  = "Road's dangerous after dark. Stay inside the walls if you can."
+can_trade = false
+
+# ── Trader: Nessa ────────────────────────────────────────────────
+[nessa]
+world_memory = true
+[nessa.identity]
+name  = "Nessa"
+kind  = "npc"
+[nessa.subzone_pos]
+zone    = "settlement"
+subzone = "sett_market"
+[nessa.home]
+zone    = "settlement"
+subzone = "sett_market"
+[nessa.meta]
+zone = "settlement"
+abstract = false
+spawn_radius = 4
+[nessa.brain]
+kind   = "villager"
+active = false
+[nessa.patrol]
+radius = 3.0
+speed  = 1.5
+[nessa.sprite]
+char  = "N"
+color = [220, 180, 100]
+layer = 1
+[nessa.health]
+current = 80.0
+maximum = 80.0
+[nessa.combat]
+damage  = 4.0
+defense = 1.0
+[nessa.hunger]
+current = 85.0
+maximum = 100.0
+rate    = 0.03
+[nessa.inventory]
+[nessa.inventory.items]
+canned_beans = 8
+dried_meat   = 6
+bandages     = 4
+knife        = 1
+bat          = 1
+[nessa.faction]
+group            = "settlers"
+disposition      = "friendly"
+home_disposition = "friendly"
+[nessa.dialogue]
+greeting  = "Looking to trade? I've got supplies if you've got something worth swapping."
+can_trade = true
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  ROAD — lone scavenger
+# ═══════════════════════════════════════════════════════════════════
+
+[dex]
+world_memory = true
+[dex.identity]
+name  = "Dex"
+kind  = "npc"
+[dex.subzone_pos]
+zone    = "road"
+subzone = "road_crossroads"
+[dex.home]
+zone    = "road"
+subzone = "road_hidden_cache"
+[dex.meta]
+zone = "road"
+abstract = false
+spawn_radius = 8
+[dex.brain]
+kind   = "wander"
+active = false
+[dex.patrol]
+radius = 10.0
+speed  = 2.5
+[dex.threat]
+aggro_radius   = 6.0
+leash_radius   = 14.0
+flee_threshold = 0.4
+[dex.sprite]
+char  = "D"
+color = [140, 200, 140]
+layer = 1
+[dex.health]
+current = 85.0
+maximum = 85.0
+[dex.combat]
+damage  = 10.0
+defense = 2.0
+[dex.hunger]
+current = 60.0
+maximum = 100.0
+rate    = 0.04
+[dex.inventory]
+[dex.inventory.items]
+knife      = 1
+dried_meat = 4
+bandages   = 1
+[dex.equipment]
+weapon = "knife"
+[dex.faction]
+group            = "loners"
+disposition      = "neutral"
+home_disposition = "neutral"
+[dex.dialogue]
+greeting  = "Don't sneak up on me like that. Roads aren't safe — raiders everywhere."
+can_trade = true
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  RUINS — hostile raiders
+# ═══════════════════════════════════════════════════════════════════
+
+# ── Raider 1: Scar ──────────────────────────────────────────────
+[scar]
+world_memory = true
+[scar.identity]
+name  = "Scar"
+kind  = "npc"
+[scar.subzone_pos]
+zone    = "ruins"
+subzone = "ruins_raider_camp"
+[scar.home]
+zone    = "ruins"
+subzone = "ruins_raider_camp"
+[scar.meta]
+zone = "ruins"
+abstract = false
+spawn_radius = 6
+[scar.brain]
+kind   = "wander"
+active = false
+[scar.patrol]
+radius = 8.0
+speed  = 2.5
+[scar.threat]
+aggro_radius   = 10.0
+leash_radius   = 18.0
+flee_threshold = 0.15
+[scar.attack_config]
+attack_type = "melee"
+range       = 1.4
+cooldown    = 0.4
+[scar.sprite]
+char  = "S"
+color = [255, 80, 80]
+layer = 1
+[scar.health]
+current = 110.0
+maximum = 110.0
+[scar.combat]
+damage  = 16.0
+defense = 3.0
+[scar.hunger]
+current = 55.0
+maximum = 100.0
+rate    = 0.04
+[scar.inventory]
+[scar.inventory.items]
+bat        = 1
+dried_meat = 1
+[scar.equipment]
+weapon = "bat"
+[scar.faction]
+group            = "raiders"
+disposition      = "hostile"
+home_disposition = "hostile"
+
+# ── Raider 2: Mag ───────────────────────────────────────────────
+[mag]
+world_memory = true
+[mag.identity]
+name  = "Mag"
+kind  = "npc"
+[mag.subzone_pos]
+zone    = "ruins"
+subzone = "ruins_raider_camp"
+[mag.home]
+zone    = "ruins"
+subzone = "ruins_raider_camp"
+[mag.meta]
+zone = "ruins"
+abstract = false
+spawn_radius = 6
+[mag.brain]
+kind   = "wander"
+active = false
+[mag.patrol]
+radius = 8.0
+speed  = 2.2
+[mag.threat]
+aggro_radius   = 9.0
+leash_radius   = 16.0
+flee_threshold = 0.2
+[mag.attack_config]
+attack_type = "ranged"
+range       = 7.0
+cooldown    = 0.5
+[mag.sprite]
+char  = "G"
+color = [255, 100, 60]
+layer = 1
+[mag.health]
+current = 90.0
+maximum = 90.0
+[mag.combat]
+damage  = 12.0
+defense = 2.0
+[mag.hunger]
+current = 50.0
+maximum = 100.0
+rate    = 0.04
+[mag.inventory]
+[mag.inventory.items]
+pistol     = 1
+knife      = 1
+dried_meat = 2
+[mag.equipment]
+weapon = "pistol"
+[mag.faction]
+group            = "raiders"
+disposition      = "hostile"
+home_disposition = "hostile"
+
+# ── Raider 3: Vex (roaming) ─────────────────────────────────────
+[vex]
+world_memory = true
+[vex.identity]
+name  = "Vex"
+kind  = "npc"
+[vex.subzone_pos]
+zone    = "ruins"
+subzone = "ruins_collapsed_bldg"
+[vex.home]
+zone    = "ruins"
+subzone = "ruins_raider_camp"
+[vex.meta]
+zone = "ruins"
+abstract = false
+spawn_radius = 8
+[vex.brain]
+kind   = "wander"
+active = false
+[vex.patrol]
+radius = 10.0
+speed  = 2.8
+[vex.threat]
+aggro_radius   = 8.0
+leash_radius   = 20.0
+flee_threshold = 0.3
+[vex.attack_config]
+attack_type = "melee"
+range       = 1.3
+cooldown    = 0.35
+[vex.sprite]
+char  = "V"
+color = [220, 60, 60]
+layer = 1
+[vex.health]
+current = 95.0
+maximum = 95.0
+[vex.combat]
+damage  = 14.0
+defense = 2.0
+[vex.hunger]
+current = 45.0
+maximum = 100.0
+rate    = 0.05
+[vex.inventory]
+[vex.inventory.items]
+knife      = 1
+canned_beans = 1
+[vex.equipment]
+weapon = "knife"
+[vex.faction]
+group            = "raiders"
+disposition      = "hostile"
+home_disposition = "hostile"
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  CONTAINERS — persistent lootable objects at subzone nodes
+# ═══════════════════════════════════════════════════════════════════
+
+# Settlement storehouse crate — LOCKED (settlers rely on locks, not guards)
+[storehouse_crate]
+[storehouse_crate.identity]
+name = "Supply Crate"
+kind = "container"
+[storehouse_crate.subzone_pos]
+zone    = "settlement"
+subzone = "sett_storehouse"
+[storehouse_crate.meta]
+zone = "settlement"
+abstract = true
+[storehouse_crate.sprite]
+char  = "="
+color = [160, 120, 60]
+layer = 0
+[storehouse_crate.ownership]
+faction_group = "settlers"
+[storehouse_crate.locked]
+faction_access = "settlers"
+difficulty     = 2
+[storehouse_crate.inventory]
+[storehouse_crate.inventory.items]
+canned_beans = 6
+dried_meat   = 4
+bandages     = 4
+antibiotics  = 2
+rifle        = 1
+
+# Road hidden cache
+[road_cache]
+[road_cache.identity]
+name = "Hidden Stash"
+kind = "container"
+[road_cache.subzone_pos]
+zone    = "road"
+subzone = "road_hidden_cache"
+[road_cache.meta]
+zone = "road"
+abstract = true
+[road_cache.sprite]
+char  = "="
+color = [100, 140, 100]
+layer = 0
+[road_cache.inventory]
+[road_cache.inventory.items]
+bandages   = 2
+knife      = 1
+dried_meat = 2
+
+# Ruins collapsed building loot
+[ruins_loot_1]
+[ruins_loot_1.identity]
+name = "Rubble Pile"
+kind = "container"
+[ruins_loot_1.subzone_pos]
+zone    = "ruins"
+subzone = "ruins_collapsed_bldg"
+[ruins_loot_1.meta]
+zone = "ruins"
+abstract = true
+[ruins_loot_1.sprite]
+char  = "%"
+color = [120, 120, 100]
+layer = 0
+[ruins_loot_1.inventory]
+[ruins_loot_1.inventory.items]
+canned_beans = 2
+bat          = 1
+
+# Ruins pharmacy cabinet
+[pharmacy_cabinet]
+[pharmacy_cabinet.identity]
+name = "Medicine Cabinet"
+kind = "container"
+[pharmacy_cabinet.subzone_pos]
+zone    = "ruins"
+subzone = "ruins_pharmacy"
+[pharmacy_cabinet.meta]
+zone = "ruins"
+abstract = true
+[pharmacy_cabinet.sprite]
+char  = "+"
+color = [100, 255, 140]
+layer = 0
+[pharmacy_cabinet.inventory]
+[pharmacy_cabinet.inventory.items]
+antibiotics = 3
+bandages    = 4
+
+# Raider camp supply box
+[raider_stash]
+[raider_stash.identity]
+name = "Raider Stash"
+kind = "container"
+[raider_stash.subzone_pos]
+zone    = "ruins"
+subzone = "ruins_raider_camp"
+[raider_stash.meta]
+zone = "ruins"
+abstract = true
+[raider_stash.sprite]
+char  = "="
+color = [180, 60, 60]
+layer = 0
+[raider_stash.inventory]
+[raider_stash.inventory.items]
+dried_meat = 3
+pistol     = 1
+bandages   = 1
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  SETTLEMENT — communal pantry at the well (unlocked, shared food)
+# ═══════════════════════════════════════════════════════════════════
+
+[communal_pantry]
+[communal_pantry.identity]
+name = "Communal Pantry"
+kind = "container"
+[communal_pantry.subzone_pos]
+zone    = "settlement"
+subzone = "sett_well"
+[communal_pantry.meta]
+zone = "settlement"
+abstract = true
+[communal_pantry.sprite]
+char  = "="
+color = [200, 160, 80]
+layer = 0
+[communal_pantry.ownership]
+faction_group = "settlers"
+[communal_pantry.inventory]
+[communal_pantry.inventory.items]
+stew   = 10
+ration = 15
+canned_beans = 5
+dried_meat   = 4
+
+# Settlement farm shed (raw produce, unlocked — farmers use it daily)
+[farm_shed]
+[farm_shed.identity]
+name = "Farm Shed"
+kind = "container"
+[farm_shed.subzone_pos]
+zone    = "settlement"
+subzone = "sett_farm"
+[farm_shed.meta]
+zone = "settlement"
+abstract = true
+[farm_shed.sprite]
+char  = "="
+color = [130, 160, 70]
+layer = 0
+[farm_shed.ownership]
+faction_group = "settlers"
+[farm_shed.inventory]
+[farm_shed.inventory.items]
+canned_beans = 10
+dried_meat   = 8
+
+# ═══════════════════════════════════════════════════════════════════
+#  ROAD — second guard stationed on the approach to the settlement
+# ═══════════════════════════════════════════════════════════════════
+
+[hale]
+world_memory = true
+[hale.identity]
+name  = "Hale"
+kind  = "npc"
+[hale.subzone_pos]
+zone    = "road"
+subzone = "road_sett_end"
+[hale.home]
+zone    = "road"
+subzone = "road_sett_end"
+[hale.meta]
+zone = "road"
+abstract = false
+spawn_radius = 4
+[hale.brain]
+kind   = "villager"
+active = false
+[hale.patrol]
+radius = 5.0
+speed  = 2.0
+[hale.threat]
+aggro_radius    = 10.0
+leash_radius    = 18.0
+flee_threshold  = 0.15
+[hale.attack_config]
+attack_type = "ranged"
+range       = 8.0
+cooldown    = 0.7
+[hale.sprite]
+char  = "H"
+color = [100, 160, 200]
+layer = 1
+[hale.health]
+current = 120.0
+maximum = 120.0
+[hale.combat]
+damage  = 14.0
+defense = 3.0
+[hale.hunger]
+current = 85.0
+maximum = 100.0
+rate    = 0.03
+[hale.inventory]
+[hale.inventory.items]
+pistol     = 1
+dried_meat = 4
+bandages   = 2
+[hale.equipment]
+weapon = "pistol"
+[hale.faction]
+group            = "settlers"
+disposition      = "friendly"
+home_disposition = "friendly"
+[hale.dialogue]
+greeting  = "Halt. This road leads to the settlement. State your business."
+can_trade = false

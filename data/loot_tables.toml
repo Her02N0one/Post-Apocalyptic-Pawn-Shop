@@ -1,0 +1,76 @@
+# Loot tables — Minecraft-style random loot generation
+# Each table has pools. Each pool rolls entries by weight.
+# Entry `item` fields reference keys from items.toml (e.g. "canned_beans").
+
+[tables.basic_chest]
+description = "Basic wooden chest with common supplies"
+
+[[tables.basic_chest.pools]]
+name = "food"
+rolls = 1
+bonus_rolls = 0.5
+
+[[tables.basic_chest.pools.entries]]
+item = "canned_beans"
+weight = 3
+min_count = 1
+max_count = 2
+
+[[tables.basic_chest.pools.entries]]
+item = "dried_meat"
+weight = 2
+min_count = 1
+max_count = 1
+
+[[tables.basic_chest.pools.entries]]
+item = "bandages"
+weight = 1
+min_count = 1
+max_count = 3
+
+[tables.treasure_chest]
+description = "Locked treasure chest with rare items"
+
+[[tables.treasure_chest.pools]]
+name = "weapons"
+rolls = 1
+bonus_rolls = 0.5
+
+[[tables.treasure_chest.pools.entries]]
+item = "pistol"
+weight = 1
+min_count = 1
+max_count = 1
+
+[[tables.treasure_chest.pools.entries]]
+item = "knife"
+weight = 2
+min_count = 1
+max_count = 1
+
+[[tables.treasure_chest.pools]]
+name = "supplies"
+rolls = 1
+bonus_rolls = 1.0
+
+[[tables.treasure_chest.pools.entries]]
+item = "antibiotics"
+weight = 2
+min_count = 1
+max_count = 2
+
+[[tables.treasure_chest.pools.entries]]
+item = "bandages"
+weight = 3
+min_count = 2
+max_count = 4
+
+[[tables.treasure_chest.pools.entries]]
+item = "canned_beans"
+weight = 2
+min_count = 1
+max_count = 3
+
+[tables.empty_chest]
+description = "Already looted"
+# No pools = no loot
