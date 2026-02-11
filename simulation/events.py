@@ -9,7 +9,7 @@ Registered on the scheduler during initialization.
 from __future__ import annotations
 from typing import Any
 
-from components import Health, Hunger, Inventory, Identity, ItemRegistry
+from components import Health, Hunger, Inventory, Identity, ItemRegistry, Faction
 from components.simulation import SubzonePos, TravelPlan, WorldMemory, Home
 from simulation.subzone import SubzoneGraph
 
@@ -464,7 +464,6 @@ def handle_communal_meal(world: Any, eid: int, event_type: str,
         return
 
     from components.ai import AttackConfig
-    from components import Faction
     from simulation.travel import plan_route, begin_travel
 
     szp = world.get(eid, SubzonePos)

@@ -337,12 +337,6 @@ class TransferModal(Modal):
             if result:
                 self._flash(result)
 
-        # Theft callback — check for witnesses when taking from owned
-        if self.panel == 0 and self.owner_faction and self.on_steal:
-            result = self.on_steal(item_id)
-            if result:
-                self._flash(result)
-
     def _unequip_if_needed(self, item_id: str) -> None:
         eq = self.equipment
         if eq is None:
