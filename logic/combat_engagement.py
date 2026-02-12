@@ -23,13 +23,23 @@ from components import (
     Position, Velocity, GameClock, Lod,
 )
 from logic.brains import register_brain
-from components import Faction, Health, Hurtbox
+from components import Faction, Health, Hurtbox, Identity
+from components.dev_log import DevLog
 from logic.brains._helpers import (
     find_player, dist_pos, hp_ratio,
     move_toward, move_away, strafe, face_toward, run_idle,
     should_engage, try_dodge, try_heal,
     reset_faction_on_return,
 )
+
+
+def _log(world: World, eid: int, cat: str, msg: str, t: float = 0.0, **kw):
+    log = world.res(DevLog)
+    if log is None:
+        return
+    ident = world.get(eid, Identity)
+    name = ident.name if ident else f"e{eid}"
+    log.record(eid, cat, msg, name=name, t=t, **kw)
 
 
 def _ally_in_line_of_fire(world: World, eid: int, pos, tx: float, ty: float) -> bool:
@@ -122,6 +132,8 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
         if p_pos is None or p_pos.zone != pos.zone:
             c["p_eid"] = None
             c["p_pos"] = None
+            if c["mode"] != "idle":
+                _log(world, eid, "combat", "target lost → idle", game_time)
             if patrol:
                 run_idle(patrol, pos, vel, c, dt)
             else:
@@ -149,6 +161,7 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
         if mode == "idle":
             if dist <= threat.aggro_radius:
                 c["mode"] = "chase"
+                _log(world, eid, "combat", f"idle → chase (dist={dist:.1f})", game_time)
             else:
                 if patrol:
                     run_idle(patrol, pos, vel, c, dt)
@@ -159,22 +172,30 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
         elif mode == "chase":
             if can_flee and cur_hp_ratio <= threat.flee_threshold:
                 c["mode"] = "flee"
+                _log(world, eid, "combat", f"chase → flee (hp={cur_hp_ratio:.0%})", game_time)
             elif home_dist > threat.leash_radius:
                 c["mode"] = "return"
+                _log(world, eid, "combat", f"chase → return (leash={home_dist:.1f})", game_time)
             elif is_ranged and dist <= atk_cfg.range * 1.1:
                 c["mode"] = "attack"
+                _log(world, eid, "combat", f"chase → attack (ranged, dist={dist:.1f})", game_time)
             elif not is_ranged and dist <= atk_cfg.range:
                 c["mode"] = "attack"
+                _log(world, eid, "combat", f"chase → attack (melee, dist={dist:.1f})", game_time)
 
         elif mode == "attack":
             if can_flee and cur_hp_ratio <= threat.flee_threshold:
                 c["mode"] = "flee"
+                _log(world, eid, "combat", f"attack → flee (hp={cur_hp_ratio:.0%})", game_time)
             elif is_ranged and dist > atk_cfg.range * 1.8:
                 c["mode"] = "chase"
+                _log(world, eid, "combat", f"attack → chase (too far, dist={dist:.1f})", game_time)
             elif not is_ranged and dist > atk_cfg.range * 1.6:
                 c["mode"] = "chase"
+                _log(world, eid, "combat", f"attack → chase (melee lost range)", game_time)
             elif not is_ranged and home_dist > threat.leash_radius:
                 c["mode"] = "return"
+                _log(world, eid, "combat", f"attack → return (leash)", game_time)
 
             # Fire / strike when ready (timestamp cooldown)
             if c.get("attack_until", 0.0) <= game_time and p_eid is not None:
@@ -182,26 +203,32 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
                     # Check line of fire — strafe to reposition if ally is in the way
                     if _ally_in_line_of_fire(world, eid, pos, p_pos.x, p_pos.y):
                         c["_los_blocked"] = True
+                        _log(world, eid, "combat", "LOS blocked by ally, strafing", game_time)
                     else:
                         c["_los_blocked"] = False
                         from logic.combat import npc_ranged_attack
                         npc_ranged_attack(world, eid, p_eid)
                         c["attack_until"] = game_time + atk_cfg.cooldown
+                        _log(world, eid, "attack", "fired ranged attack", game_time)
                 else:
                     from logic.combat import npc_melee_attack
                     npc_melee_attack(world, eid, p_eid)
                     c["attack_until"] = game_time + atk_cfg.cooldown
+                    _log(world, eid, "attack", "melee strike", game_time)
 
         elif mode == "flee":
             if cur_hp_ratio > threat.flee_threshold * 2.5 or dist > threat.aggro_radius:
                 c["mode"] = "return"
+                _log(world, eid, "combat", "flee → return", game_time)
 
         elif mode == "return":
             if math.hypot(pos.x - ox, pos.y - oy) < 1.0:
                 c["mode"] = "idle"
                 reset_faction_on_return(world, eid)
+                _log(world, eid, "combat", "returned home → idle", game_time)
             elif dist <= threat.aggro_radius * 0.6:
                 c["mode"] = "chase"
+                _log(world, eid, "combat", "return interrupted → chase", game_time)
 
     # ── Cheap per-frame movement output ──────────────────────────────
     mode = c["mode"]

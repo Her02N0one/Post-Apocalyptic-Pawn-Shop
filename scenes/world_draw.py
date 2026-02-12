@@ -388,31 +388,35 @@ def draw_debug_overlay(surface: pygame.Surface, app: App, scene, cam: Camera):
     ox = sw // 2 - int(cam.x * TILE_SIZE)
     oy = sh // 2 - int(cam.y * TILE_SIZE)
 
-    # ── Left panel: global stats ─────────────────────────────────────
+    # ── Left panel: global stats (with background) ────────────────────
+    panel_bg = pygame.Surface((260, 200), pygame.SRCALPHA)
+    panel_bg.fill((0, 0, 0, 140))
+    surface.blit(panel_bg, (2, 2))
+
     y = 8
-    app.draw_text(surface, f"FPS: {int(app.clock.get_fps())}", 8, y, (0, 255, 0))
-    y += 16
-    app.draw_text(surface, f"Entities: {len(app.world.debug_dump())}", 8, y, (0, 255, 0))
-    y += 16
-    app.draw_text(surface, f"Camera: ({cam.x:.1f}, {cam.y:.1f})", 8, y, (0, 255, 0))
-    y += 16
+    app.draw_text(surface, f"FPS: {int(app.clock.get_fps())}", 8, y, (0, 255, 0), app.font_sm)
+    y += 14
+    app.draw_text(surface, f"Entities: {len(app.world.debug_dump())}", 8, y, (0, 255, 0), app.font_sm)
+    y += 14
+    app.draw_text(surface, f"Camera: ({cam.x:.1f}, {cam.y:.1f})", 8, y, (0, 255, 0), app.font_sm)
+    y += 14
 
     result = app.world.query_one(Player, Position)
     if result:
         _, _, pos = result
-        app.draw_text(surface, f"Player: ({pos.x:.1f}, {pos.y:.1f})", 8, y, (0, 255, 0))
-        y += 16
+        app.draw_text(surface, f"Player: ({pos.x:.1f}, {pos.y:.1f})", 8, y, (0, 255, 0), app.font_sm)
+        y += 14
 
     clock = app.world.res(GameClock)
     if clock:
-        app.draw_text(surface, f"GameClock: {clock.time:.1f}s", 8, y, (0, 255, 0))
-        y += 16
+        app.draw_text(surface, f"GameClock: {clock.time:.1f}s", 8, y, (0, 255, 0), app.font_sm)
+        y += 14
 
     lod_counts = {"high": 0, "medium": 0, "low": 0}
     for _, lod in app.world.all_of(Lod):
         lod_counts[lod.level] = lod_counts.get(lod.level, 0) + 1
-    app.draw_text(surface, f"LOD: H{lod_counts['high']} M{lod_counts['medium']} L{lod_counts['low']}", 8, y, (200, 200, 100))
-    y += 20
+    app.draw_text(surface, f"LOD: H{lod_counts['high']} M{lod_counts['medium']} L{lod_counts['low']}", 8, y, (200, 200, 100), app.font_sm)
+    y += 18
 
     # ── Per-NPC in-world debug labels + viz ──────────────────────────
     for eid, npc_pos, ident in app.world.query(Position, Identity):
@@ -495,11 +499,22 @@ def draw_debug_overlay(surface: pygame.Surface, app: App, scene, cam: Camera):
                      f"cd:{atk_cfg.cooldown:.2f}s"
             lines.append((t_line, (160, 160, 200)))
 
-        # Draw labels above sprite
-        label_y = sy - 8 - len(lines) * 12
+        # Draw labels above sprite (with dark background for readability)
+        label_y = sy - 8 - len(lines) * 13
+        # Measure widest line for background
+        max_w = 0
+        for lt, _ in lines:
+            tw = app.font_sm.size(lt)[0]
+            if tw > max_w:
+                max_w = tw
+        if lines:
+            bg_h = len(lines) * 13 + 4
+            label_bg = pygame.Surface((max_w + 6, bg_h), pygame.SRCALPHA)
+            label_bg.fill((0, 0, 0, 150))
+            surface.blit(label_bg, (sx - 23, label_y - 2))
         for line_text, line_color in lines:
             app.draw_text(surface, line_text, sx - 20, label_y, line_color, app.font_sm)
-            label_y += 12
+            label_y += 13
 
         # ── Visual indicators ────────────────────────────────────────
         cx = sx + TILE_SIZE // 2

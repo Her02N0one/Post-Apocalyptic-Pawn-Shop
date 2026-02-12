@@ -134,6 +134,9 @@ class WorldScene(Scene):
             app.world.set_res(Camera())
         if not app.world.res(GameClock):
             app.world.set_res(GameClock())
+        from components.dev_log import DevLog
+        if not app.world.res(DevLog):
+            app.world.set_res(DevLog())
 
         from logic.quests import QuestLog
         from logic.dialogue import DialogueManager, load_builtin_trees

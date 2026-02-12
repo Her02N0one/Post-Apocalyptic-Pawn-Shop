@@ -35,9 +35,15 @@ class App:
         self.world = World()
 
         # Debug font (available to any scene)
-        self.font = pygame.font.SysFont("monospace", 14)
-        self.font_sm = pygame.font.SysFont("monospace", 11)
-        self.font_lg = pygame.font.SysFont("monospace", 18)
+        self._base_w = width
+        self._rebuild_fonts(width)
+
+    def _rebuild_fonts(self, screen_w: int):
+        """Create fonts scaled relative to a 960px baseline."""
+        scale = max(1.0, screen_w / 960.0)
+        self.font = pygame.font.SysFont("monospace", int(14 * scale))
+        self.font_sm = pygame.font.SysFont("monospace", int(11 * scale))
+        self.font_lg = pygame.font.SysFont("monospace", int(18 * scale))
 
     # -- Scene management --
 
@@ -74,6 +80,7 @@ class App:
                     self._windowed_size = (event.w, event.h)
                     self.screen = pygame.display.set_mode(
                         (event.w, event.h), pygame.RESIZABLE)
+                    self._rebuild_fonts(event.w)
                 elif self.scene:
                     self.scene.handle_event(event, self)
 
@@ -97,6 +104,7 @@ class App:
         else:
             self.screen = pygame.display.set_mode(
                 self._windowed_size, pygame.RESIZABLE)
+        self._rebuild_fonts(self.screen.get_width())
 
     # -- Convenience --
 
@@ -107,3 +115,15 @@ class App:
         img = f.render(text, True, color)
         rect = surface.blit(img, (x, y))
         return rect
+
+    def draw_text_bg(self, surface: pygame.Surface, text: str, x: int, y: int,
+                     color=(255, 255, 255), bg=(0, 0, 0, 160), font=None,
+                     pad: int = 2):
+        """Draw text with a semi-transparent background box."""
+        f = font or self.font
+        img = f.render(text, True, color)
+        w, h = img.get_size()
+        bg_surf = pygame.Surface((w + pad * 2, h + pad * 2), pygame.SRCALPHA)
+        bg_surf.fill(bg)
+        surface.blit(bg_surf, (x - pad, y - pad))
+        return surface.blit(img, (x, y))

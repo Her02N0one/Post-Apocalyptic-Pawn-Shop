@@ -18,7 +18,8 @@ sweeps vs. cheap movement-only ticks.
 from __future__ import annotations
 from typing import Callable
 from core.ecs import World
-from components import Brain, Position, Lod, GameClock, Threat, AttackConfig, HitFlash, Combat
+from components import Brain, Position, Lod, GameClock, Threat, AttackConfig, HitFlash, Combat, Identity
+from components.dev_log import DevLog
 
 
 _registry: dict[str, Callable] = {}
@@ -71,6 +72,7 @@ def run_brains(world: World, dt: float):
                     run_combat_brain(world, eid, brain, dt, game_time)
                 except Exception as exc:
                     import traceback; traceback.print_exc()
+                    _log(world, eid, "error", f"combat brain crash: {exc}", game_time)
                 continue
 
         fn = get_brain(brain.kind)
@@ -79,6 +81,17 @@ def run_brains(world: World, dt: float):
                 fn(world, eid, brain, dt, game_time)
             except Exception as exc:
                 import traceback; traceback.print_exc()
+                _log(world, eid, "error", f"brain '{brain.kind}' crash: {exc}", game_time)
+
+
+def _log(world: World, eid: int, cat: str, msg: str, t: float = 0.0, **kw):
+    """Write to DevLog if available."""
+    log = world.res(DevLog)
+    if log is None:
+        return
+    ident = world.get(eid, Identity)
+    name = ident.name if ident else f"e{eid}"
+    log.record(eid, cat, msg, name=name, t=t, **kw)
 
 
 # Import brain modules to trigger their register_brain() calls.
