@@ -104,15 +104,14 @@ def weapon_rect_for(pos: Position, facing: str,
 def mouse_world_pos(app, scene=None, screen_pos: tuple[int, int] | None = None) -> tuple[float, float] | None:
     """Convert mouse screen position to world-tile coordinates."""
     if screen_pos is None:
-        import pygame
-        screen_pos = pygame.mouse.get_pos()
+        screen_pos = app.mouse_pos()
     mx, my = screen_pos
     from components import Camera
     from core.constants import TILE_SIZE
     cam = app.world.res(Camera)
     if cam is None:
         return None
-    sw, sh = app.screen.get_size()
+    sw, sh = app._virtual_size
     ox = sw // 2 - int(cam.x * TILE_SIZE)
     oy = sh // 2 - int(cam.y * TILE_SIZE)
     wx = (mx - ox) / TILE_SIZE

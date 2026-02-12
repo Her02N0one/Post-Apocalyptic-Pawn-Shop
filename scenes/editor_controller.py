@@ -247,7 +247,7 @@ class EditorController:
         """Handle MOUSEBUTTONDOWN in editor mode."""
         from components import Camera
         cam = app.world.res(Camera) or Camera()
-        rc = self.screen_to_tile(*event.pos, cam, app.screen.get_size(),
+        rc = self.screen_to_tile(*event.pos, cam, app._virtual_size,
                                  scene.map_w, scene.map_h)
         if rc is None:
             return
@@ -372,8 +372,8 @@ class EditorController:
         if input_mgr.just("ed_anchor"):
             from components import Camera
             cam = app.world.res(Camera) or Camera()
-            rc = self.screen_to_tile(*pygame.mouse.get_pos(), cam,
-                                     app.screen.get_size(), scene.map_w, scene.map_h)
+            rc = self.screen_to_tile(*app.mouse_pos(), cam,
+                                     app._virtual_size, scene.map_w, scene.map_h)
             if rc:
                 ZONE_ANCHORS[scene.zone] = (rc[1] + 0.5, rc[0] + 0.5)
                 print(f"[EDITOR] anchor set at ({rc[1]},{rc[0]})")
@@ -404,8 +404,8 @@ class EditorController:
                 and not self.mouse_drag_start
                 and not self.teleporter_mode
                 and not self.text_input_active):
-            mx, my = pygame.mouse.get_pos()
-            rc = self.screen_to_tile(mx, my, cam, app.screen.get_size(),
+            mx, my = app.mouse_pos()
+            rc = self.screen_to_tile(mx, my, cam, app._virtual_size,
                                      scene.map_w, scene.map_h)
             if rc:
                 self.paint_at(scene.tiles, rc[0], rc[1], scene.map_h, scene.map_w)
@@ -441,7 +441,7 @@ class EditorController:
             y += 16
 
         # Mouse cursor tile highlight
-        mx, my = pygame.mouse.get_pos()
+        mx, my = app.mouse_pos()
         col = (mx - ox) // TILE_SIZE
         row = (my - oy) // TILE_SIZE
         if 0 <= row < scene.map_h and 0 <= col < scene.map_w:

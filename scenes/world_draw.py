@@ -212,10 +212,10 @@ def draw_projectiles(surface: pygame.Surface, app: App, ox: int, oy: int, zone: 
 
 # ── Crosshair ─────────────────────────────────────────────────────
 
-def draw_crosshair(surface: pygame.Surface, scene):
+def draw_crosshair(surface: pygame.Surface, app: App, scene):
     if not scene.show_crosshair or scene.editor_active or scene.modals.is_open:
         return
-    mx, my = pygame.mouse.get_pos()
+    mx, my = app.mouse_pos()
     if scene.tooltip_eid is not None and scene.tooltip_hp is not None:
         ccolor = (255, 80, 80)
     else:
@@ -262,7 +262,7 @@ def draw_range_ring(surface: pygame.Surface, app: App, ox: int, oy: int, zone: s
 def draw_tooltip(surface: pygame.Surface, app: App, scene):
     if scene.tooltip_eid is None or scene.editor_active or scene.modals.is_open:
         return
-    mx, my = pygame.mouse.get_pos()
+    mx, my = app.mouse_pos()
     ty = my - 22
     app.draw_text(surface, scene.tooltip_text, mx + 12, ty, (255, 255, 255))
     if scene.tooltip_hp:

@@ -228,7 +228,7 @@ class WorldScene(Scene):
     def _screen_to_tile(self, mx: int, my: int, app: App):
         """Convert mouse screen coords to (row, col) tile coords or None."""
         cam = app.world.res(Camera) or Camera()
-        sw, sh = app.screen.get_size()
+        sw, sh = app._virtual_size
         ox = sw // 2 - int(cam.x * TILE_SIZE)
         oy = sh // 2 - int(cam.y * TILE_SIZE)
         col = (mx - ox) // TILE_SIZE
@@ -378,7 +378,7 @@ class WorldScene(Scene):
             draw_particles(pm, surface, ox, oy, TILE_SIZE)
 
         draw_projectiles(surface, app, ox, oy, self.zone)
-        draw_crosshair(surface, self)
+        draw_crosshair(surface, app, self)
         draw_range_ring(surface, app, ox, oy, self.zone, self)
         draw_tooltip(surface, app, self)
         draw_hud(surface, app, self)
