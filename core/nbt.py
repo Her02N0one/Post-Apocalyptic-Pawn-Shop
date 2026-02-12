@@ -1,17 +1,24 @@
 """core/nbt.py — Optional NBT export helpers for zone files.
 
-This module uses `nbtlib` when available to write a simple NBT structure
-containing zone tiles and metadata. If `nbtlib` isn't installed the functions
-will raise ImportError — callers should handle that gracefully.
+Uses `nbtlib` when available to write a simple NBT structure containing
+zone tiles and metadata. When `nbtlib` isn't installed, we fall back to a
+minimal custom binary format with a .nbt extension so older Pythons can
+still read/write zone files without extra dependencies.
 """
 from __future__ import annotations
 from pathlib import Path
+import struct
 
 try:
     import nbtlib
     from nbtlib import tag
 except Exception:
     nbtlib = None
+
+NBTLIB_AVAILABLE = nbtlib is not None
+
+_MAGIC = b"PAPSZON\x00"
+_VERSION = 1
 
 
 def save_zone_nbt(name: str, tiles: list[list[int]], anchor: tuple[float, float] | None = None, teleporters: dict[tuple[int,int], str] | None = None, dir_path: Path | None = None):
@@ -25,12 +32,51 @@ def save_zone_nbt(name: str, tiles: list[list[int]], anchor: tuple[float, float]
       - anchors: TAG_List of TAG_Double (x,y)
       - teleporters: TAG_List of TAG_Compound { r:TAG_Int, c:TAG_Int, target:TAG_String }
     """
-    if nbtlib is None:
-        raise ImportError("nbtlib is required to save NBT files")
     if dir_path is None:
         dir_path = Path("zones")
     dir_path = Path(dir_path)
     dir_path.mkdir(parents=True, exist_ok=True)
+
+    if nbtlib is None:
+        out_path = dir_path / f"{name}.nbt"
+        with open(out_path, "wb") as f:
+            f.write(_MAGIC)
+            f.write(struct.pack("<B", _VERSION))
+            h = len(tiles)
+            w = len(tiles[0]) if h else 0
+            f.write(struct.pack("<II", w, h))
+            flags = 0
+            if anchor:
+                flags |= 0x01
+            if teleporters:
+                flags |= 0x02
+            f.write(struct.pack("<B", flags))
+            if anchor:
+                f.write(struct.pack("<dd", float(anchor[0]), float(anchor[1])))
+            # Tiles as raw bytes (row-major)
+            for row in tiles:
+                for v in row:
+                    f.write(struct.pack("<B", int(v) & 0xFF))
+            # Teleporters
+            tel_items = list(teleporters.items()) if teleporters else []
+            f.write(struct.pack("<I", len(tel_items)))
+            for (r, c), target in tel_items:
+                f.write(struct.pack("<ii", int(r), int(c)))
+                if isinstance(target, str):
+                    zone = target
+                    f.write(struct.pack("<B", 0))
+                elif isinstance(target, dict):
+                    zone = str(target.get("zone", ""))
+                    f.write(struct.pack("<B", 1))
+                else:
+                    zone = str(target)
+                    f.write(struct.pack("<B", 0))
+                zone_bytes = zone.encode("utf-8")
+                f.write(struct.pack("<H", len(zone_bytes)))
+                f.write(zone_bytes)
+                if isinstance(target, dict) and "r" in target and "c" in target:
+                    f.write(struct.pack("<ii", int(target["r"]), int(target["c"])))
+        return out_path
 
     h = len(tiles)
     w = len(tiles[0]) if h else 0
@@ -82,9 +128,45 @@ def load_zone_nbt(path: Path):
 
     `spawns` is a list of spawn dictionaries (may be empty).
     """
-    if nbtlib is None:
-        raise ImportError("nbtlib is required to load NBT files")
     path = Path(path)
+    if nbtlib is None:
+        with open(path, "rb") as f:
+            magic = f.read(len(_MAGIC))
+            if magic != _MAGIC:
+                raise ImportError("nbtlib is required to load NBT files")
+            version = struct.unpack("<B", f.read(1))[0]
+            if version != _VERSION:
+                raise ValueError("Unsupported zone format version")
+            w, h = struct.unpack("<II", f.read(8))
+            flags = struct.unpack("<B", f.read(1))[0]
+            anchors = None
+            if flags & 0x01:
+                ax, ay = struct.unpack("<dd", f.read(16))
+                anchors = {path.stem: [float(ax), float(ay)]}
+            tiles = []
+            for r in range(h):
+                row = [struct.unpack("<B", f.read(1))[0] for _ in range(w)]
+                tiles.append(row)
+            teleporters = {}
+            tel_count = struct.unpack("<I", f.read(4))[0]
+            for _ in range(tel_count):
+                r, c = struct.unpack("<ii", f.read(8))
+                ttype = struct.unpack("<B", f.read(1))[0]
+                zlen = struct.unpack("<H", f.read(2))[0]
+                zone = f.read(zlen).decode("utf-8")
+                if ttype == 1:
+                    tr, tc = struct.unpack("<ii", f.read(8))
+                    teleporters[f"{r},{c}"] = {"zone": zone, "r": tr, "c": tc}
+                else:
+                    teleporters[f"{r},{c}"] = zone
+        return {
+            "name": path.stem,
+            "tiles": tiles,
+            "anchors": anchors,
+            "teleporters": teleporters,
+            "spawns": [],
+        }
+
     f = nbtlib.load(path)
     # In nbtlib 2.0+, the File object IS the root compound
     root = f

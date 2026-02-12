@@ -13,7 +13,10 @@ in game-minutes.
 
 from __future__ import annotations
 import heapq
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli as tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -30,7 +33,7 @@ class SubzoneNode:
     zone : str
         Parent zone this subzone belongs to.
     anchor : tuple[int, int]
-        Tile coordinates of the anchor point within the zone.
+        Tile coordinates of the anchor point within the zone (x, y).
     connections : dict[str, float]
         Neighbor subzone ID → travel time in game-minutes.
     threat_level : float
@@ -284,7 +287,8 @@ class SubzoneGraph:
             if not isinstance(ndata, dict):
                 continue
             anchor_raw = ndata.get("anchor", [0, 0])
-            anchor = (int(anchor_raw[0]), int(anchor_raw[1]))
+            # Data uses [row, col]; store as (x, y) -> (col, row).
+            anchor = (int(anchor_raw[1]), int(anchor_raw[0]))
             connections = {}
             conn_data = ndata.get("connections", {})
             if isinstance(conn_data, dict):

@@ -171,12 +171,28 @@ class WorldScene(Scene):
     def _init_world_sim(self, app: App):
         """Initialise the world simulation if a subzone graph exists."""
         from pathlib import Path
+        from components.simulation import Stockpile
+        from simulation.economy import create_settlement
         graph_path = Path("data/subzones.toml")
         if not graph_path.exists():
             return
         try:
             self.world_sim = WorldSim(app.world)
             self.world_sim.load_graph(graph_path)
+
+            # Ensure the settlement stockpile exists for the sim layer
+            has_stockpile = any(True for _ in app.world.all_of(Stockpile))
+            if not has_stockpile:
+                graph = self.world_sim.graph
+                subzone_id = "sett_storehouse"
+                if subzone_id not in graph.nodes:
+                    for node in graph.nodes.values():
+                        if node.zone == "settlement":
+                            subzone_id = node.id
+                            break
+                node = graph.get_node(subzone_id)
+                if node:
+                    create_settlement(app.world, "Settlement", node.zone, node.id)
 
             # Attach container EIDs to graph nodes (set by _spawn_characters)
             cmap = app.world.res(type(None))  # placeholder

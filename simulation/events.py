@@ -349,19 +349,25 @@ def _try_eat_from_stockpile(world: Any, eid: int,
     if not home:
         return False
 
+    home_zone = home.zone
+
     # Find settlement stockpile
     for seid, stockpile in world.all_of(Stockpile):
         szp = world.get(seid, SubzonePos)
-        if szp and szp.subzone == home.subzone:
-            # Try to take food
-            for item_id in list(stockpile.items.keys()):
-                if stockpile.items[item_id] > 0:
-                    stockpile.remove(item_id, 1)
-                    hunger = world.get(eid, Hunger)
-                    if hunger:
-                        hunger.current = min(hunger.maximum,
-                                             hunger.current + 25.0)
-                    return True
+        if not szp:
+            continue
+        if szp.subzone != home.subzone:
+            if not home_zone or szp.zone != home_zone:
+                continue
+        # Try to take food
+        for item_id in list(stockpile.items.keys()):
+            if stockpile.items[item_id] > 0:
+                stockpile.remove(item_id, 1)
+                hunger = world.get(eid, Hunger)
+                if hunger:
+                    hunger.current = min(hunger.maximum,
+                                         hunger.current + 25.0)
+                return True
     return False
 
 
@@ -369,11 +375,21 @@ def _add_to_settlement_stockpile(world: Any, subzone_id: str,
                                  item_id: str, count: int) -> None:
     """Add items to the settlement stockpile at a subzone."""
     from components.simulation import Stockpile
+    graph = world.res(SubzoneGraph)
+    zone_id = None
+    if graph:
+        node = graph.get_node(subzone_id)
+        if node:
+            zone_id = node.zone
     for seid, stockpile in world.all_of(Stockpile):
         szp = world.get(seid, SubzonePos)
-        if szp and szp.subzone == subzone_id:
-            stockpile.add(item_id, count)
-            return
+        if not szp:
+            continue
+        if szp.subzone != subzone_id:
+            if not zone_id or szp.zone != zone_id:
+                continue
+        stockpile.add(item_id, count)
+        return
 
 
 def _post_decision(scheduler: Any, eid: int, node_id: str,
@@ -407,6 +423,8 @@ def schedule_hunger_events(world: Any, scheduler: Any,
 def _schedule_hunger_event(world: Any, eid: int, scheduler: Any,
                            game_time: float) -> None:
     """Schedule the next HUNGER_CRITICAL for a single entity."""
+    if not world.has(eid, SubzonePos):
+        return
     hunger = world.get(eid, Hunger)
     if not hunger:
         return
@@ -488,7 +506,7 @@ def handle_communal_meal(world: Any, eid: int, event_type: str,
         if route:
             begin_travel(world, eid, route, graph, scheduler, game_time)
             # After arriving, post a delayed eat
-            eta = graph.travel_time(route)
+            eta = graph.total_path_time(route.path, current_node)
             scheduler.post(
                 time=game_time + eta + 0.1,
                 eid=eid,

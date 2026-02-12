@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from components import (
     Combat as CombatComp, Health, Identity, Position, Velocity,
     HitFlash, Loot, Hurtbox, Equipment, ItemRegistry, Projectile,
-    Facing, Brain, Player, Faction,
+    Facing, Brain, Player, Faction, AttackConfig, Threat, GameClock,
 )
 from logic.particles import ParticleManager
 
@@ -205,6 +205,23 @@ def alert_nearby_faction(world, defender_eid: int, attacker_eid: int):
             name = world.get(defender_eid, Identity).name
         print(f"[FACTION] {name} is now hostile!")
 
+    clock = world.res(GameClock)
+    game_time = clock.time if clock else 0.0
+    player_pos = world.get(attacker_eid, Position)
+    if world.has(defender_eid, Brain):
+        brain = world.get(defender_eid, Brain)
+        brain.active = True
+        if world.has(defender_eid, AttackConfig):
+            c = brain.state.setdefault("combat", {})
+            c["mode"] = "chase"
+            if player_pos:
+                c["p_pos"] = (player_pos.x, player_pos.y)
+            threat = world.get(defender_eid, Threat)
+            if threat:
+                threat.last_sensor_time = game_time - threat.sensor_interval
+        else:
+            brain.state["crime_flee_until"] = game_time + 20.0
+
     # Alert same-group allies within alert radius
     r_sq = faction.alert_radius ** 2
     for eid, ally_pos in world.all_of(Position):
@@ -225,6 +242,19 @@ def alert_nearby_faction(world, defender_eid: int, attacker_eid: int):
             if world.has(eid, Identity):
                 ally_name = world.get(eid, Identity).name
             print(f"[FACTION] {ally_name} alerted — now hostile!")
+            if world.has(eid, Brain):
+                b = world.get(eid, Brain)
+                b.active = True
+                if world.has(eid, AttackConfig):
+                    c = b.state.setdefault("combat", {})
+                    c["mode"] = "chase"
+                    if player_pos:
+                        c["p_pos"] = (player_pos.x, player_pos.y)
+                    threat = world.get(eid, Threat)
+                    if threat:
+                        threat.last_sensor_time = game_time - threat.sensor_interval
+                else:
+                    b.state["crime_flee_until"] = game_time + 20.0
 
 
 # ── NPC combat helpers ──────────────────────────────────────────────

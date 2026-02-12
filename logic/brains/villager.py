@@ -20,6 +20,7 @@ import math
 from core.ecs import World
 from components import Brain, Patrol, Position, Velocity, Needs, Hunger, Inventory
 from core.zone import is_passable
+from logic.brains._helpers import find_player, move_away
 from logic.brains import register_brain
 
 
@@ -43,14 +44,23 @@ def _villager_brain(world: World, eid: int, brain: Brain, dt: float,
         return
 
     s = brain.state
-    if "origin" not in s:
-        s["origin"] = (pos.x, pos.y)
-    s.setdefault("mode", "idle")
+    v = s.setdefault("villager", {})
+    if "origin" not in v:
+        v["origin"] = (pos.x, pos.y)
+    v.setdefault("mode", "idle")
 
     needs = world.get(eid, Needs)
     hunger = world.get(eid, Hunger)
     inv = world.get(eid, Inventory)
-    mode = s["mode"]
+    mode = v["mode"]
+
+    # ── Crime panic: flee the player briefly ────────────────────────
+    flee_until = s.get("crime_flee_until", 0.0)
+    if flee_until > game_time:
+        p_eid, p_pos = find_player(world)
+        if p_pos and p_pos.zone == pos.zone:
+            move_away(pos, vel, p_pos.x, p_pos.y, patrol.speed * 1.6)
+            return
 
     # ── Needs interrupt ──────────────────────────────────────────────
     # auto_eat_system handles the actual eating; the brain just decides
@@ -60,36 +70,36 @@ def _villager_brain(world: World, eid: int, brain: Brain, dt: float,
             has_food = inv is not None and len(inv.items) > 0
             if has_food:
                 # Stand still — auto_eat_system will handle consumption
-                s["mode"] = "eat"
-                s["eat_until"] = game_time + EAT_PAUSE
+                v["mode"] = "eat"
+                v["eat_until"] = game_time + EAT_PAUSE
                 mode = "eat"
             else:
                 # No food — go forage
-                s["mode"] = "forage"
-                s["forage_until"] = game_time + random.uniform(8.0, 15.0)
+                v["mode"] = "forage"
+                v["forage_until"] = game_time + random.uniform(8.0, 15.0)
                 mode = "forage"
 
     # ── Eat state (just pause, system handles actual eating) ─────────
     if mode == "eat":
         vel.x, vel.y = 0.0, 0.0
-        if s.get("eat_until", 0.0) <= game_time:
-            s["mode"] = "idle"
+        if v.get("eat_until", 0.0) <= game_time:
+            v["mode"] = "idle"
         return
 
     # ── Forage state (placeholder) ───────────────────────────────────
     if mode == "forage":
-        if s.get("forage_until", 0.0) <= game_time:
-            s["mode"] = "return"
+        if v.get("forage_until", 0.0) <= game_time:
+            v["mode"] = "return"
             return
-        _wander_step(patrol, pos, vel, s, dt, speed_mult=1.3)
+        _wander_step(patrol, pos, vel, v, dt, speed_mult=1.3)
         return
 
     # ── Return state ─────────────────────────────────────────────────
     if mode == "return":
-        ox, oy = s.get("origin", (pos.x, pos.y))
+        ox, oy = v.get("origin", (pos.x, pos.y))
         dist = math.hypot(pos.x - ox, pos.y - oy)
         if dist < 1.5:
-            s["mode"] = "idle"
+            v["mode"] = "idle"
             vel.x, vel.y = 0.0, 0.0
             return
         dx = ox - pos.x
@@ -101,7 +111,7 @@ def _villager_brain(world: World, eid: int, brain: Brain, dt: float,
         return
 
     # ── Idle state (wander) ──────────────────────────────────────────
-    _wander_step(patrol, pos, vel, s, dt)
+    _wander_step(patrol, pos, vel, v, dt)
 
 
 def _wander_step(patrol: Patrol, pos, vel, s: dict, dt: float,

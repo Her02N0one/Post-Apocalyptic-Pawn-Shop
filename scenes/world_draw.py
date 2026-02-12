@@ -381,6 +381,14 @@ def draw_hud(surface: pygame.Surface, app: App, scene):
 # ── Debug overlay ──────────────────────────────────────────────────
 
 def draw_debug_overlay(surface: pygame.Surface, app: App, scene, cam: Camera):
+    from components import Brain, Threat, AttackConfig, Velocity, Faction, GameClock
+    from components.ai import Patrol
+
+    sw, sh = surface.get_size()
+    ox = sw // 2 - int(cam.x * TILE_SIZE)
+    oy = sh // 2 - int(cam.y * TILE_SIZE)
+
+    # ── Left panel: global stats ─────────────────────────────────────
     y = 8
     app.draw_text(surface, f"FPS: {int(app.clock.get_fps())}", 8, y, (0, 255, 0))
     y += 16
@@ -395,34 +403,148 @@ def draw_debug_overlay(surface: pygame.Surface, app: App, scene, cam: Camera):
         app.draw_text(surface, f"Player: ({pos.x:.1f}, {pos.y:.1f})", 8, y, (0, 255, 0))
         y += 16
 
-    i = 0
-    for eid, pos, ident in app.world.query(Position, Identity):
-        if app.world.has(eid, Player):
-            continue
-        if not scene.show_all_zones and getattr(pos, "zone", None) != scene.zone:
-            continue
-        if i >= 12:
-            break
-        dx = abs(pos.x - cam.x)
-        dy = abs(pos.y - cam.y)
-        if dx < 30 and dy < 20:
-            lod_level = "?"
-            lod_comp = app.world.get(eid, Lod)
-            if lod_comp:
-                lod_level = lod_comp.level
-            app.draw_text(surface, f"  {ident.name} ({pos.x:.1f},{pos.y:.1f}) LOD={lod_level}",
-                          8, y, (180, 180, 180))
-            y += 14
-            i += 1
+    clock = app.world.res(GameClock)
+    if clock:
+        app.draw_text(surface, f"GameClock: {clock.time:.1f}s", 8, y, (0, 255, 0))
+        y += 16
 
     lod_counts = {"high": 0, "medium": 0, "low": 0}
     for _, lod in app.world.all_of(Lod):
         lod_counts[lod.level] = lod_counts.get(lod.level, 0) + 1
-    y += 6
     app.draw_text(surface, f"LOD: H{lod_counts['high']} M{lod_counts['medium']} L{lod_counts['low']}", 8, y, (200, 200, 100))
-    y += 14
+    y += 20
 
-    # ── Simulation debug info ──
+    # ── Per-NPC in-world debug labels + viz ──────────────────────────
+    for eid, npc_pos, ident in app.world.query(Position, Identity):
+        if app.world.has(eid, Player):
+            continue
+        if getattr(npc_pos, "zone", None) != scene.zone:
+            continue
+        # Only draw for entities visible on screen
+        sx = ox + int(npc_pos.x * TILE_SIZE)
+        sy = oy + int(npc_pos.y * TILE_SIZE)
+        if sx < -100 or sx > sw + 100 or sy < -100 or sy > sh + 100:
+            continue
+
+        brain = app.world.get(eid, Brain)
+        faction = app.world.get(eid, Faction)
+        threat = app.world.get(eid, Threat)
+        atk_cfg = app.world.get(eid, AttackConfig)
+        lod_c = app.world.get(eid, Lod)
+        patrol = app.world.get(eid, Patrol)
+
+        # Build compact label lines
+        lines: list[tuple[str, tuple[int, int, int]]] = []
+
+        # Line 1: Name + Faction
+        disp = faction.disposition if faction else "none"
+        group = faction.group if faction else "?"
+        disp_color = {
+            "hostile": (255, 80, 80),
+            "friendly": (80, 255, 80),
+            "neutral": (200, 200, 200),
+        }.get(disp, (180, 180, 180))
+        lines.append((f"{ident.name} [{group}/{disp}]", disp_color))
+
+        # Line 2: Brain state
+        if brain:
+            active_str = "ON" if brain.active else "off"
+            lod_str = lod_c.level if lod_c else "?"
+            brain_line = f"brain:{brain.kind} active:{active_str} lod:{lod_str}"
+            lines.append((brain_line, (180, 220, 255)))
+
+            # Line 3: Combat state (if in combat brain)
+            combat_state = brain.state.get("combat", {})
+            if combat_state:
+                mode = combat_state.get("mode", "?")
+                los_blocked = combat_state.get("_los_blocked", False)
+                mode_color = {
+                    "idle": (150, 150, 150),
+                    "chase": (255, 200, 80),
+                    "attack": (255, 80, 80),
+                    "flee": (80, 180, 255),
+                    "return": (180, 180, 80),
+                }.get(mode, (200, 200, 200))
+                mode_str = f"combat:{mode}"
+                if los_blocked:
+                    mode_str += " [LOS BLOCKED]"
+                p_pos = combat_state.get("p_pos")
+                if p_pos:
+                    mode_str += f" tgt:({p_pos[0]:.0f},{p_pos[1]:.0f})"
+                cd = combat_state.get("attack_until", 0.0)
+                if clock and cd > clock.time:
+                    mode_str += f" cd:{cd - clock.time:.1f}s"
+                lines.append((mode_str, mode_color))
+            else:
+                # Villager state?
+                villager_state = brain.state.get("villager", {})
+                if villager_state:
+                    vmode = villager_state.get("mode", "?")
+                    lines.append((f"villager:{vmode}", (120, 200, 120)))
+                # Crime flee?
+                flee_until = brain.state.get("crime_flee_until", 0.0)
+                if clock and flee_until > clock.time:
+                    lines.append((f"FLEEING ({flee_until - clock.time:.1f}s)", (255, 150, 50)))
+
+        # Line 4: Threat / attack info
+        if threat and atk_cfg:
+            t_line = f"aggro:{threat.aggro_radius:.0f} " \
+                     f"leash:{threat.leash_radius:.0f} " \
+                     f"atk:{atk_cfg.attack_type} " \
+                     f"rng:{atk_cfg.range:.1f} " \
+                     f"cd:{atk_cfg.cooldown:.2f}s"
+            lines.append((t_line, (160, 160, 200)))
+
+        # Draw labels above sprite
+        label_y = sy - 8 - len(lines) * 12
+        for line_text, line_color in lines:
+            app.draw_text(surface, line_text, sx - 20, label_y, line_color, app.font_sm)
+            label_y += 12
+
+        # ── Visual indicators ────────────────────────────────────────
+        cx = sx + TILE_SIZE // 2
+        cy = sy + TILE_SIZE // 2
+
+        # Aggro radius (yellow ring)
+        if threat:
+            aggro_px = int(threat.aggro_radius * TILE_SIZE)
+            _draw_circle_alpha(surface, (255, 200, 50, 25), cx, cy, aggro_px)
+            pygame.draw.circle(surface, (255, 200, 50, 80), (cx, cy), aggro_px, 1)
+
+            # Leash radius (red ring, only if in combat)
+            combat_state = brain.state.get("combat", {}) if brain else {}
+            cmode = combat_state.get("mode", "idle")
+            if cmode in ("chase", "attack", "flee"):
+                leash_px = int(threat.leash_radius * TILE_SIZE)
+                pygame.draw.circle(surface, (255, 60, 60), (cx, cy), leash_px, 1)
+
+        # Line of fire ray (when attacking and ranged)
+        if brain and atk_cfg and atk_cfg.attack_type == "ranged":
+            combat_state = brain.state.get("combat", {})
+            p_cache = combat_state.get("p_pos")
+            cmode = combat_state.get("mode", "idle")
+            if cmode in ("attack", "chase") and p_cache:
+                target_sx = ox + int(p_cache[0] * TILE_SIZE) + TILE_SIZE // 2
+                target_sy = oy + int(p_cache[1] * TILE_SIZE) + TILE_SIZE // 2
+                los_blocked = combat_state.get("_los_blocked", False)
+                ray_color = (255, 50, 50) if los_blocked else (50, 255, 50)
+                pygame.draw.line(surface, ray_color, (cx, cy), (target_sx, target_sy), 1)
+                if los_blocked:
+                    # Draw X marker at midpoint
+                    mx_r = (cx + target_sx) // 2
+                    my_r = (cy + target_sy) // 2
+                    app.draw_text(surface, "X", mx_r - 3, my_r - 5, (255, 80, 80), app.font_sm)
+
+        # Origin marker (small dot at home/origin)
+        if brain:
+            combat_state = brain.state.get("combat", {})
+            origin = combat_state.get("origin")
+            if origin:
+                osx = ox + int(origin[0] * TILE_SIZE) + TILE_SIZE // 2
+                osy = oy + int(origin[1] * TILE_SIZE) + TILE_SIZE // 2
+                pygame.draw.circle(surface, (100, 100, 255), (osx, osy), 3, 1)
+
+    # ── Simulation debug info (bottom of left panel) ─────────────────
     if hasattr(scene, "world_sim") and scene.world_sim and scene.world_sim.active:
         sim = scene.world_sim
         info = sim.debug_info()
@@ -438,8 +560,10 @@ def draw_debug_overlay(surface: pygame.Surface, app: App, scene, cam: Camera):
         for eid, szp in app.world.all_of(SubzonePos):
             ident = app.world.get(eid, Identity)
             name = ident.name if ident else f"eid{eid}"
+            hunger = app.world.get(eid, Hunger)
+            h_str = f" hunger:{hunger.current:.0f}/{hunger.maximum:.0f}" if hunger else ""
             if off_count < 8:
-                app.draw_text(surface, f"  [{szp.subzone}] {name}", 8, y, (140, 180, 220))
+                app.draw_text(surface, f"  [{szp.subzone}] {name}{h_str}", 8, y, (140, 180, 220))
                 y += 14
             off_count += 1
         if off_count > 8:
@@ -463,4 +587,15 @@ def draw_debug_overlay(surface: pygame.Surface, app: App, scene, cam: Camera):
                 y += 14
 
     y += 8
-    app.draw_text(surface, "[Tab] debug  [G] grid  [F] fast-fwd  [F1] inspector", 8, y, (100, 100, 100))
+    app.draw_text(surface, "[Tab] debug  [G] grid  [F] fast-fwd  [F1] inspector  [F2] dump", 8, y, (100, 100, 100))
+
+
+def _draw_circle_alpha(surface: pygame.Surface, color: tuple, cx: int, cy: int, radius: int):
+    """Draw a filled circle with alpha transparency."""
+    if radius < 2:
+        return
+    r, g, b, a = color
+    d = radius * 2 + 2
+    circle_surf = pygame.Surface((d, d), pygame.SRCALPHA)
+    pygame.draw.circle(circle_surf, (r, g, b, a), (d // 2, d // 2), radius)
+    surface.blit(circle_surf, (cx - d // 2, cy - d // 2))

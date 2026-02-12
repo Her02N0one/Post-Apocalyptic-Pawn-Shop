@@ -16,7 +16,10 @@ Usage:
 """
 
 from __future__ import annotations
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli as tomllib
 from pathlib import Path
 from dataclasses import fields
 from core.ecs import World
@@ -88,9 +91,8 @@ class DataLoader:
 
         # Post-process: extract display info + stats into the registry
         # Read the raw TOML again so we can grab top-level keys like type/damage
-        import tomllib as _tl
         with open(Path(path), "rb") as _f:
-            raw = _tl.load(_f)
+            raw = tomllib.load(_f)
 
         for item_id, eid in ids.items():
             ident = self.world.get(eid, Identity)

@@ -17,7 +17,7 @@ they run out of personal food — the village takes care of its own.
 from __future__ import annotations
 from components import (
     Hunger, Health, Needs, Inventory, ItemRegistry, Identity,
-    Brain, GameClock, Faction, Position,
+    Brain, GameClock, Faction, Position, SubzonePos,
 )
 
 
@@ -29,6 +29,8 @@ HUNGRY_RATIO = 0.25
 def hunger_system(world, dt: float) -> None:
     """Tick hunger for every entity that has it."""
     for eid, hunger in world.all_of(Hunger):
+        if world.has(eid, SubzonePos):
+            continue
         # ── Drain ────────────────────────────────────────────────────
         hunger.current = max(0.0, hunger.current - hunger.rate * dt)
 
@@ -78,6 +80,8 @@ def auto_eat_system(world, dt: float) -> None:
     game_time = clock.time if clock else 0.0
 
     for eid, needs in world.all_of(Needs):
+        if world.has(eid, SubzonePos):
+            continue
         if needs.priority != "eat" or needs.urgency < 0.3:
             continue
         hunger = world.get(eid, Hunger)
@@ -171,7 +175,8 @@ def _npc_eat_communal(world, eid: int) -> bool:
         return False
 
     pos = world.get(eid, Position)
-    if not pos:
+    szp = world.get(eid, SubzonePos)
+    if not pos and not szp:
         return False
 
     hunger = world.get(eid, Hunger)
@@ -185,7 +190,10 @@ def _npc_eat_communal(world, eid: int) -> bool:
         if cident.kind != "container":
             continue
         cpos = world.get(ceid, Position)
-        if not cpos or cpos.zone != pos.zone:
+        cszp = world.get(ceid, SubzonePos)
+        ent_zone = pos.zone if pos else szp.zone
+        cont_zone = cpos.zone if cpos else (cszp.zone if cszp else None)
+        if not cont_zone or cont_zone != ent_zone:
             continue
         cinv = world.get(ceid, Inventory)
         if not cinv or not cinv.items:
@@ -257,9 +265,11 @@ def settlement_food_production(world, dt: float) -> None:
 
         # Only refill settlement containers
         cpos = world.get(ceid, Position)
+        cszp = world.get(ceid, SubzonePos)
+        cont_zone = cpos.zone if cpos else (cszp.zone if cszp else None)
 
         # Only containers in the settlement zone auto-refill
-        if cpos and cpos.zone != "settlement":
+        if cont_zone != "settlement":
             continue
 
         cinv = world.get(ceid, Inventory)

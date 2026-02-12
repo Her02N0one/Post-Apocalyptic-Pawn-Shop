@@ -9,6 +9,7 @@ outcomes changing.
 """
 
 from __future__ import annotations
+import math
 import random
 from typing import Any
 
@@ -307,3 +308,37 @@ def is_high_lod(world: Any, eid: int) -> bool:
     if world.has(eid, Position) and not world.has(eid, SubzonePos):
         return True
     return False
+
+
+def sync_lod_by_distance(world: Any, graph: SubzoneGraph,
+                         scheduler: Any, game_time: float,
+                         player_pos: Any,
+                         high_radius: float,
+                         low_radius: float) -> tuple[int, int]:
+    """Promote/demote entities based on distance to the player."""
+    promoted = 0
+    demoted = 0
+
+    for eid, szp in list(world.all_of(SubzonePos)):
+        if not world.alive(eid) or szp.zone != player_pos.zone:
+            continue
+        node = graph.get_node(szp.subzone)
+        if not node:
+            continue
+        ax, ay = node.anchor
+        if math.hypot(player_pos.x - ax, player_pos.y - ay) <= high_radius:
+            if promote_entity(world, eid, graph, scheduler, game_time):
+                promoted += 1
+
+    for eid, pos in list(world.all_of(Position)):
+        if not world.alive(eid) or world.has(eid, Player):
+            continue
+        if pos.zone != player_pos.zone:
+            if demote_entity(world, eid, graph, scheduler, game_time):
+                demoted += 1
+            continue
+        if math.hypot(player_pos.x - pos.x, player_pos.y - pos.y) > low_radius:
+            if demote_entity(world, eid, graph, scheduler, game_time):
+                demoted += 1
+
+    return promoted, demoted

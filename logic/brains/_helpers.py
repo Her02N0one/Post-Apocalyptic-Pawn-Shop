@@ -134,6 +134,9 @@ def should_engage(world: World, eid: int) -> bool:
 
     No Faction component -> always hostile (backward compat).
     """
+    hf = world.get(eid, HitFlash)
+    if hf is not None and hf.remaining > 0.05:
+        return True
     faction = world.get(eid, Faction)
     if faction is None:
         return True

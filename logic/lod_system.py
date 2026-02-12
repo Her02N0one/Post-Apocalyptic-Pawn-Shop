@@ -15,6 +15,9 @@ on stale data for the first few frames.
 from __future__ import annotations
 import math
 from components import Position, Player, Lod, GameClock
+from simulation.subzone import SubzoneGraph
+from simulation.scheduler import WorldScheduler
+from simulation.lod_transition import sync_lod_by_distance
 
 # ── Tunables ─────────────────────────────────────────────────────────
 HIGH_RADIUS: float = 20.0   # tiles — full brain sim radius
@@ -42,6 +45,14 @@ def lod_system(world, dt: float) -> None:
     if not result:
         return
     _, _, p_pos = result
+
+    # If the simulation graph exists, do real promotion/demotion.
+    graph = world.res(SubzoneGraph)
+    scheduler = world.res(WorldScheduler)
+    if graph is not None and scheduler is not None:
+        sync_lod_by_distance(world, graph, scheduler, game_time,
+                             p_pos, HIGH_RADIUS, MED_RADIUS)
+        return
 
     # Sweep all entities that have a Lod component
     for eid, lod in world.all_of(Lod):

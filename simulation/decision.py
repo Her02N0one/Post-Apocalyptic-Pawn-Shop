@@ -184,7 +184,8 @@ def _check_role_duties(world, eid, current_node, graph, scheduler,
     # ── Farmer: work the farm if at home
     if home and current_node == home.subzone:
         node = graph.get_node(current_node)
-        if node and "farmable" in node.resource_nodes:
+        farm_tags = {"farmable", "wheat", "corn"}
+        if node and any(tag in node.resource_nodes for tag in farm_tags):
             # Farm for 15-30 minutes
             work_duration = random.uniform(15.0, 30.0)
             scheduler.post(
@@ -465,7 +466,11 @@ def _settlement_needs_supplies(world, home) -> bool:
         return False
     for seid, stockpile in world.all_of(Stockpile):
         szp = world.get(seid, SubzonePos)
-        if szp and szp.subzone == home.subzone:
+        if not szp:
+            continue
+        if szp.subzone != home.subzone:
+            if not home.zone or szp.zone != home.zone:
+                continue
             return stockpile.total_count() < 10
     return False
 

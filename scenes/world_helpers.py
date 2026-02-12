@@ -262,17 +262,33 @@ def tick_timers(scene, dt: float, app):
 # ── Debug dump ───────────────────────────────────────────────────────
 
 def dump_entity_debug(app):
-    """Print a compact table of entities and their key components to console."""
+    """Print a comprehensive table of entities and their key components to console."""
+    from components import (Brain, Threat, AttackConfig, Faction, Health,
+                            Hunger, GameClock)
+
     dump = app.world.debug_dump()
-    print("--- ENTITY DUMP ---")
-    print(f"total entities: {len(dump)}")
-    counts = {"pos": 0, "lod": 0}
+    clock = app.world.res(GameClock)
+    clock_str = f"{clock.time:.1f}s" if clock else "?"
+
+    print(f"=== ENTITY DUMP === (clock={clock_str}, {len(dump)} entities)")
+    print(f"{'eid':>4} {'name':>12} {'spr':>3} {'pos':>18} {'lod':>6} {'vel':>14} "
+          f"{'faction':>15} {'hp':>7} {'brain':>10} {'mode':>10}")
+    print("-" * 120)
+
+    counts = {"pos": 0, "lod": 0, "brain": 0, "combat": 0}
     for eid, comps in sorted(dump.items()):
+        if eid == -1:
+            continue
         name = "<no-name>"
         pos_s = "-"
         lod_s = "-"
         vel_s = "-"
         spr = "?"
+        faction_s = "-"
+        hp_s = "-"
+        brain_s = "-"
+        mode_s = "-"
+
         for c in comps:
             if isinstance(c, Identity):
                 name = c.name
@@ -286,6 +302,48 @@ def dump_entity_debug(app):
                 vel_s = f"({c.x:.2f},{c.y:.2f})"
             if isinstance(c, Sprite):
                 spr = c.char
-        print(f"eid={eid:3} name={name:12} spr={spr} pos={pos_s:20} lod={lod_s:6} vel={vel_s}")
-    print(f"positions: {counts['pos']}  lods: {counts['lod']}")
-    print("--- END DUMP ---")
+
+        # Extra NPC info
+        faction = app.world.get(eid, Faction)
+        if faction:
+            faction_s = f"{faction.group}/{faction.disposition}"
+        health = app.world.get(eid, Health)
+        if health:
+            hp_s = f"{health.current:.0f}/{health.maximum:.0f}"
+        brain = app.world.get(eid, Brain)
+        if brain:
+            counts["brain"] += 1
+            brain_s = f"{brain.kind}({'ON' if brain.active else 'off'})"
+            combat = brain.state.get("combat", {})
+            if combat:
+                counts["combat"] += 1
+                mode = combat.get("mode", "?")
+                los = combat.get("_los_blocked", False)
+                mode_s = mode
+                if los:
+                    mode_s += "(LOS!)"
+            else:
+                villager = brain.state.get("villager", {})
+                if villager:
+                    mode_s = f"v:{villager.get('mode', '?')}"
+
+        print(f"{eid:>4} {name:>12} {spr:>3} {pos_s:>18} {lod_s:>6} {vel_s:>14} "
+              f"{faction_s:>15} {hp_s:>7} {brain_s:>10} {mode_s:>10}")
+
+    print("-" * 120)
+    print(f"pos:{counts['pos']}  lod:{counts['lod']}  brains:{counts['brain']}  in_combat:{counts['combat']}")
+
+    # Print detailed brain state for NPCs with brains
+    print("\n--- BRAIN STATE DETAILS ---")
+    for eid, brain in app.world.all_of(Brain):
+        ident = app.world.get(eid, Identity)
+        nm = ident.name if ident else f"e{eid}"
+        print(f"  e{eid} [{nm}] kind={brain.kind} active={brain.active}")
+        for sk, sv in brain.state.items():
+            if isinstance(sv, dict):
+                print(f"    {sk}:")
+                for dk, dv in sv.items():
+                    print(f"      {dk}: {dv}")
+            else:
+                print(f"    {sk}: {sv}")
+    print("=== END DUMP ===")

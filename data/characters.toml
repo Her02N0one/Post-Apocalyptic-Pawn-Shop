@@ -100,6 +100,17 @@ rate    = 0.03
 [maria.inventory.items]
 canned_beans = 4
 dried_meat   = 3
+shotgun      = 1
+[maria.equipment]
+weapon = "shotgun"
+[maria.threat]
+aggro_radius    = 7.0
+leash_radius    = 10.0
+flee_threshold  = 0.2
+[maria.attack_config]
+attack_type = "ranged"
+range       = 6.0
+cooldown    = 0.6
 [maria.faction]
 group            = "settlers"
 disposition      = "friendly"
@@ -211,6 +222,16 @@ dried_meat   = 6
 bandages     = 4
 knife        = 1
 bat          = 1
+[nessa.equipment]
+weapon = "bat"
+[nessa.threat]
+aggro_radius    = 6.0
+leash_radius    = 10.0
+flee_threshold  = 0.25
+[nessa.attack_config]
+attack_type = "melee"
+range       = 1.6
+cooldown    = 0.35
 [nessa.faction]
 group            = "settlers"
 disposition      = "friendly"

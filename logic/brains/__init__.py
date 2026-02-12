@@ -18,7 +18,7 @@ sweeps vs. cheap movement-only ticks.
 from __future__ import annotations
 from typing import Callable
 from core.ecs import World
-from components import Brain, Position, Lod, GameClock
+from components import Brain, Position, Lod, GameClock, Threat, AttackConfig, HitFlash, Combat
 
 
 _registry: dict[str, Callable] = {}
@@ -35,12 +35,10 @@ def get_brain(name: str):
 def run_brains(world: World, dt: float):
     """Execute brains for active, high-LOD entities.
 
-    Passes ``game_time`` through so brains can throttle sensors and
-    use timestamp-based cooldowns instead of ``-= dt`` countdowns.
-
-    Entities whose ``Lod.transition_until > game_time`` are in the
-    orienting grace period — the brain is skipped so they don't snap
-    into combat the instant they pop into existence.
+    Brains receive ``game_time`` (``GameClock.time``) which advances
+    at 1.0 per real second (at 1x speed).  Brain cooldowns, sensor
+    intervals, and attack timers are all in seconds, matching this
+    clock directly.
     """
     clock = world.res(GameClock)
     game_time = clock.time if clock else 0.0
@@ -56,12 +54,31 @@ def run_brains(world: World, dt: float):
             continue
         if not world.has(eid, Position):
             continue
+
+        # Ensure hostile combatants have combat config even if missing in data.
+        if world.has(eid, Combat) and not world.has(eid, AttackConfig):
+            from components import Faction
+            faction = world.get(eid, Faction)
+            if faction and faction.disposition == "hostile":
+                world.add(eid, AttackConfig())
+                if not world.has(eid, Threat):
+                    world.add(eid, Threat())
+        if world.has(eid, Threat) and world.has(eid, AttackConfig):
+            from logic.brains._helpers import should_engage
+            from logic.combat_engagement import run_combat_brain
+            if should_engage(world, eid) or brain.kind in ("guard", "hostile_melee", "hostile_ranged"):
+                try:
+                    run_combat_brain(world, eid, brain, dt, game_time)
+                except Exception as exc:
+                    import traceback; traceback.print_exc()
+                continue
+
         fn = get_brain(brain.kind)
         if fn:
             try:
                 fn(world, eid, brain, dt, game_time)
-            except Exception:
-                pass
+            except Exception as exc:
+                import traceback; traceback.print_exc()
 
 
 # Import brain modules to trigger their register_brain() calls.

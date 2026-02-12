@@ -19,10 +19,12 @@ from core.ecs import World
 class App:
     def __init__(self, title: str = "Shopkeeper", width: int = 960, height: int = 640):
         pygame.init()
-        self.screen = pygame.display.set_mode((width, height))
+        self._windowed_size = (width, height)
+        self.screen = pygame.display.set_mode((width, height), pygame.RESIZABLE)
         pygame.display.set_caption(title)
         self.clock = pygame.time.Clock()
         self.running = True
+        self.fullscreen = False
         self.fps = 60
         self.dt = 0.0
 
@@ -66,6 +68,12 @@ class App:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_F11:
+                    self.toggle_fullscreen()
+                elif event.type == pygame.VIDEORESIZE and not self.fullscreen:
+                    self._windowed_size = (event.w, event.h)
+                    self.screen = pygame.display.set_mode(
+                        (event.w, event.h), pygame.RESIZABLE)
                 elif self.scene:
                     self.scene.handle_event(event, self)
 
@@ -80,6 +88,15 @@ class App:
             pygame.display.flip()
 
         pygame.quit()
+
+    def toggle_fullscreen(self):
+        """Switch between windowed and fullscreen (F11)."""
+        self.fullscreen = not self.fullscreen
+        if self.fullscreen:
+            self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        else:
+            self.screen = pygame.display.set_mode(
+                self._windowed_size, pygame.RESIZABLE)
 
     # -- Convenience --
 

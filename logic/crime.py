@@ -22,7 +22,7 @@ from components import (
     Player, Position, Health, Identity, Faction, Dialogue,
     CrimeRecord,
 )
-from components.ai import Threat, AttackConfig
+from components.ai import Threat, AttackConfig, Brain
 from components.simulation import WorldMemory
 
 
@@ -99,7 +99,9 @@ def report_theft(world: Any, witnesses: list[int], item_id: str,
             world.add(player_res, cr)
         cr.record(owner_faction)
 
-    guard_saw = False
+    player_eid = player_res if player_res is not None else None
+
+    armed_saw = False
     witness_names: list[str] = []
 
     for weid in witnesses:
@@ -127,13 +129,20 @@ def report_theft(world: Any, witnesses: list[int], item_id: str,
         faction = world.get(weid, Faction)
         has_combat = world.has(weid, AttackConfig)
         if has_combat and faction and faction.disposition == "friendly":
-            guard_saw = True
-            # Guard turns hostile immediately
+            armed_saw = True
+            # Armed witness turns hostile immediately
             faction.disposition = "hostile"
-            print(f"[CRIME] Guard {wname} saw the theft — turning hostile!")
+            print(f"[CRIME] Armed witness {wname} saw the theft — turning hostile!")
+            if player_eid is not None:
+                from logic.combat import alert_nearby_faction
+                alert_nearby_faction(world, weid, player_eid)
+        else:
+            brain = world.get(weid, Brain)
+            if brain is not None:
+                brain.state["crime_flee_until"] = game_time + 20.0
 
-    if guard_saw:
-        return "A guard saw you steal! They won't let that slide."
+    if armed_saw:
+        return "An armed witness saw you steal! They won't let that slide."
 
     first_name = witness_names[0] if witness_names else "Someone"
     if len(witness_names) == 1:

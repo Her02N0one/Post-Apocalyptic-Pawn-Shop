@@ -168,7 +168,7 @@ class TransferModal(Modal):
             # Title
             title = self.container_title if p_idx == 0 else self.title
             if p_idx == 0 and self.locked:
-                title += \" (Locked)\"
+                title += " (Locked)"
             pygame.draw.rect(surface, (50, 50, 75), (px, py, panel_w, 28))
             app.draw_text(surface, title, px + 10, py + 6,
                           (200, 200, 255), font=app.font_lg)
