@@ -559,6 +559,36 @@ def draw_debug_overlay(surface: pygame.Surface, app: App, scene, cam: Camera):
                 osy = oy + int(origin[1] * TILE_SIZE) + TILE_SIZE // 2
                 pygame.draw.circle(surface, (100, 100, 255), (osx, osy), 3, 1)
 
+            # ── A* path visualization ────────────────────────────────
+            # Check all places a cached path might live
+            _path_sources = [
+                (combat_state, "_chase_path", (255, 120, 50)),   # combat chase
+                (brain.state.get("villager", {}), "_path", (50, 255, 120)),    # villager walk
+                (brain.state.get("villager", {}), "_wander_path", (120, 200, 255)),  # villager wander
+                (brain.state, "_path", (200, 120, 255)),         # wander brain
+            ]
+            for src_dict, key, path_color in _path_sources:
+                apath = src_dict.get(key) if isinstance(src_dict, dict) else None
+                if not apath or len(apath) == 0:
+                    continue
+                # Draw waypoint dots and connecting lines
+                prev_px, prev_py = cx, cy
+                for wi, (wx, wy) in enumerate(apath):
+                    wpx = ox + int(wx * TILE_SIZE) + TILE_SIZE // 2
+                    wpy = oy + int(wy * TILE_SIZE) + TILE_SIZE // 2
+                    # Dotted line: draw dashes
+                    _draw_dashed_line(surface, path_color, prev_px, prev_py, wpx, wpy)
+                    # Waypoint dot
+                    pygame.draw.circle(surface, path_color, (wpx, wpy), 3)
+                    prev_px, prev_py = wpx, wpy
+                # Goal marker (diamond) at the last waypoint
+                if apath:
+                    gx, gy = apath[-1]
+                    gpx = ox + int(gx * TILE_SIZE) + TILE_SIZE // 2
+                    gpy = oy + int(gy * TILE_SIZE) + TILE_SIZE // 2
+                    _draw_diamond(surface, path_color, gpx, gpy, 5)
+                break  # only show the first active path per NPC
+
     # ── Simulation debug info (bottom of left panel) ─────────────────
     if hasattr(scene, "world_sim") and scene.world_sim and scene.world_sim.active:
         sim = scene.world_sim
@@ -602,7 +632,7 @@ def draw_debug_overlay(surface: pygame.Surface, app: App, scene, cam: Camera):
                 y += 14
 
     y += 8
-    app.draw_text(surface, "[Tab] debug  [G] grid  [F] fast-fwd  [F1] inspector  [F2] dump", 8, y, (100, 100, 100))
+    app.draw_text(surface, "[Tab] debug  [G] grid  [F] fast-fwd  [F1] inspector  [F2] dump  [F5] scenes  [F6] reload", 8, y, (100, 100, 100))
 
 
 def _draw_circle_alpha(surface: pygame.Surface, color: tuple, cx: int, cy: int, radius: int):
@@ -614,3 +644,33 @@ def _draw_circle_alpha(surface: pygame.Surface, color: tuple, cx: int, cy: int, 
     circle_surf = pygame.Surface((d, d), pygame.SRCALPHA)
     pygame.draw.circle(circle_surf, (r, g, b, a), (d // 2, d // 2), radius)
     surface.blit(circle_surf, (cx - d // 2, cy - d // 2))
+
+
+def _draw_dashed_line(surface: pygame.Surface, color: tuple,
+                      x1: int, y1: int, x2: int, y2: int,
+                      dash_len: int = 6, gap_len: int = 4):
+    """Draw a dashed line between two points."""
+    import math
+    dx = x2 - x1
+    dy = y2 - y1
+    dist = math.hypot(dx, dy)
+    if dist < 1:
+        return
+    nx, ny = dx / dist, dy / dist
+    drawn = 0.0
+    while drawn < dist:
+        seg_end = min(drawn + dash_len, dist)
+        sx = int(x1 + nx * drawn)
+        sy = int(y1 + ny * drawn)
+        ex = int(x1 + nx * seg_end)
+        ey = int(y1 + ny * seg_end)
+        pygame.draw.line(surface, color, (sx, sy), (ex, ey), 1)
+        drawn = seg_end + gap_len
+
+
+def _draw_diamond(surface: pygame.Surface, color: tuple,
+                  cx: int, cy: int, size: int):
+    """Draw a small diamond marker."""
+    points = [(cx, cy - size), (cx + size, cy),
+              (cx, cy + size), (cx - size, cy)]
+    pygame.draw.polygon(surface, color, points, 2)

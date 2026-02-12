@@ -79,6 +79,8 @@ _GAMEPLAY_BINDS: dict[str, list[tuple[int, int]]] = {
     "entity_dump":  [(pygame.K_F2, 0)],
     "spawn_test":   [(pygame.K_BACKQUOTE, 0)],
     "toggle_editor":[(pygame.K_F4, 0)],
+    "scene_picker": [(pygame.K_F5, 0)],
+    "tuning_reload":[(pygame.K_F6, 0)],
 }
 
 _UI_BINDS: dict[str, list[tuple[int, int]]] = {

@@ -14,12 +14,7 @@ from components import Brain, Patrol, Position, Velocity
 from core.zone import is_passable, ZONE_MAPS
 from logic.brains import register_brain
 from logic.pathfinding import find_path, path_next_waypoint
-
-
-# How often to pick a new random destination (seconds)
-_PICK_INTERVAL_MIN = 2.0
-_PICK_INTERVAL_MAX = 5.0
-_MAX_DEST_ATTEMPTS = 8       # tries to find a passable destination tile
+from core.tuning import get as _tun
 
 
 def _pick_random_passable(zone: str, ox: float, oy: float,
@@ -31,9 +26,9 @@ def _pick_random_passable(zone: str, ox: float, oy: float,
     rows = len(tiles)
     cols = len(tiles[0]) if rows else 0
 
-    for _ in range(_MAX_DEST_ATTEMPTS):
+    for _ in range(int(_tun("ai.wander", "max_dest_attempts", 8))):
         angle = random.uniform(0, 2 * math.pi)
-        r = random.uniform(2.0, radius)
+        r = random.uniform(_tun("ai.wander", "min_dest_radius", 2.0), radius)
         tx = ox + math.cos(angle) * r
         ty = oy + math.sin(angle) * r
         tr, tc = int(ty), int(tx)
@@ -69,10 +64,11 @@ def _wander_brain(world: World, eid: int, brain: Brain, dt: float,
     pick_time = s.get("_pick_time", 0.0)
 
     # ── Need a new destination? ──────────────────────────────────────
+    pick_max = _tun("ai.wander", "pick_interval_max", 5.0)
     need_new = (
         path is None
         or len(path) == 0
-        or (game_time - pick_time) > s.get("_pick_interval", _PICK_INTERVAL_MAX)
+        or (game_time - pick_time) > s.get("_pick_interval", pick_max)
     )
 
     if need_new:
@@ -85,19 +81,22 @@ def _wander_brain(world: World, eid: int, brain: Brain, dt: float,
         else:
             s["_path"] = None
         s["_pick_time"] = game_time
-        s["_pick_interval"] = random.uniform(_PICK_INTERVAL_MIN, _PICK_INTERVAL_MAX)
+        pick_min = _tun("ai.wander", "pick_interval_min", 2.0)
+        s["_pick_interval"] = random.uniform(pick_min, pick_max)
         path = s.get("_path")
 
     # ── Follow path ──────────────────────────────────────────────────
     if path is not None and len(path) > 0:
-        wp = path_next_waypoint(path, pos.x, pos.y, reach=0.45)
+        wp = path_next_waypoint(path, pos.x, pos.y,
+                                reach=_tun("ai.wander", "waypoint_reach", 0.45))
         if wp is not None:
             wx, wy = wp
             dx = wx - pos.x
             dy = wy - pos.y
             d = math.hypot(dx, dy)
             if d > 0.05:
-                spd = random.uniform(p_speed * 0.5, p_speed) if s.get("_speed") is None else s["_speed"]
+                spd_min_mult = _tun("ai.wander", "path_speed_min_mult", 0.5)
+                spd = random.uniform(p_speed * spd_min_mult, p_speed) if s.get("_speed") is None else s["_speed"]
                 s["_speed"] = spd
                 vel.x = (dx / d) * spd
                 vel.y = (dy / d) * spd
@@ -122,7 +121,10 @@ def _wander_brain(world: World, eid: int, brain: Brain, dt: float,
         dx = speed * math.cos(angle)
         dy = speed * math.sin(angle)
         s["dir"] = (dx, dy)
-        s["timer"] = random.uniform(1.0, 3.0)
+        s["timer"] = random.uniform(
+            _tun("ai.wander", "fallback_timer_min", 1.0),
+            _tun("ai.wander", "fallback_timer_max", 3.0),
+        )
 
     dx, dy = s["dir"]
     ox, oy = s["origin"]

@@ -51,11 +51,11 @@ def movement_system(world: World, dt: float, tiles: list[list[int]]):
 
     # Process movement
     for eid, pos, vel in world.query(Position, Velocity):
-        # Only move players and high-LOD NPCs
+        # Only move players and same-zone (high/medium) LOD NPCs
         if not world.has(eid, Player):
             lod = world.get(eid, Lod)
-            if lod is None or lod.level != "high":
-                # ensure low/medium LOD entities don't drift
+            if lod is not None and lod.level == "low":
+                # low LOD (different zone) entities don't move
                 vel.x = 0.0
                 vel.y = 0.0
                 continue

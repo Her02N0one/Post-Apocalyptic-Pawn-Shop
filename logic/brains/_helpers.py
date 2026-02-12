@@ -18,6 +18,7 @@ from components import (
 )
 from core.zone import is_passable
 from logic.pathfinding import find_path, path_next_waypoint
+from core.tuning import get as _tun
 
 
 # ── Targeting ────────────────────────────────────────────────────────
@@ -43,8 +44,6 @@ def hp_ratio(world: World, eid: int) -> float:
 
 # ── Movement ─────────────────────────────────────────────────────────
 
-_PATH_RECOMPUTE_INTERVAL = 0.8  # seconds between A* recomputes in combat
-
 def move_toward(pos, vel, tx: float, ty: float, speed: float):
     dx = tx - pos.x
     dy = ty - pos.y
@@ -66,12 +65,14 @@ def move_toward_pathfind(pos, vel, tx: float, ty: float, speed: float,
     path = state.get("_chase_path")
     path_time = state.get("_chase_path_t", 0.0)
     path_tgt = state.get("_chase_path_tgt")
+    recompute_interval = _tun("ai.helpers", "path_recompute_interval", 0.8)
+    drift_threshold = _tun("ai.helpers", "path_target_drift_threshold", 1.5)
     need = (
         path is None
         or path_tgt is None
-        or abs(path_tgt[0] - tx) > 1.5
-        or abs(path_tgt[1] - ty) > 1.5
-        or (game_time - path_time) > _PATH_RECOMPUTE_INTERVAL
+        or abs(path_tgt[0] - tx) > drift_threshold
+        or abs(path_tgt[1] - ty) > drift_threshold
+        or (game_time - path_time) > recompute_interval
     )
     if need:
         new_path = find_path(pos.zone, pos.x, pos.y, tx, ty, max_dist=24)
@@ -81,7 +82,8 @@ def move_toward_pathfind(pos, vel, tx: float, ty: float, speed: float,
         path = new_path
 
     if path is not None and len(path) > 0:
-        wp = path_next_waypoint(path, pos.x, pos.y, reach=0.45)
+        wp_reach = _tun("ai.helpers", "waypoint_reach", 0.45)
+        wp = path_next_waypoint(path, pos.x, pos.y, reach=wp_reach)
         if wp is not None:
             wx, wy = wp
             dx = wx - pos.x
@@ -142,9 +144,14 @@ def run_idle(patrol, pos, vel, s: dict, dt: float):
     s["idle_timer"] -= dt
     if s["idle_timer"] <= 0:
         angle = random.uniform(0, 2 * math.pi)
-        speed = random.uniform(patrol.speed * 0.2, patrol.speed * 0.5)
+        spd_min = patrol.speed * _tun("ai.helpers", "idle_wander_speed_min", 0.2)
+        spd_max = patrol.speed * _tun("ai.helpers", "idle_wander_speed_max", 0.5)
+        speed = random.uniform(spd_min, spd_max)
         s["idle_dir"] = (speed * math.cos(angle), speed * math.sin(angle))
-        s["idle_timer"] = random.uniform(1.5, 4.0)
+        s["idle_timer"] = random.uniform(
+            _tun("ai.helpers", "idle_timer_min", 1.5),
+            _tun("ai.helpers", "idle_timer_max", 4.0),
+        )
 
     dx, dy = s["idle_dir"]
     ox, oy = s.get("origin", (pos.x, pos.y))
@@ -156,7 +163,7 @@ def run_idle(patrol, pos, vel, s: dict, dt: float):
         to_ox = ox - pos.x
         to_oy = oy - pos.y
         length = max(0.01, math.hypot(to_ox, to_oy))
-        spd = patrol.speed * 0.3
+        spd = patrol.speed * _tun("ai.helpers", "idle_return_speed_mult", 0.3)
         dx = (to_ox / length) * spd
         dy = (to_oy / length) * spd
         s["idle_dir"] = (dx, dy)
@@ -167,7 +174,7 @@ def run_idle(patrol, pos, vel, s: dict, dt: float):
         vel.y = dy
     else:
         vel.x, vel.y = 0.0, 0.0
-        s["idle_timer"] = 0.1
+        s["idle_timer"] = _tun("ai.helpers", "idle_blocked_timer", 0.1)
 
 
 # ── Faction / defense ───────────────────────────────────────────────
@@ -203,11 +210,11 @@ def try_dodge(world: World, eid: int, brain: Brain,
     if d < 0.05:
         return False
     patrol = world.get(eid, Patrol)
-    dodge_speed = (patrol.speed if patrol else 2.0) * 3.0
+    dodge_speed = (patrol.speed if patrol else 2.0) * _tun("ai.helpers", "dodge_speed_mult", 3.0)
     direction = 1 if random.random() > 0.5 else -1
     vel.x = (-dy / d) * direction * dodge_speed
     vel.y = (dx / d) * direction * dodge_speed
-    s["dodge_until"] = game_time + 1.5
+    s["dodge_until"] = game_time + _tun("ai.helpers", "dodge_duration", 1.5)
     return True
 
 
@@ -217,7 +224,7 @@ def try_heal(world: World, eid: int, brain: Brain, s: dict,
     if s.get("heal_until", 0.0) > game_time:
         return False
     hp = hp_ratio(world, eid)
-    if hp > 0.4:
+    if hp > _tun("ai.helpers", "heal_hp_threshold", 0.4):
         return False
     inv = world.get(eid, Inventory)
     if inv is None:
@@ -248,7 +255,7 @@ def try_heal(world: World, eid: int, brain: Brain, s: dict,
     if world.has(eid, Identity):
         name = world.get(eid, Identity).name
     print(f"[AI] {name} used {registry.display_name(best_id)} (+{best_heal:.0f} HP)")
-    s["heal_until"] = game_time + 5.0
+    s["heal_until"] = game_time + _tun("ai.helpers", "heal_cooldown", 5.0)
     return True
 
 

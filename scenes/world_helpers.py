@@ -158,6 +158,12 @@ def process_gameplay_intents(scene, app):
     if inp.just("debug_scene"):
         from scenes.debug_scene import DebugScene
         app.push_scene(DebugScene())
+    if inp.just("scene_picker"):
+        from scenes.scene_picker import ScenePickerScene
+        app.push_scene(ScenePickerScene())
+    if inp.just("tuning_reload"):
+        from core import tuning as tuning_mod
+        tuning_mod.reload()
     if inp.just("entity_dump"):
         dump_entity_debug(app)
     if inp.just("toggle_zones"):

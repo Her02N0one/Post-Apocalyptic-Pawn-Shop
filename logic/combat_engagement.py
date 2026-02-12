@@ -31,6 +31,8 @@ from logic.brains._helpers import (
     run_idle, should_engage, try_dodge, try_heal,
     reset_faction_on_return,
 )
+from core.tuning import get as _tun
+from core.events import EventBus, AttackIntent
 
 
 def _log(world: World, eid: int, cat: str, msg: str, t: float = 0.0, **kw):
@@ -53,7 +55,7 @@ def _ally_near_target(world: World, eid: int, pos, tx: float, ty: float,
     if faction is None:
         return False
     group = faction.group
-    threshold = melee_range * 0.8  # slightly tighter than attack range
+    threshold = melee_range * _tun("combat.engagement", "ally_near_target_factor", 0.8)
 
     for aid, apos in world.all_of(Position):
         if aid == eid:
@@ -91,7 +93,7 @@ def _ally_in_line_of_fire(world: World, eid: int, pos, tx: float, ty: float) -> 
     if seg_len_sq < 0.01:
         return False
 
-    CLEAR = 0.6  # tiles — how close to the line counts as blocking
+    CLEAR = _tun("combat.engagement", "line_of_fire_clearance", 0.6)
 
     for aid, apos in world.all_of(Position):
         if aid == eid:
@@ -206,7 +208,7 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
             elif home_dist > threat.leash_radius:
                 c["mode"] = "return"
                 _log(world, eid, "combat", f"chase → return (leash={home_dist:.1f})", game_time)
-            elif is_ranged and dist <= atk_cfg.range * 1.1:
+            elif is_ranged and dist <= atk_cfg.range * _tun("combat.engagement", "ranged_chase_to_attack", 1.1):
                 c["mode"] = "attack"
                 _log(world, eid, "combat", f"chase → attack (ranged, dist={dist:.1f})", game_time)
             elif not is_ranged and dist <= atk_cfg.range:
@@ -220,10 +222,10 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
             elif home_dist > threat.leash_radius:
                 c["mode"] = "return"
                 _log(world, eid, "combat", f"attack → return (leash={home_dist:.1f})", game_time)
-            elif is_ranged and dist > atk_cfg.range * 1.8:
+            elif is_ranged and dist > atk_cfg.range * _tun("combat.engagement", "ranged_attack_to_chase", 1.8):
                 c["mode"] = "chase"
                 _log(world, eid, "combat", f"attack → chase (too far, dist={dist:.1f})", game_time)
-            elif not is_ranged and dist > atk_cfg.range * 1.6:
+            elif not is_ranged and dist > atk_cfg.range * _tun("combat.engagement", "melee_attack_to_chase", 1.6):
                 c["mode"] = "chase"
                 _log(world, eid, "combat", f"attack → chase (melee lost range)", game_time)
 
@@ -236,8 +238,12 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
                         _log(world, eid, "combat", "LOS blocked by ally, strafing", game_time)
                     else:
                         c["_los_blocked"] = False
-                        from logic.combat import npc_ranged_attack
-                        npc_ranged_attack(world, eid, p_eid)
+                        bus = world.res(EventBus)
+                        if bus:
+                            bus.emit(AttackIntent(attacker_eid=eid, target_eid=p_eid, attack_type="ranged"))
+                        else:
+                            from logic.combat import npc_ranged_attack
+                            npc_ranged_attack(world, eid, p_eid)
                         c["attack_until"] = game_time + atk_cfg.cooldown
                         _log(world, eid, "attack", "fired ranged attack", game_time)
                 else:
@@ -245,22 +251,26 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
                     if _ally_near_target(world, eid, pos, p_pos.x, p_pos.y, atk_cfg.range):
                         _log(world, eid, "combat", "melee held — ally near target", game_time)
                     else:
-                        from logic.combat import npc_melee_attack
-                        npc_melee_attack(world, eid, p_eid)
+                        bus = world.res(EventBus)
+                        if bus:
+                            bus.emit(AttackIntent(attacker_eid=eid, target_eid=p_eid, attack_type="melee"))
+                        else:
+                            from logic.combat import npc_melee_attack
+                            npc_melee_attack(world, eid, p_eid)
                         c["attack_until"] = game_time + atk_cfg.cooldown
                         _log(world, eid, "attack", "melee strike", game_time)
 
         elif mode == "flee":
-            if cur_hp_ratio > threat.flee_threshold * 2.5 or dist > threat.aggro_radius:
+            if cur_hp_ratio > threat.flee_threshold * _tun("combat.engagement", "flee_recovery_mult", 2.5) or dist > threat.aggro_radius:
                 c["mode"] = "return"
                 _log(world, eid, "combat", "flee → return", game_time)
 
         elif mode == "return":
-            if math.hypot(pos.x - ox, pos.y - oy) < 1.0:
+            if math.hypot(pos.x - ox, pos.y - oy) < _tun("combat.engagement", "return_arrive_dist", 1.0):
                 c["mode"] = "idle"
                 reset_faction_on_return(world, eid)
                 _log(world, eid, "combat", "returned home → idle", game_time)
-            elif dist <= threat.aggro_radius * 0.6:
+            elif dist <= threat.aggro_radius * _tun("combat.engagement", "return_reaggro_factor", 0.6):
                 c["mode"] = "chase"
                 _log(world, eid, "combat", "return interrupted → chase", game_time)
 
@@ -268,7 +278,7 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
     mode = c["mode"]
     p_cache = c.get("p_pos")
     ox, oy = c.get("origin", (pos.x, pos.y))
-    p_speed = patrol.speed if patrol else 2.0
+    p_speed = patrol.speed if patrol else _tun("combat.engagement", "fallback_patrol_speed", 2.0)
 
     if mode == "idle":
         if patrol:
@@ -277,7 +287,8 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
             vel.x, vel.y = 0.0, 0.0
 
     elif mode == "chase" and p_cache:
-        chase_mult = 1.2 if is_ranged else 1.4
+        chase_mult = _tun("combat.engagement", "chase_mult_ranged", 1.2) if is_ranged \
+            else _tun("combat.engagement", "chase_mult_melee", 1.4)
         move_toward_pathfind(pos, vel, p_cache[0], p_cache[1],
                              p_speed * chase_mult, c, game_time)
         face_toward(world, eid, type("P", (), {"x": p_cache[0], "y": p_cache[1]})())
@@ -290,38 +301,45 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
 
         if is_ranged:
             # Ranged: kite if too close, strafe otherwise
-            too_close = atk_cfg.range * 0.4
+            too_close = atk_cfg.range * _tun("combat.engagement", "kite_close_factor", 0.4)
             if dist < too_close:
-                move_away(pos, vel, px, py, p_speed * 1.3)
+                move_away(pos, vel, px, py, p_speed * _tun("combat.engagement", "kite_away_speed_mult", 1.3))
             elif c.get("_los_blocked"):
                 # Ally in the firing line — strafe aggressively to clear
                 c.setdefault("strafe_dir", 1)
-                strafe(pos, vel, p_proxy, p_speed * 1.2, c["strafe_dir"])
+                strafe(pos, vel, p_proxy, p_speed * _tun("combat.engagement", "strafe_speed_los_mult", 1.2), c["strafe_dir"])
                 # Flip direction every 0.4-0.8s when LOS-blocked
                 c["strafe_timer"] = c.get("strafe_timer", 0.0) - dt
                 if c["strafe_timer"] <= 0:
-                    c["strafe_timer"] = random.uniform(0.4, 0.8)
+                    c["strafe_timer"] = random.uniform(
+                        _tun("combat.engagement", "strafe_timer_los_min", 0.4),
+                        _tun("combat.engagement", "strafe_timer_los_max", 0.8),
+                    )
                     c["strafe_dir"] *= -1
             else:
                 c.setdefault("strafe_dir", 1)
                 c["strafe_timer"] = c.get("strafe_timer", 0.0) - dt
                 if c["strafe_timer"] <= 0:
-                    c["strafe_timer"] = random.uniform(0.8, 2.0)
+                    c["strafe_timer"] = random.uniform(
+                        _tun("combat.engagement", "strafe_timer_normal_min", 0.8),
+                        _tun("combat.engagement", "strafe_timer_normal_max", 2.0),
+                    )
                     c["strafe_dir"] *= -1
-                strafe(pos, vel, p_proxy, p_speed * 0.6, c["strafe_dir"])
+                strafe(pos, vel, p_proxy, p_speed * _tun("combat.engagement", "strafe_speed_normal_mult", 0.6), c["strafe_dir"])
         else:
             # Melee: close in or stand
-            if dist > atk_cfg.range * 0.5:
-                move_toward(pos, vel, px, py, p_speed * 0.5)
+            if dist > atk_cfg.range * _tun("combat.engagement", "melee_close_in_factor", 0.5):
+                move_toward(pos, vel, px, py, p_speed * _tun("combat.engagement", "melee_close_in_speed", 0.5))
             else:
                 vel.x, vel.y = 0.0, 0.0
 
     elif mode == "flee" and p_cache:
-        move_away(pos, vel, p_cache[0], p_cache[1], p_speed * 1.3)
+        move_away(pos, vel, p_cache[0], p_cache[1], p_speed * _tun("combat.engagement", "flee_speed_mult", 1.3))
 
     elif mode == "return":
+        ret_mult = _tun("combat.engagement", "return_speed_mult_melee", 1.5) if not is_ranged else 1.0
         move_toward_pathfind(pos, vel, ox, oy,
-                             p_speed * 1.5 if not is_ranged else p_speed,
+                             p_speed * ret_mult,
                              c, game_time)
 
     else:

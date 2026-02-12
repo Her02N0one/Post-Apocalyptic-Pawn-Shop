@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 import random
 import math
+from core.tuning import get as _tun
 
 
 class Particle:
@@ -50,7 +51,9 @@ class Particle:
 class ParticleManager:
     """Manages all active particles. Stored as a world resource."""
 
-    def __init__(self, max_particles: int = 512):
+    def __init__(self, max_particles: int | None = None):
+        if max_particles is None:
+            max_particles = int(_tun("particles", "max_particles", 512))
         self._particles: list[Particle] = []
         self._max = max_particles
 

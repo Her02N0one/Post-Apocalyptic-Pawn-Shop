@@ -16,6 +16,8 @@ from components import (
     HitFlash, Identity, Combat as CombatComp, Faction,
 )
 from logic.particles import ParticleManager
+from core.tuning import get as _tun, section as _tun_sec
+from core.events import EventBus, EntityDied, EntityHit, FactionAlert
 
 
 def projectile_system(world, dt: float, tiles: list[list[int]]):
@@ -106,23 +108,26 @@ def _apply_projectile_damage(world, proj, target_eid: int, pos):
 
     health = world.get(target_eid, Health)
 
-    # Distance-based damage falloff: 100 % at origin → 50 % at max range
+    # Distance-based damage falloff: 100 % at origin → falloff_min at max range
+    falloff_min = _tun("combat.ranged", "projectile_falloff_min", 0.5)
     t = min(1.0, proj.traveled / max(0.1, proj.max_range))
-    falloff = 1.0 - 0.5 * t
+    falloff = 1.0 - (1.0 - falloff_min) * t
     damage = proj.damage * falloff
 
     # Subtract defender armor
+    min_dmg = _tun("combat.melee", "min_base_damage", 1.0)
     if world.has(target_eid, CombatComp):
         armor = world.get(target_eid, CombatComp).defense
-        damage = max(1.0, damage - armor)
+        damage = max(min_dmg, damage - armor)
 
     health.current -= damage
 
     # Hit flash
+    flash_dur = _tun("combat.melee", "hit_flash_duration", 0.1)
     if not world.has(target_eid, HitFlash):
-        world.add(target_eid, HitFlash(remaining=0.1))
+        world.add(target_eid, HitFlash(remaining=flash_dur))
     else:
-        world.get(target_eid, HitFlash).remaining = 0.1
+        world.get(target_eid, HitFlash).remaining = flash_dur
 
     # Knockback (in projectile direction)
     from components import Velocity as VelComp
@@ -143,15 +148,36 @@ def _apply_projectile_damage(world, proj, target_eid: int, pos):
         target_name = world.get(target_eid, Identity).name
     print(f"[PROJECTILE] hit {target_name} for {damage:.0f} dmg (falloff {falloff:.0%})")
 
-    # Death
+    # Death — emit event instead of direct import
     if health.current <= 0:
         print(f"[PROJECTILE] {target_name} killed")
-        from logic.combat import handle_death
-        handle_death(world, target_eid)
+        bus = world.res(EventBus)
+        if bus:
+            zone = world.get(target_eid, Position)
+            bus.emit(EntityDied(
+                eid=target_eid,
+                killer_eid=proj.owner_eid,
+                zone=zone.zone if zone else "",
+            ))
+        else:
+            # Fallback: direct call if bus not yet wired
+            from logic.combat import handle_death
+            handle_death(world, target_eid)
     else:
-        # Alert same-faction allies
-        from logic.combat import alert_nearby_faction
-        alert_nearby_faction(world, target_eid, proj.owner_eid)
+        # Alert same-faction allies via event
+        bus = world.res(EventBus)
+        target_pos = world.get(target_eid, Position)
+        target_fac = world.get(target_eid, Faction)
+        if bus and target_pos and target_fac:
+            bus.emit(FactionAlert(
+                group=target_fac.group,
+                x=target_pos.x, y=target_pos.y,
+                zone=target_pos.zone,
+                threat_eid=proj.owner_eid,
+            ))
+        else:
+            from logic.combat import alert_nearby_faction
+            alert_nearby_faction(world, target_eid, proj.owner_eid)
 
 
 def _on_wall_hit(world, pos):

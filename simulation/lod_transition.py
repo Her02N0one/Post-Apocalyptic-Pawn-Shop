@@ -374,32 +374,44 @@ def is_high_lod(world: Any, eid: int) -> bool:
 def sync_lod_by_distance(world: Any, graph: SubzoneGraph,
                          scheduler: Any, game_time: float,
                          player_pos: Any,
-                         high_radius: float,
-                         low_radius: float) -> tuple[int, int]:
-    """Promote/demote entities based on distance to the player."""
+                         high_radius: float) -> tuple[int, int]:
+    """Promote/demote entities based on zone + screen proximity.
+
+    Same zone as the player → always active (high or medium LOD).
+    Different zone → low LOD (event-driven).
+
+    Entities in the player's zone are **never** demoted.
+    """
     promoted = 0
     demoted = 0
 
+    # Promote: entities with SubzonePos in the player's zone
     for eid, szp in list(world.all_of(SubzonePos)):
         if not world.alive(eid) or szp.zone != player_pos.zone:
             continue
-        node = graph.get_node(szp.subzone)
-        if not node:
-            continue
-        ax, ay = node.anchor
-        if math.hypot(player_pos.x - ax, player_pos.y - ay) <= high_radius:
-            if promote_entity(world, eid, graph, scheduler, game_time):
-                promoted += 1
+        if promote_entity(world, eid, graph, scheduler, game_time):
+            promoted += 1
 
+    # Classify same-zone entities as high / medium; demote cross-zone
     for eid, pos in list(world.all_of(Position)):
         if not world.alive(eid) or world.has(eid, Player):
             continue
+
+        # Different zone → demote to low LOD
         if pos.zone != player_pos.zone:
             if demote_entity(world, eid, graph, scheduler, game_time):
                 demoted += 1
             continue
-        if math.hypot(player_pos.x - pos.x, player_pos.y - pos.y) > low_radius:
-            if demote_entity(world, eid, graph, scheduler, game_time):
-                demoted += 1
+
+        # Same zone → high or medium (never low)
+        d = math.hypot(player_pos.x - pos.x, player_pos.y - pos.y)
+        lod = world.get(eid, Lod)
+        if lod:
+            new_level = "high" if d <= high_radius else "medium"
+            if lod.level != new_level:
+                lod.level = new_level
+            brain = world.get(eid, Brain)
+            if brain and not brain.active:
+                brain.active = True
 
     return promoted, demoted

@@ -259,8 +259,10 @@ except Exception:
 print("\n=== Test 4: Villager brain schedule ===")
 
 try:
+    from core import tuning as tuning_mod
+    tuning_mod.load()
     from logic.brains.villager import (
-        _time_of_day, DAY_LENGTH, _villager_brain,
+        _time_of_day, _day_length, _villager_brain,
         _walk_toward,
     )
     from core.ecs import World
@@ -269,6 +271,8 @@ try:
         GameClock,
     )
     from simulation.subzone import SubzoneGraph
+
+    DAY_LENGTH = _day_length()
 
     # Test _time_of_day function
     assert _time_of_day(0.0) == "morning"
@@ -535,7 +539,9 @@ except Exception:
 print("\n=== Test 8: Stuck detection ===")
 
 try:
-    from logic.brains.villager import _check_stuck, _STUCK_CHECK_INTERVAL
+    from logic.brains.villager import _check_stuck
+    from core.tuning import get as _tun
+    _STUCK_CHECK_INTERVAL = _tun("ai.villager", "stuck_check_interval", 1.0)
 
     # Simulate stuck NPC — position doesn't change over multiple checks
     v = {}

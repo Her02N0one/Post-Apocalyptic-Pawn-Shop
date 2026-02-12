@@ -19,11 +19,7 @@ from components import (
     Hunger, Health, Needs, Inventory, ItemRegistry, Identity,
     Brain, GameClock, Faction, Position, SubzonePos,
 )
-
-
-# ── Constants ────────────────────────────────────────────────────────
-WELL_FED_RATIO = 0.5
-HUNGRY_RATIO = 0.25
+from core.tuning import get as _tun
 
 
 def hunger_system(world, dt: float) -> None:
@@ -46,13 +42,15 @@ def hunger_system(world, dt: float) -> None:
             continue
 
         ratio = hunger.current / max(hunger.maximum, 0.01)
+        well_fed = _tun("needs", "well_fed_ratio", 0.5)
+        hungry = _tun("needs", "hungry_ratio", 0.25)
 
-        if ratio >= WELL_FED_RATIO:
+        if ratio >= well_fed:
             # Don't override an existing higher-urgency non-eat need
             if needs.priority == "eat":
                 needs.priority = "none"
                 needs.urgency = 0.0
-        elif ratio >= HUNGRY_RATIO:
+        elif ratio >= hungry:
             needs.priority = "eat"
             needs.urgency = 0.3
         elif hunger.current > 0.0:
@@ -71,7 +69,7 @@ def hunger_system(world, dt: float) -> None:
 
 # Minimum seconds between auto-eat attempts per entity (prevents
 # eating every frame).  With rate ~0.03, a full eat cycle is ~15 min.
-_EAT_COOLDOWN = 30.0
+_EAT_COOLDOWN_DEFAULT = 30.0
 
 
 def auto_eat_system(world, dt: float) -> None:
@@ -95,8 +93,9 @@ def auto_eat_system(world, dt: float) -> None:
         # Cooldown check (stored in brain.state or a simple attr)
         brain = world.get(eid, Brain)
         if brain is not None:
+            eat_cd = _tun("needs", "eat_cooldown", _EAT_COOLDOWN_DEFAULT)
             last_eat = brain.state.get("_auto_eat_at", 0.0)
-            if game_time - last_eat < _EAT_COOLDOWN:
+            if game_time - last_eat < eat_cd:
                 continue
         # Try to eat
         if npc_eat_from_inventory(world, eid):
@@ -210,7 +209,7 @@ def _npc_eat_communal(world, eid: int) -> bool:
                     continue
                 food = registry.get_field(item_id, "food_value", 0.0)
             else:
-                food = 25.0 if "food" in item_id or "stew" in item_id or "ration" in item_id else 0.0
+                food = _tun("needs", "fallback_food_value", 25.0) if "food" in item_id or "stew" in item_id or "ration" in item_id else 0.0
             if food > best_food:
                 best_food = food
                 best_id = item_id
@@ -245,8 +244,7 @@ def _npc_eat_communal(world, eid: int) -> bool:
 
 # ── Storehouse refill — the village produces food ────────────────────
 
-_REFILL_INTERVAL = 300.0   # seconds between restocks (5 min real-time)
-_REFILL_ITEMS = {"stew": 3, "ration": 5}  # what the village produces per cycle
+_REFILL_ITEMS = {"stew": 3, "ration": 5}
 _MAX_STOCK = {"stew": 20, "ration": 30, "canned_beans": 15, "dried_meat": 15}
 
 
@@ -290,7 +288,8 @@ _refill_timers: dict[int, float] = {}
 def _do_refill_check(ceid: int, cinv: Inventory, game_time: float) -> None:
     """Check if it's time to restock a container."""
     last = _refill_timers.get(ceid, 0.0)
-    if game_time - last < _REFILL_INTERVAL:
+    refill_ivl = _tun("needs.storehouse_refill", "refill_interval", 300.0)
+    if game_time - last < refill_ivl:
         return
 
     _refill_timers[ceid] = game_time

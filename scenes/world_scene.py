@@ -17,17 +17,14 @@ from core.constants import TILE_SIZE
 from components import (
     Position, Player, Camera, Identity, ItemRegistry,
     Health, Inventory, HitFlash, Lod, Facing, Equipment, Projectile,
-    GameClock,
+    GameClock, Faction,
 )
-from logic.systems import movement_system, input_system, item_pickup_system
-from logic.brains import run_brains
-from logic.lod_system import lod_system
-from logic.needs_system import hunger_system, auto_eat_system, settlement_food_production
+from logic.systems import input_system, item_pickup_system
 from logic.actions import mouse_world_pos
-from logic.projectiles import projectile_system
 from logic.particles import ParticleManager
 from logic.input_manager import InputManager, InputContext
 from logic.entity_factory import spawn_zone_entities, spawn_test_entities
+from logic.tick import tick_systems
 from ui import ModalStack
 from scenes.editor_controller import EditorController
 from scenes.world_draw import (
@@ -43,6 +40,8 @@ from scenes.world_helpers import (
     update_tooltips, tick_timers,
 )
 from simulation.world_sim import WorldSim
+from core.events import EventBus
+from core import tuning as tuning_mod
 
 
 class WorldScene(Scene):
@@ -137,6 +136,38 @@ class WorldScene(Scene):
         from components.dev_log import DevLog
         if not app.world.res(DevLog):
             app.world.set_res(DevLog())
+
+        # ── Event bus & tuning ───────────────────────────────────────
+        if not app.world.res(EventBus):
+            bus = EventBus()
+            app.world.set_res(bus)
+        else:
+            bus = app.world.res(EventBus)
+        tuning_mod.load()  # load data/tuning.toml (idempotent)
+
+        # Subscribe combat handlers so projectiles can emit events
+        from logic.combat import handle_death, alert_nearby_faction, npc_melee_attack, npc_ranged_attack
+        _world_ref = app.world
+
+        def _on_entity_died(ev):
+            handle_death(_world_ref, ev.eid)
+
+        def _on_faction_alert(ev):
+            for eid, pos in _world_ref.all_of(Position):
+                fac = _world_ref.get(eid, Faction)
+                if fac and fac.group == ev.group and pos.zone == ev.zone:
+                    alert_nearby_faction(_world_ref, eid, ev.threat_eid)
+                    break
+
+        def _on_attack_intent(ev):
+            if ev.attack_type == "ranged":
+                npc_ranged_attack(_world_ref, ev.attacker_eid, ev.target_eid)
+            else:
+                npc_melee_attack(_world_ref, ev.attacker_eid, ev.target_eid)
+
+        bus.subscribe("EntityDied", _on_entity_died)
+        bus.subscribe("FactionAlert", _on_faction_alert)
+        bus.subscribe("AttackIntent", _on_attack_intent)
 
         from logic.quests import QuestLog
         from logic.dialogue import DialogueManager, load_builtin_trees
@@ -298,20 +329,13 @@ class WorldScene(Scene):
         input_system(app.world, move=self.input.movement())
         self.input.begin_frame()
         self.modals.update(dt)
-        clock = app.world.res(GameClock)
-        if clock:
-            clock.time += scaled_dt
-        lod_system(app.world, scaled_dt)
-        hunger_system(app.world, scaled_dt)
-        auto_eat_system(app.world, scaled_dt)
-        settlement_food_production(app.world, scaled_dt)
-        run_brains(app.world, scaled_dt)
-        movement_system(app.world, scaled_dt, self.tiles)
-        projectile_system(app.world, scaled_dt, self.tiles)
+
+        # ── Core system tick (clock, LOD, needs, brains, physics, events, particles)
+        tick_systems(app.world, scaled_dt, self.tiles)
 
         # Tick the off-screen world simulation
         if self.world_sim and self.world_sim.active:
-            # clock.time IS game-minutes (1 real sec = 1 game min)
+            clock = app.world.res(GameClock)
             game_minutes = clock.time if clock else 0.0
             # When fast-forwarding, tick multiple times to process queued events
             if self.time_scale > 1.01:
@@ -329,10 +353,6 @@ class WorldScene(Scene):
 
         update_tooltips(self, app, mw)
         tick_timers(self, dt, app)
-
-        pm = app.world.res(ParticleManager)
-        if pm:
-            pm.update(dt)
 
         check_player_teleport(self, app)
 

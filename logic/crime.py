@@ -24,18 +24,16 @@ from components import (
 )
 from components.ai import Threat, AttackConfig, Brain
 from components.simulation import WorldMemory
+from core.tuning import get as _tun
 
 
-# ── Constants ────────────────────────────────────────────────────────
-
-WITNESS_RADIUS: float = 8.0     # tiles — how far NPCs can see theft
-CRIME_MEMORY_TTL: float = 1200.0  # 20 game-hours before memory fades
+# ── Constants (read from tuning.toml at call-time) ────────────────────
 
 
 # ── Witness detection ────────────────────────────────────────────────
 
 def find_witnesses(world: Any, zone: str, thief_x: float,
-                   thief_y: float, radius: float = WITNESS_RADIUS
+                   thief_y: float, radius: float | None = None
                    ) -> list[int]:
     """Find living friendly/neutral NPCs within radius of the theft.
 
@@ -43,6 +41,8 @@ def find_witnesses(world: Any, zone: str, thief_x: float,
     crimes — they'd steal too.  Dead NPCs don't see anything.
     """
     witnesses: list[int] = []
+    if radius is None:
+        radius = _tun("crime", "witness_radius", 8.0)
 
     for eid, pos in world.all_of(Position):
         if pos.zone != zone:
@@ -122,7 +122,7 @@ def report_theft(world: Any, witnesses: list[int], item_id: str,
                 "type": "theft",
             },
             game_time=game_time,
-            ttl=CRIME_MEMORY_TTL,
+            ttl=_tun("crime", "crime_memory_ttl", 1200.0),
         )
 
         # Is this witness a guard (has AttackConfig + friendly faction)?
@@ -139,7 +139,7 @@ def report_theft(world: Any, witnesses: list[int], item_id: str,
         else:
             brain = world.get(weid, Brain)
             if brain is not None:
-                brain.state["crime_flee_until"] = game_time + 20.0
+                brain.state["crime_flee_until"] = game_time + _tun("crime", "crime_flee_duration", 20.0)
 
     if armed_saw:
         return "An armed witness saw you steal! They won't let that slide."

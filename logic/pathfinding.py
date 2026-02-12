@@ -11,6 +11,17 @@ The default penalty map:
     GRASS / DIRT / STONE / WOOD_FLOOR / TELEPORTER → 0  (free)
     WATER        → 8   (strongly avoided)
 
+Agent clearance
+---------------
+Entities have a physical hitbox (default 0.8×0.8 tiles).  The pathfinder
+accounts for this in two ways:
+
+1. **Wall-margin penalty** — tiles cardinally adjacent to a wall get a
+   traversal penalty so paths prefer routes with clearance.
+2. **Hitbox-centered waypoints** — waypoints are offset so the entity's
+   hitbox *center* aligns with the tile center, preventing the hitbox
+   from extending into neighboring wall tiles.
+
 Public API
 ----------
 ``find_path(zone, sx, sy, gx, gy, ...)`` → ``list[(x,y)]`` or ``None``
@@ -27,6 +38,7 @@ from core.constants import (
     TILE_VOID, TILE_GRASS, TILE_DIRT, TILE_STONE,
     TILE_WATER, TILE_WOOD_FLOOR, TILE_WALL, TILE_TELEPORTER,
 )
+from core.tuning import get as _tun
 
 
 # ── Penalty table ────────────────────────────────────────────────────
@@ -89,8 +101,9 @@ def find_path(
     Returns
     -------
     list[(float, float)] | None
-        List of (x, y) waypoints (tile centres) from near-start to goal,
-        or ``None`` if no path exists.
+        List of (x, y) waypoints from near-start to goal.  Waypoints
+        are offset so the entity's hitbox centre aligns with the tile
+        centre (prevents wall clipping).  ``None`` if no path exists.
     """
     tiles = ZONE_MAPS.get(zone_name)
     if not tiles:
@@ -121,6 +134,14 @@ def find_path(
     if pen.get(goal_tile, 0) < 0:
         return None
 
+    # ── Agent clearance tuning ───────────────────────────────────────
+    wall_margin_pen = _tun("pathfinding", "wall_margin_penalty", 2.0)
+    agent_size = _tun("pathfinding", "agent_size", 0.8)
+    # Offset so entity hitbox centre = tile centre.
+    # entity.pos is top-left; hitbox extends +agent_size in x/y.
+    # Centering: pos_x = col + (1 - agent_size)/2
+    agent_margin = max(0.0, (1.0 - agent_size) / 2.0)  # 0.1 for 0.8
+
     # Open set: (f_score, row, col)
     open_set: list[tuple[float, int, int]] = [(0.0, sr, sc)]
     g_score: dict[tuple[int, int], float] = {(sr, sc): 0.0}
@@ -136,10 +157,13 @@ def find_path(
 
         if r == gr and c == gc:
             # ── Reconstruct path ─────────────────────────────────────
+            # Waypoints are placed so the entity's hitbox centre
+            # aligns with the tile centre (not top-left at centre).
             path: list[tuple[float, float]] = []
             node = (gr, gc)
             while node in came_from:
-                path.append((node[1] + 0.5, node[0] + 0.5))
+                path.append((node[1] + agent_margin,
+                             node[0] + agent_margin))
                 node = came_from[node]
             path.reverse()
             return path
@@ -167,7 +191,22 @@ def find_path(
                 if pen.get(adj_a, 0) < 0 or pen.get(adj_b, 0) < 0:
                     continue
 
-            new_g = g_score[(r, c)] + move_cost + tile_pen
+            # ── Wall-margin penalty ──────────────────────────────────
+            # If any cardinal neighbour of (nr, nc) is a wall or OOB,
+            # add a penalty so A* prefers routes with clearance.
+            margin_cost = 0.0
+            if wall_margin_pen > 0:
+                for mr, mc in ((nr-1, nc), (nr+1, nc),
+                               (nr, nc-1), (nr, nc+1)):
+                    if (mr < 0 or mc < 0
+                            or mr >= rows or mc >= cols):
+                        margin_cost = wall_margin_pen
+                        break
+                    if pen.get(tiles[mr][mc], 0) < 0:
+                        margin_cost = wall_margin_pen
+                        break
+
+            new_g = g_score[(r, c)] + move_cost + tile_pen + margin_cost
             if new_g < g_score.get((nr, nc), float("inf")):
                 g_score[(nr, nc)] = new_g
                 came_from[(nr, nc)] = (r, c)
@@ -183,17 +222,30 @@ def find_path(
 def path_next_waypoint(
     path: list[tuple[float, float]],
     px: float, py: float,
-    reach: float = 0.4,
+    reach: float = 0.5,
 ) -> tuple[float, float] | None:
     """Pop reached waypoints and return the next one to steer toward.
 
     Mutates *path* in-place — removes waypoints the entity has reached.
+    Also skips *overtaken* waypoints — if the entity is closer to the
+    next waypoint than the current one (e.g. after wall-sliding), the
+    current waypoint is dropped so the entity doesn't double back.
+
     Returns ``None`` when the path is exhausted.
     """
     while path:
         wx, wy = path[0]
-        if math.hypot(wx - px, wy - py) < reach:
+        d = math.hypot(wx - px, wy - py)
+        if d < reach:
             path.pop(0)
             continue
+        # Skip overtaken waypoints: if we're closer to the NEXT
+        # waypoint and the current one is within a short range,
+        # we've likely wall-slid past it.
+        if len(path) > 1 and d < reach * 3:
+            nwx, nwy = path[1]
+            if math.hypot(nwx - px, nwy - py) < d:
+                path.pop(0)
+                continue
         return (wx, wy)
     return None

@@ -33,44 +33,38 @@ from core.zone import is_passable, ZONE_PORTALS, ZONE_MAPS
 from logic.brains._helpers import find_player, move_away
 from logic.brains import register_brain
 from logic.pathfinding import find_path, path_next_waypoint
+from core.tuning import get as _tun
 
 
-# ── Tuning constants ──────────────────────────────────────────────────
+# ── Tuning helpers (read from data/tuning.toml at call-time) ─────────
 
-# A full in-game "day" cycle (seconds of game time).
-DAY_LENGTH = 300.0  # 5 real minutes = one day
+def _day_length():
+    return _tun("ai.villager", "day_length", 300.0)
 
-# Period boundaries as fractions of DAY_LENGTH.
-_PERIODS = [
-    (0.00, 0.30, "morning"),    # 0-30 %
-    (0.30, 0.45, "midday"),     # 30-45 %
-    (0.45, 0.75, "afternoon"),  # 45-75 %
-    (0.75, 1.00, "evening"),    # 75-100 %
-]
-
-EAT_PAUSE = 2.0
-EAT_THRESHOLD = 0.4
+def _periods():
+    return [
+        (_tun("ai.villager", "morning_start", 0.00),
+         _tun("ai.villager", "morning_end", 0.30), "morning"),
+        (_tun("ai.villager", "midday_start", 0.30),
+         _tun("ai.villager", "midday_end", 0.45), "midday"),
+        (_tun("ai.villager", "afternoon_start", 0.45),
+         _tun("ai.villager", "afternoon_end", 0.75), "afternoon"),
+        (_tun("ai.villager", "evening_start", 0.75),
+         _tun("ai.villager", "evening_end", 1.00), "evening"),
+    ]
 
 # Subzones considered "social" gathering points — NPCs walk toward these
 _SOCIAL_SUBZONES = {"sett_market", "sett_well"}
 _WORK_SUBZONES = {"sett_farm", "sett_storehouse"}
-
-# How close is "arrived" for walk-toward behaviour (tiles)
-_ARRIVE_DIST = 2.5
-_SOCIAL_DIST = 4.0   # how far to look for other NPCs to greet
-
-# Stuck detection: give up walking if position barely changes
-_STUCK_CHECK_INTERVAL = 1.0   # sample every N seconds
-_STUCK_MOVE_THRESHOLD = 0.3   # must move at least this far per sample
-_STUCK_STRIKES = 3            # give up after N consecutive stuck samples
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
 def _time_of_day(game_time: float) -> str:
     """Return current period name based on game clock."""
-    frac = (game_time % DAY_LENGTH) / DAY_LENGTH
-    for lo, hi, name in _PERIODS:
+    dl = _day_length()
+    frac = (game_time % dl) / dl
+    for lo, hi, name in _periods():
         if lo <= frac < hi:
             return name
     return "evening"
@@ -105,8 +99,9 @@ def _check_stuck(v: dict, pos, game_time: float) -> bool:
     After ``_STUCK_STRIKES`` consecutive stuck samples → True (give up).
     Resets automatically when the NPC makes progress.
     """
+    chk_interval = _tun("ai.villager", "stuck_check_interval", 1.0)
     last_check = v.get("stuck_check_t")
-    if last_check is not None and game_time - last_check < _STUCK_CHECK_INTERVAL:
+    if last_check is not None and game_time - last_check < chk_interval:
         return False
 
     v["stuck_check_t"] = game_time
@@ -119,10 +114,12 @@ def _check_stuck(v: dict, pos, game_time: float) -> bool:
     moved = math.hypot(pos.x - prev[0], pos.y - prev[1])
     v["stuck_check_pos"] = (pos.x, pos.y)
 
-    if moved < _STUCK_MOVE_THRESHOLD:
+    move_thresh = _tun("ai.villager", "stuck_move_threshold", 0.3)
+    if moved < move_thresh:
         strikes = v.get("stuck_strikes", 0) + 1
         v["stuck_strikes"] = strikes
-        if strikes >= _STUCK_STRIKES:
+        max_strikes = _tun("ai.villager", "stuck_strikes", 3)
+        if strikes >= max_strikes:
             v["stuck_strikes"] = 0
             v.pop("stuck_check_pos", None)
             return True
@@ -131,8 +128,7 @@ def _check_stuck(v: dict, pos, game_time: float) -> bool:
     return False
 
 
-# How often to recompute the A* path (seconds)
-_PATH_RECOMPUTE_INTERVAL = 1.5
+# Path recompute interval now read from tuning
 
 # Offsets to try when the direct path is blocked (radians).
 _STEER_OFFSETS = [0.0, 0.4, -0.4, 0.8, -0.8, 1.2, -1.2,
@@ -162,12 +158,13 @@ def _walk_toward(pos, vel, tx: float, ty: float, speed: float,
         path = state.get("_path")
         path_target = state.get("_path_target")
         path_time = state.get("_path_time", 0.0)
+        recomp_ivl = _tun("ai.villager", "path_recompute_interval", 1.5)
         need_recompute = (
             path is None
             or path_target is None
             or abs(path_target[0] - tx) > 1.5
             or abs(path_target[1] - ty) > 1.5
-            or (game_time - path_time) > _PATH_RECOMPUTE_INTERVAL
+            or (game_time - path_time) > recomp_ivl
         )
 
         if need_recompute:
@@ -178,7 +175,8 @@ def _walk_toward(pos, vel, tx: float, ty: float, speed: float,
             path = new_path
 
         if path is not None and len(path) > 0:
-            wp = path_next_waypoint(path, pos.x, pos.y, reach=0.45)
+            wp = path_next_waypoint(path, pos.x, pos.y,
+                                    reach=_tun("ai.villager", "waypoint_reach", 0.55))
             if wp is not None:
                 wx, wy = wp
                 wdx = wx - pos.x
@@ -299,12 +297,14 @@ def _villager_brain(world: World, eid: int, brain: Brain, dt: float,
                 v["travel_target"] = target
                 mode = "travel"
 
+    arrive_dist = _tun("ai.villager", "arrive_dist", 2.5)
+
     if mode == "travel":
         tt = v.get("travel_target")
         if tt:
             dist = _walk_toward(pos, vel, tt[0], tt[1], patrol.speed, dt,
                                state=v, game_time=game_time)
-            if dist < _ARRIVE_DIST:
+            if dist < arrive_dist:
                 v["mode"] = "idle"
                 v.pop("travel_target", None)
                 v.pop("_path", None)
@@ -322,20 +322,25 @@ def _villager_brain(world: World, eid: int, brain: Brain, dt: float,
     if flee_until > game_time:
         p_eid, p_pos = find_player(world)
         if p_pos and p_pos.zone == pos.zone:
-            move_away(pos, vel, p_pos.x, p_pos.y, patrol.speed * 1.6)
+            flee_mult = _tun("ai.villager", "crime_flee_speed_mult", 1.6)
+            move_away(pos, vel, p_pos.x, p_pos.y, patrol.speed * flee_mult)
             return
 
     # ── 2. Critical hunger override ──────────────────────────────────
+    eat_thresh = _tun("ai.villager", "eat_threshold", 0.4)
     if mode not in ("eat", "forage") and needs and needs.priority == "eat":
-        if hunger and (hunger.current / max(hunger.maximum, 0.01)) < EAT_THRESHOLD:
+        if hunger and (hunger.current / max(hunger.maximum, 0.01)) < eat_thresh:
             has_food = inv is not None and len(inv.items) > 0
             if has_food:
                 v["mode"] = "eat"
-                v["eat_until"] = game_time + EAT_PAUSE
+                eat_pause = _tun("ai.villager", "eat_pause", 2.0)
+                v["eat_until"] = game_time + eat_pause
                 mode = "eat"
             else:
                 v["mode"] = "forage"
-                v["forage_until"] = game_time + random.uniform(8.0, 15.0)
+                f_min = _tun("ai.villager", "forage_duration_min", 8.0)
+                f_max = _tun("ai.villager", "forage_duration_max", 15.0)
+                v["forage_until"] = game_time + random.uniform(f_min, f_max)
                 mode = "forage"
 
     # ── Eat ──────────────────────────────────────────────────────────
@@ -350,14 +355,15 @@ def _villager_brain(world: World, eid: int, brain: Brain, dt: float,
         if v.get("forage_until", 0.0) <= game_time:
             v["mode"] = "return"
             return
-        _wander_step(patrol, pos, vel, v, dt, speed_mult=1.3, game_time=game_time)
+        forage_spd = _tun("ai.villager", "forage_speed_mult", 1.3)
+        _wander_step(patrol, pos, vel, v, dt, speed_mult=forage_spd, game_time=game_time)
         return
 
     # ── Return ───────────────────────────────────────────────────────
     if mode == "return":
         ox, oy = v.get("origin", (pos.x, pos.y))
         dist = math.hypot(pos.x - ox, pos.y - oy)
-        if dist < _ARRIVE_DIST:
+        if dist < arrive_dist:
             v["mode"] = "idle"
             vel.x, vel.y = 0.0, 0.0
             return
@@ -394,7 +400,7 @@ def _villager_brain(world: World, eid: int, brain: Brain, dt: float,
         if tgt:
             dist = _walk_toward(pos, vel, tgt[0], tgt[1], patrol.speed, dt,
                                state=v, game_time=game_time)
-            if dist < _ARRIVE_DIST:
+            if dist < arrive_dist:
                 v["mode"] = "schedule_idle"
                 v["origin"] = (pos.x, pos.y)
                 v.pop("_path", None)
@@ -413,8 +419,9 @@ def _villager_brain(world: World, eid: int, brain: Brain, dt: float,
         # In afternoon period, try to socialize with nearby NPCs
         if period == "afternoon":
             v.setdefault("greet_cooldown", 0.0)
+            social_dist = _tun("ai.villager", "social_dist", 4.0)
             if game_time >= v.get("greet_cooldown", 0.0):
-                neighbor = _nearby_npc(world, eid, pos, _SOCIAL_DIST)
+                neighbor = _nearby_npc(world, eid, pos, social_dist)
                 if neighbor is not None:
                     npos = world.get(neighbor, Position)
                     if npos:
@@ -422,10 +429,13 @@ def _villager_brain(world: World, eid: int, brain: Brain, dt: float,
                         _walk_toward(pos, vel, npos.x, npos.y,
                                      patrol.speed * 0.3, dt,
                                      state=v, game_time=game_time)
-                        v["greet_cooldown"] = game_time + random.uniform(3.0, 8.0)
+                        gc_min = _tun("ai.villager", "greet_cooldown_min", 3.0)
+                        gc_max = _tun("ai.villager", "greet_cooldown_max", 8.0)
+                        v["greet_cooldown"] = game_time + random.uniform(gc_min, gc_max)
                         return
             # Otherwise gentle wander at the social spot
-            _wander_step(patrol, pos, vel, v, dt, speed_mult=0.4, game_time=game_time)
+            social_spd = _tun("ai.villager", "social_wander_speed_mult", 0.4)
+            _wander_step(patrol, pos, vel, v, dt, speed_mult=social_spd, game_time=game_time)
             return
 
         if period == "evening":
@@ -434,7 +444,8 @@ def _villager_brain(world: World, eid: int, brain: Brain, dt: float,
             return
 
         # Morning/midday — gentle patrol at work/eat location
-        _wander_step(patrol, pos, vel, v, dt, speed_mult=0.5, game_time=game_time)
+        morn_spd = _tun("ai.villager", "morning_wander_speed_mult", 0.5)
+        _wander_step(patrol, pos, vel, v, dt, speed_mult=morn_spd, game_time=game_time)
         return
 
     # ── Default idle (wander) ────────────────────────────────────────
@@ -443,8 +454,7 @@ def _villager_brain(world: World, eid: int, brain: Brain, dt: float,
 
 # ── Wandering helper ─────────────────────────────────────────────────
 
-_WANDER_PICK_MIN = 2.0
-_WANDER_PICK_MAX = 4.5
+# Wander pick intervals now read from tuning
 
 def _wander_step(patrol: Patrol, pos, vel, s: dict, dt: float,
                  speed_mult: float = 1.0, game_time: float = 0.0):
@@ -459,6 +469,7 @@ def _wander_step(patrol: Patrol, pos, vel, s: dict, dt: float,
     pick_time = s.get("_wander_pick_t", 0.0)
     pick_ivl = s.get("_wander_pick_ivl", _WANDER_PICK_MAX)
 
+    w_pick_max = _tun("ai.villager", "wander_pick_max", 4.5)
     need_new = (
         wpath is None
         or len(wpath) == 0
@@ -487,12 +498,14 @@ def _wander_step(patrol: Patrol, pos, vel, s: dict, dt: float,
         else:
             s["_wander_path"] = None
         s["_wander_pick_t"] = game_time
-        s["_wander_pick_ivl"] = random.uniform(_WANDER_PICK_MIN, _WANDER_PICK_MAX)
+        w_pick_min = _tun("ai.villager", "wander_pick_min", 2.0)
+        s["_wander_pick_ivl"] = random.uniform(w_pick_min, w_pick_max)
         wpath = s.get("_wander_path")
 
     # Follow path
     if wpath is not None and len(wpath) > 0:
-        wp = path_next_waypoint(wpath, pos.x, pos.y, reach=0.45)
+        wp = path_next_waypoint(wpath, pos.x, pos.y,
+                                reach=_tun("ai.villager", "waypoint_reach", 0.55))
         if wp is not None:
             wx, wy = wp
             wdx = wx - pos.x

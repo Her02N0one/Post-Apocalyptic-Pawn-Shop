@@ -4,6 +4,7 @@ Public API
 ----------
 ``register_brain(name, fn)``  — add a brain to the registry
 ``get_brain(name)``           — look up a brain by name
+``registered_names()``        — list all registered brain names
 ``run_brains(world, dt)``     — tick all active high-LOD brains
 
 Brain modules register themselves at import time via ``register_brain``.
@@ -16,21 +17,15 @@ sweeps vs. cheap movement-only ticks.
 """
 
 from __future__ import annotations
-from typing import Callable
 from core.ecs import World
 from components import Brain, Position, Lod, GameClock, Threat, AttackConfig, HitFlash, Combat, Identity
 from components.dev_log import DevLog
 
-
-_registry: dict[str, Callable] = {}
-
-
-def register_brain(name: str, fn: Callable):
-    _registry[name] = fn
+# Re-export registry functions so existing imports still work
+from logic.brains.registry import register_brain, get_brain, registered_names  # noqa: F401
 
 
-def get_brain(name: str):
-    return _registry.get(name)
+_registry: dict = {}  # kept for backward compat — actual registry is in registry.py
 
 
 def run_brains(world: World, dt: float):
@@ -48,8 +43,8 @@ def run_brains(world: World, dt: float):
         if not brain.active:
             continue
         lod = world.get(eid, Lod)
-        if lod is not None and lod.level != "high":
-            continue
+        if lod is not None and lod.level == "low":
+            continue  # only low-LOD (different zone) entities skip brains
         # Grace period — entity is still "orienting"
         if lod is not None and lod.transition_until > game_time:
             continue
