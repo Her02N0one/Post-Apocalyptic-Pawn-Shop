@@ -13,7 +13,7 @@ from __future__ import annotations
 import math
 from components import (
     Projectile, Position, Health, Hurtbox,
-    HitFlash, Identity, Combat as CombatComp,
+    HitFlash, Identity, Combat as CombatComp, Faction,
 )
 from logic.particles import ParticleManager
 
@@ -60,8 +60,17 @@ def projectile_system(world, dt: float, tiles: list[list[int]]):
 # ── internal helpers ────────────────────────────────────────────────
 
 def _check_hit(world, proj_eid: int, pos, proj) -> int | None:
-    """Return first entity whose hurtbox overlaps the projectile, or None."""
+    """Return first entity whose hurtbox overlaps the projectile, or None.
+
+    Skips the projectile's owner AND any entity in the same faction group,
+    so allied NPCs don't shoot each other.
+    """
     px, py, r = pos.x, pos.y, proj.radius
+
+    # Resolve owner's faction group for ally filtering
+    owner_faction = world.get(proj.owner_eid, Faction)
+    owner_group = owner_faction.group if owner_faction else None
+
     for eid, epos in world.all_of(Position):
         if eid == proj_eid or eid == proj.owner_eid:
             continue
@@ -69,6 +78,12 @@ def _check_hit(world, proj_eid: int, pos, proj) -> int | None:
             continue
         if not world.has(eid, Health):
             continue
+
+        # Skip same-faction entities (friendly fire protection)
+        if owner_group is not None:
+            ef = world.get(eid, Faction)
+            if ef is not None and ef.group == owner_group:
+                continue
         # Build target AABB (world coords)
         hb = world.get(eid, Hurtbox)
         if hb:

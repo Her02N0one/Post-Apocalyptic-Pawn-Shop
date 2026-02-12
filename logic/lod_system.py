@@ -14,7 +14,7 @@ on stale data for the first few frames.
 
 from __future__ import annotations
 import math
-from components import Position, Player, Lod, GameClock
+from components import Position, Player, Lod, GameClock, Brain
 from simulation.subzone import SubzoneGraph
 from simulation.scheduler import WorldScheduler
 from simulation.lod_transition import sync_lod_by_distance
@@ -76,13 +76,22 @@ def lod_system(world, dt: float) -> None:
 
         if dist <= HIGH_RADIUS:
             if lod.level != "high":
-                # Promotion — set grace period
+                # Promotion — set grace period and activate brain
                 lod.level = "high"
                 lod.transition_until = game_time + GRACE_PERIOD
+                brain = world.get(eid, Brain)
+                if brain:
+                    brain.active = True
         elif dist <= MED_RADIUS:
             if lod.level != "medium":
                 lod.level = "medium"
                 # No grace needed for medium (brains don't run)
+                brain = world.get(eid, Brain)
+                if brain:
+                    brain.active = False
         else:
             if lod.level != "low":
                 lod.level = "low"
+                brain = world.get(eid, Brain)
+                if brain:
+                    brain.active = False

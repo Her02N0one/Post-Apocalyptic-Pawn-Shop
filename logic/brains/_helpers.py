@@ -17,6 +17,7 @@ from components import (
     HitFlash, Faction, Inventory, ItemRegistry, Identity,
 )
 from core.zone import is_passable
+from logic.pathfinding import find_path, path_next_waypoint
 
 
 # ── Targeting ────────────────────────────────────────────────────────
@@ -42,6 +43,8 @@ def hp_ratio(world: World, eid: int) -> float:
 
 # ── Movement ─────────────────────────────────────────────────────────
 
+_PATH_RECOMPUTE_INTERVAL = 0.8  # seconds between A* recomputes in combat
+
 def move_toward(pos, vel, tx: float, ty: float, speed: float):
     dx = tx - pos.x
     dy = ty - pos.y
@@ -51,6 +54,46 @@ def move_toward(pos, vel, tx: float, ty: float, speed: float):
         return
     vel.x = (dx / d) * speed
     vel.y = (dy / d) * speed
+
+
+def move_toward_pathfind(pos, vel, tx: float, ty: float, speed: float,
+                         state: dict, game_time: float = 0.0):
+    """Move toward (tx, ty) using a cached A* path.
+
+    Falls back to direct ``move_toward`` if pathfinding fails or the
+    zone map isn't loaded.  The *state* dict caches the computed path.
+    """
+    path = state.get("_chase_path")
+    path_time = state.get("_chase_path_t", 0.0)
+    path_tgt = state.get("_chase_path_tgt")
+    need = (
+        path is None
+        or path_tgt is None
+        or abs(path_tgt[0] - tx) > 1.5
+        or abs(path_tgt[1] - ty) > 1.5
+        or (game_time - path_time) > _PATH_RECOMPUTE_INTERVAL
+    )
+    if need:
+        new_path = find_path(pos.zone, pos.x, pos.y, tx, ty, max_dist=24)
+        state["_chase_path"] = new_path
+        state["_chase_path_t"] = game_time
+        state["_chase_path_tgt"] = (tx, ty)
+        path = new_path
+
+    if path is not None and len(path) > 0:
+        wp = path_next_waypoint(path, pos.x, pos.y, reach=0.45)
+        if wp is not None:
+            wx, wy = wp
+            dx = wx - pos.x
+            dy = wy - pos.y
+            d = math.hypot(dx, dy)
+            if d > 0.05:
+                vel.x = (dx / d) * speed
+                vel.y = (dy / d) * speed
+            return
+
+    # Fallback: direct line
+    move_toward(pos, vel, tx, ty, speed)
 
 
 def move_away(pos, vel, tx: float, ty: float, speed: float):

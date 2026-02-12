@@ -23,7 +23,10 @@ class App:
         # The virtual (design) resolution — all game rendering targets this.
         self._virtual_size = (width, height)
         self._render_surface = pygame.Surface((width, height))
-        self.screen = pygame.display.set_mode((width, height), pygame.RESIZABLE)
+        # SCALED lets SDL handle DPI / resolution mapping — mouse coords
+        # are automatically reported in virtual-surface units.
+        self.screen = pygame.display.set_mode(
+            (width, height), pygame.RESIZABLE | pygame.SCALED)
         pygame.display.set_caption(title)
         self.clock = pygame.time.Clock()
         self.running = True
@@ -64,27 +67,14 @@ class App:
     # -- Coordinate mapping --
 
     def mouse_pos(self) -> tuple[int, int]:
-        """Return mouse position mapped to virtual-surface coordinates."""
-        mx, my = pygame.mouse.get_pos()
-        sw, sh = self.screen.get_size()
-        vw, vh = self._virtual_size
-        return int(mx * vw / sw), int(my * vh / sh)
+        """Return mouse position in virtual-surface coordinates.
 
-    def _remap_mouse_event(self, event: pygame.event.Event) -> pygame.event.Event:
-        """Return a copy of *event* with .pos mapped to virtual coords."""
-        if not hasattr(event, "pos"):
-            return event
-        sw, sh = self.screen.get_size()
+        With ``pygame.SCALED`` the engine maps physical → virtual
+        automatically, so this is just a clamped pass-through.
+        """
+        mx, my = pygame.mouse.get_pos()
         vw, vh = self._virtual_size
-        vx = int(event.pos[0] * vw / sw)
-        vy = int(event.pos[1] * vh / sh)
-        # Build a new event with remapped pos
-        attrs: dict = {}
-        for attr in ("button", "buttons", "rel", "touch", "window"):
-            if hasattr(event, attr):
-                attrs[attr] = getattr(event, attr)
-        attrs["pos"] = (vx, vy)
-        return pygame.event.Event(event.type, **attrs)
+        return max(0, min(mx, vw - 1)), max(0, min(my, vh - 1))
 
     # -- Main loop --
 
@@ -98,28 +88,19 @@ class App:
                     self.running = False
                 elif event.type == pygame.KEYDOWN and event.key == pygame.K_F11:
                     self.toggle_fullscreen()
-                elif event.type == pygame.VIDEORESIZE and not self.fullscreen:
-                    self._windowed_size = (event.w, event.h)
-                    self.screen = pygame.display.set_mode(
-                        (event.w, event.h), pygame.RESIZABLE)
                 elif self.scene:
-                    # Remap mouse positions to virtual surface coordinates
-                    if event.type in (pygame.MOUSEBUTTONDOWN,
-                                      pygame.MOUSEBUTTONUP,
-                                      pygame.MOUSEMOTION):
-                        event = self._remap_mouse_event(event)
                     self.scene.handle_event(event, self)
 
             # Update
             if self.scene:
                 self.scene.update(self.dt, self)
 
-            # Draw to the fixed-size virtual surface, then scale to screen
+            # Draw to the fixed-size virtual surface, then blit to screen.
+            # pygame.SCALED handles the upscale + letterbox automatically.
             if self.scene:
                 self.scene.draw(self._render_surface, self)
 
-            pygame.transform.scale(self._render_surface,
-                                   self.screen.get_size(), self.screen)
+            self.screen.blit(self._render_surface, (0, 0))
             pygame.display.flip()
 
         pygame.quit()
@@ -127,11 +108,13 @@ class App:
     def toggle_fullscreen(self):
         """Switch between windowed and fullscreen (F11)."""
         self.fullscreen = not self.fullscreen
+        vw, vh = self._virtual_size
         if self.fullscreen:
-            self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+            self.screen = pygame.display.set_mode(
+                (vw, vh), pygame.FULLSCREEN | pygame.SCALED)
         else:
             self.screen = pygame.display.set_mode(
-                self._windowed_size, pygame.RESIZABLE)
+                (vw, vh), pygame.RESIZABLE | pygame.SCALED)
 
     # -- Convenience --
 

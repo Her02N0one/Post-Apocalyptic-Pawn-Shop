@@ -27,8 +27,8 @@ from components import Faction, Health, Hurtbox, Identity
 from components.dev_log import DevLog
 from logic.brains._helpers import (
     find_player, dist_pos, hp_ratio,
-    move_toward, move_away, strafe, face_toward, run_idle,
-    should_engage, try_dodge, try_heal,
+    move_toward, move_toward_pathfind, move_away, strafe, face_toward,
+    run_idle, should_engage, try_dodge, try_heal,
     reset_faction_on_return,
 )
 
@@ -40,6 +40,36 @@ def _log(world: World, eid: int, cat: str, msg: str, t: float = 0.0, **kw):
     ident = world.get(eid, Identity)
     name = ident.name if ident else f"e{eid}"
     log.record(eid, cat, msg, name=name, t=t, **kw)
+
+
+def _ally_near_target(world: World, eid: int, pos, tx: float, ty: float,
+                      melee_range: float) -> bool:
+    """Return True if a same-faction ally is within *melee_range* of the target.
+
+    Prevents melee attackers from striking when an ally is standing
+    right next to the target and could be caught in the swing.
+    """
+    faction = world.get(eid, Faction)
+    if faction is None:
+        return False
+    group = faction.group
+    threshold = melee_range * 0.8  # slightly tighter than attack range
+
+    for aid, apos in world.all_of(Position):
+        if aid == eid:
+            continue
+        if apos.zone != pos.zone:
+            continue
+        af = world.get(aid, Faction)
+        if af is None or af.group != group:
+            continue
+        if not world.has(aid, Health):
+            continue
+        # Is this ally close to the target?
+        d = math.hypot(apos.x - tx, apos.y - ty)
+        if d < threshold:
+            return True
+    return False
 
 
 def _ally_in_line_of_fire(world: World, eid: int, pos, tx: float, ty: float) -> bool:
@@ -187,15 +217,15 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
             if can_flee and cur_hp_ratio <= threat.flee_threshold:
                 c["mode"] = "flee"
                 _log(world, eid, "combat", f"attack → flee (hp={cur_hp_ratio:.0%})", game_time)
+            elif home_dist > threat.leash_radius:
+                c["mode"] = "return"
+                _log(world, eid, "combat", f"attack → return (leash={home_dist:.1f})", game_time)
             elif is_ranged and dist > atk_cfg.range * 1.8:
                 c["mode"] = "chase"
                 _log(world, eid, "combat", f"attack → chase (too far, dist={dist:.1f})", game_time)
             elif not is_ranged and dist > atk_cfg.range * 1.6:
                 c["mode"] = "chase"
                 _log(world, eid, "combat", f"attack → chase (melee lost range)", game_time)
-            elif not is_ranged and home_dist > threat.leash_radius:
-                c["mode"] = "return"
-                _log(world, eid, "combat", f"attack → return (leash)", game_time)
 
             # Fire / strike when ready (timestamp cooldown)
             if c.get("attack_until", 0.0) <= game_time and p_eid is not None:
@@ -211,10 +241,14 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
                         c["attack_until"] = game_time + atk_cfg.cooldown
                         _log(world, eid, "attack", "fired ranged attack", game_time)
                 else:
-                    from logic.combat import npc_melee_attack
-                    npc_melee_attack(world, eid, p_eid)
-                    c["attack_until"] = game_time + atk_cfg.cooldown
-                    _log(world, eid, "attack", "melee strike", game_time)
+                    # Check for allies near target before swinging
+                    if _ally_near_target(world, eid, pos, p_pos.x, p_pos.y, atk_cfg.range):
+                        _log(world, eid, "combat", "melee held — ally near target", game_time)
+                    else:
+                        from logic.combat import npc_melee_attack
+                        npc_melee_attack(world, eid, p_eid)
+                        c["attack_until"] = game_time + atk_cfg.cooldown
+                        _log(world, eid, "attack", "melee strike", game_time)
 
         elif mode == "flee":
             if cur_hp_ratio > threat.flee_threshold * 2.5 or dist > threat.aggro_radius:
@@ -244,7 +278,8 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
 
     elif mode == "chase" and p_cache:
         chase_mult = 1.2 if is_ranged else 1.4
-        move_toward(pos, vel, p_cache[0], p_cache[1], p_speed * chase_mult)
+        move_toward_pathfind(pos, vel, p_cache[0], p_cache[1],
+                             p_speed * chase_mult, c, game_time)
         face_toward(world, eid, type("P", (), {"x": p_cache[0], "y": p_cache[1]})())
 
     elif mode == "attack" and p_cache:
@@ -285,7 +320,9 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
         move_away(pos, vel, p_cache[0], p_cache[1], p_speed * 1.3)
 
     elif mode == "return":
-        move_toward(pos, vel, ox, oy, p_speed * 1.5 if not is_ranged else p_speed)
+        move_toward_pathfind(pos, vel, ox, oy,
+                             p_speed * 1.5 if not is_ranged else p_speed,
+                             c, game_time)
 
     else:
         if patrol:

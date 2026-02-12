@@ -49,9 +49,38 @@ def promote_entity(world: Any, eid: int, graph: SubzoneGraph,
 
     # 1. Determine tile position from subzone anchor
     ax, ay = node.anchor
-    # Add some randomness so entities don't stack
-    offset_x = random.uniform(-2.0, 2.0)
-    offset_y = random.uniform(-2.0, 2.0)
+
+    # Check if entity was traveling and should appear near a portal
+    spawn_near_portal = False
+    brain = world.get(eid, Brain)
+    if brain:
+        plan = world.get(eid, TravelPlan)
+        sim_dest = brain.state.get("_sim_destination")
+        cross_zone_dest = None
+
+        if plan and not plan.complete:
+            cross_zone_dest = plan.destination
+        elif sim_dest:
+            cross_zone_dest = sim_dest
+
+        # If entity was traveling TO or is AT a portal subzone, place near portal
+        if cross_zone_dest or szp.subzone:
+            from core.zone import ZONE_PORTALS
+            for portal in ZONE_PORTALS:
+                # Check if entity's subzone matches a portal endpoint
+                if portal.side_a.subzone == szp.subzone:
+                    ax, ay = portal.side_a.spawn
+                    spawn_near_portal = True
+                    break
+                elif portal.side_b.subzone == szp.subzone:
+                    ax, ay = portal.side_b.spawn
+                    spawn_near_portal = True
+                    break
+
+    # Add some randomness so entities don't stack (smaller range near portals)
+    jitter = 1.0 if spawn_near_portal else 2.0
+    offset_x = random.uniform(-jitter, jitter)
+    offset_y = random.uniform(-jitter, jitter)
     tile_x = float(ax) + offset_x
     tile_y = float(ay) + offset_y
 
@@ -76,6 +105,24 @@ def promote_entity(world: Any, eid: int, graph: SubzoneGraph,
     world.remove(eid, SubzonePos)
     world.add(eid, Position(x=tile_x, y=tile_y, zone=zone))
     world.zone_add(eid, zone)
+
+    # Determine if this entity is a container (static object)
+    ident = world.get(eid, Identity)
+    is_container = ident is not None and getattr(ident, "kind", None) == "container"
+
+    if is_container:
+        # Containers only need Position + Lod — no movement or combat
+        lod = world.get(eid, Lod)
+        if lod:
+            lod.level = "high"
+            lod.transition_until = game_time + 0.5
+        else:
+            world.add(eid, Lod(level="high", transition_until=game_time + 0.5))
+        print(f"[LOD] Promoted container {ident.name} (eid={eid}) at "
+              f"({tile_x:.1f}, {tile_y:.1f}) in {zone}")
+        return True
+
+    # --- NPC path from here ---
 
     # Ensure Velocity exists
     if not world.has(eid, Velocity):
@@ -112,10 +159,7 @@ def promote_entity(world: Any, eid: int, graph: SubzoneGraph,
     if not world.has(eid, Facing):
         world.add(eid, Facing())
 
-    name = "?"
-    ident = world.get(eid, Identity)
-    if ident:
-        name = ident.name
+    name = ident.name if ident else "?"
     print(f"[LOD] Promoted {name} (eid={eid}) to high LOD at "
           f"({tile_x:.1f}, {tile_y:.1f}) in {zone}")
 
@@ -182,10 +226,27 @@ def demote_entity(world: Any, eid: int, graph: SubzoneGraph,
         vel.x = 0.0
         vel.y = 0.0
 
-    # 4. Deactivate Brain
+    # 4. Deactivate Brain — preserve essential state
     if brain:
         brain.active = False
+        # Keep origin, home_subzone, period across demotion
+        _preserved_keys = {"origin", "home_subzone", "period"}
+        preserved = {}
+        # Check nested dicts (villager state lives in brain.state["villager"])
+        for key in list(brain.state.keys()):
+            val = brain.state[key]
+            if isinstance(val, dict):
+                kept = {k: v for k, v in val.items() if k in _preserved_keys}
+                if kept:
+                    preserved[key] = kept
+            elif key in _preserved_keys:
+                preserved[key] = val
         brain.state.clear()
+        for key, val in preserved.items():
+            if isinstance(val, dict):
+                brain.state[key] = val
+            else:
+                brain.state[key] = val
 
     # 5. Set LOD level
     lod = world.get(eid, Lod)

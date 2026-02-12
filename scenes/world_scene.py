@@ -301,13 +301,13 @@ class WorldScene(Scene):
         clock = app.world.res(GameClock)
         if clock:
             clock.time += scaled_dt
-        lod_system(app.world, dt)
+        lod_system(app.world, scaled_dt)
         hunger_system(app.world, scaled_dt)
         auto_eat_system(app.world, scaled_dt)
         settlement_food_production(app.world, scaled_dt)
-        run_brains(app.world, dt)
-        movement_system(app.world, dt, self.tiles)
-        projectile_system(app.world, dt, self.tiles)
+        run_brains(app.world, scaled_dt)
+        movement_system(app.world, scaled_dt, self.tiles)
+        projectile_system(app.world, scaled_dt, self.tiles)
 
         # Tick the off-screen world simulation
         if self.world_sim and self.world_sim.active:
