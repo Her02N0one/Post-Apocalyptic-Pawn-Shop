@@ -184,7 +184,13 @@ class MuseumScene(Scene):
     # ── Tab 2: LOD Demo ──────────────────────────────────────────────
 
     def _setup_lod_demo(self, app: App):
-        """Scatter NPCs and visualise LOD tiers based on distance."""
+        """Scatter NPCs and visualise LOD tiers based on distance.
+
+        In the demo all NPCs are in the same zone, so none can be
+        low LOD (that only happens when the player leaves the zone).
+        High = near the camera centre, medium = further away.
+        Both tiers run brains and move.
+        """
         for i in range(15):
             x = random.uniform(3, _ARENA_W - 3)
             y = random.uniform(3, _ARENA_H - 3)
@@ -192,10 +198,10 @@ class MuseumScene(Scene):
                                    x, y, (150, 200, 180))
             lod = app.world.get(eid, Lod)
             if lod:
-                lod.level = "low"
+                lod.level = "medium"  # same zone, brains active
             brain = app.world.get(eid, Brain)
             if brain:
-                brain.active = False
+                brain.active = True
             self._eids.append(eid)
 
     # ── Events ───────────────────────────────────────────────────────
@@ -278,7 +284,8 @@ class MuseumScene(Scene):
             movement_system(app.world, dt, self.tiles)
             projectile_system(app.world, dt, self.tiles)
         elif self.tab == 2:
-            # LOD demo: update LOD levels based on distance to center
+            # LOD demo: all same zone → high or medium (never low).
+            # Both tiers run brains and move.
             cx, cy = self._lod_center
             for eid in self._eids:
                 if not app.world.alive(eid):
@@ -291,17 +298,11 @@ class MuseumScene(Scene):
                 d = math.hypot(pos.x - cx, pos.y - cy)
                 if d <= self._lod_radius:
                     lod.level = "high"
-                    if brain:
-                        brain.active = True
-                elif d <= self._lod_radius * 2:
-                    lod.level = "medium"
-                    if brain:
-                        brain.active = False
                 else:
-                    lod.level = "low"
-                    if brain:
-                        brain.active = False
-            # Run brains for high-LOD entities
+                    lod.level = "medium"
+                # Both high and medium run brains
+                if brain and not brain.active:
+                    brain.active = True
             run_brains(app.world, dt)
             movement_system(app.world, dt, self.tiles)
 

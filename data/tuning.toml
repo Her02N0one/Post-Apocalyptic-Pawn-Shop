@@ -58,6 +58,7 @@ strafe_speed_normal_mult     = 0.6
 flee_recovery_mult           = 2.5
 return_arrive_dist           = 1.0
 return_reaggro_factor        = 0.6
+chase_give_up_mult           = 2.0
 
 ally_near_target_factor      = 0.8
 line_of_fire_clearance       = 0.6
@@ -139,10 +140,12 @@ fallback_timer_max           = 3.0
 
 
 # ─── LOD SYSTEM ──────────────────────────────────────────────────────
+# high_radius: entities within this distance of the player = high LOD
+# Entities further away but in the same zone = medium LOD (still active)
+# Entities in a different zone = low LOD (event-driven only)
 
 [lod]
 high_radius                  = 20.0
-med_radius                   = 40.0
 grace_period                 = 0.5
 lod_interval                 = 0.25
 

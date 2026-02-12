@@ -219,9 +219,9 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
             if can_flee and cur_hp_ratio <= threat.flee_threshold:
                 c["mode"] = "flee"
                 _log(world, eid, "combat", f"attack → flee (hp={cur_hp_ratio:.0%})", game_time)
-            elif home_dist > threat.leash_radius:
+            elif dist > chase_give_up:
                 c["mode"] = "return"
-                _log(world, eid, "combat", f"attack → return (leash={home_dist:.1f})", game_time)
+                _log(world, eid, "combat", f"attack \u2192 return (lost visual, dist={dist:.1f})", game_time)
             elif is_ranged and dist > atk_cfg.range * _tun("combat.engagement", "ranged_attack_to_chase", 1.8):
                 c["mode"] = "chase"
                 _log(world, eid, "combat", f"attack → chase (too far, dist={dist:.1f})", game_time)
