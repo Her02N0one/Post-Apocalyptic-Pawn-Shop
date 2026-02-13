@@ -300,6 +300,14 @@ def get_entity_weapon_stats(world, eid: int) -> tuple[float, float, str]:
 
 def npc_melee_attack(world, attacker_eid: int, target_eid: int) -> bool:
     """NPC performs a melee attack. Returns True if target dies."""
+    # Hard cooldown gate — prevents double-fire regardless of caller
+    atk_cfg = world.get(attacker_eid, AttackConfig)
+    if atk_cfg:
+        clock = world.res(GameClock)
+        now = clock.time if clock else 0.0
+        if now - atk_cfg.last_attack_time < atk_cfg.cooldown * 0.9:
+            return False
+        atk_cfg.last_attack_time = now
     bonus_dmg, _, _ = get_entity_weapon_stats(world, attacker_eid)
     equip = world.get(attacker_eid, Equipment)
     registry = world.res(ItemRegistry)
@@ -315,6 +323,15 @@ def npc_melee_attack(world, attacker_eid: int, target_eid: int) -> bool:
 
 def npc_ranged_attack(world, attacker_eid: int, target_eid: int) -> bool:
     """NPC fires a projectile at target. Returns True if projectile spawned."""
+    # Hard cooldown gate — prevents double-fire regardless of caller
+    atk_cfg = world.get(attacker_eid, AttackConfig)
+    if atk_cfg:
+        clock = world.res(GameClock)
+        now = clock.time if clock else 0.0
+        if now - atk_cfg.last_attack_time < atk_cfg.cooldown * 0.9:
+            return False
+        atk_cfg.last_attack_time = now
+
     att_pos = world.get(attacker_eid, Position)
     def_pos = world.get(target_eid, Position)
     if not att_pos or not def_pos:

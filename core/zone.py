@@ -125,6 +125,51 @@ def is_passable(zone: str, x: float, y: float) -> bool:
     return tiles[r][c] != TILE_WALL
 
 
+def has_line_of_sight(zone: str, x1: float, y1: float,
+                      x2: float, y2: float) -> bool:
+    """Return True if no wall tile blocks the line from (x1,y1) to (x2,y2).
+
+    Uses a DDA (digital-differential-analyzer) grid walk so every
+    tile the ray passes through is tested.
+    """
+    tiles = ZONE_MAPS.get(zone)
+    if not tiles:
+        return True
+    rows = len(tiles)
+    cols = len(tiles[0]) if rows else 0
+    if rows == 0 or cols == 0:
+        return True
+
+    from core.constants import TILE_WALL
+
+    dx = x2 - x1
+    dy = y2 - y1
+    dist = (dx * dx + dy * dy) ** 0.5
+    if dist < 0.01:
+        return True
+
+    # Step size: half a tile for accuracy
+    steps = int(dist * 2.5) + 1
+    sx = dx / steps
+    sy = dy / steps
+
+    prev_c, prev_r = -1, -1
+    cx, cy = x1, y1
+    for _ in range(steps + 1):
+        c = int(cx)
+        r = int(cy)
+        if c != prev_c or r != prev_r:
+            if r < 0 or r >= rows or c < 0 or c >= cols:
+                return False
+            if tiles[r][c] == TILE_WALL:
+                return False
+            prev_c, prev_r = c, r
+        cx += sx
+        cy += sy
+
+    return True
+
+
 def random_passable_spot(zone: str, center_x: float, center_y: float, radius: float, attempts: int = 64):
     for _ in range(attempts):
         dx = random.uniform(-radius / 2.0, radius / 2.0)

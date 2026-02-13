@@ -229,6 +229,8 @@ class AttackTargetGoal(Goal):
         memory.forget("_atk_path")
 
     def tick(self, world, eid, memory, dt, game_time):
+        from logic import combat_movement as cmove
+
         pos = world.get(eid, Position)
         vel = world.get(eid, Velocity)
         atk_cfg = world.get(eid, AttackConfig)
@@ -253,54 +255,40 @@ class AttackTargetGoal(Goal):
         p_speed = patrol.speed if patrol else 2.0
         mode = memory.get("_atk_mode", "chase")
 
+        # Movement state dict — shared with combat_movement functions
+        if not memory.has("_mov"):
+            memory.set("_mov", {})
+        mov = memory.get("_mov")
+
         # ── Reactive defence (dodge / heal) ──────────────────────────
-        # Reuse the legacy helpers — they rely on Brain.state, so we
-        # create a tiny proxy dict.
         from components import Brain
         brain = world.get(eid, Brain)
-        proxy_state = brain.state if brain else {}
-        if mode in ("chase", "attack"):
-            if _try_dodge_proxy(world, eid, pos, vel, proxy_state, dt, game_time):
+        if brain and mode in ("chase", "attack"):
+            if try_dodge(world, eid, brain, pos, vel,
+                         brain.state, dt, game_time):
                 return
-            _try_heal_proxy(world, eid, proxy_state, game_time)
+            try_heal(world, eid, brain, brain.state, game_time)
 
         # ── Sub-state transitions ────────────────────────────────────
         if mode == "chase":
-            in_range = dist <= atk_cfg.range if not is_ranged else dist <= atk_cfg.range * 1.1
+            in_range = (dist <= atk_cfg.range if not is_ranged
+                        else dist <= atk_cfg.range * 1.1)
             if in_range:
                 mode = "attack"
                 memory.set("_atk_mode", "attack")
+                mov["melee_sub"] = "approach"
         elif mode == "attack":
-            out_of_range = dist > atk_cfg.range * 1.6 if not is_ranged else dist > atk_cfg.range * 1.8
+            out_of_range = (dist > atk_cfg.range * 1.6 if not is_ranged
+                            else dist > atk_cfg.range * 1.8)
             if out_of_range:
                 mode = "chase"
                 memory.set("_atk_mode", "chase")
-                memory.forget("_atk_path")
 
-        # ── Chase movement (with pathfinding) ────────────────────────
+        # ── Chase movement ───────────────────────────────────────────
         if mode == "chase":
-            # Re-path periodically
-            repath_due = (game_time - memory.get("_atk_path_time", 0.0)) > 0.5
-            path = memory.get("_atk_path")
-
-            if path is None or repath_due:
-                path = find_path(pos.zone, pos.x, pos.y, t_pos.x, t_pos.y, max_dist=24)
-                memory.set("_atk_path", path)
-                memory.set("_atk_path_time", game_time)
-
-            if path:
-                wp = path_next_waypoint(path, pos.x, pos.y)
-                if wp:
-                    chase_mult = 1.2 if is_ranged else 1.4
-                    move_toward(pos, vel, wp[0], wp[1], p_speed * chase_mult)
-                else:
-                    # Path exhausted — direct move
-                    move_toward(pos, vel, t_pos.x, t_pos.y, p_speed * 1.4)
-            else:
-                # No path — fall back to direct movement
-                chase_mult = 1.2 if is_ranged else 1.4
-                move_toward(pos, vel, t_pos.x, t_pos.y, p_speed * chase_mult)
-
+            chase_mult = 1.2 if is_ranged else 1.4
+            cmove.chase(pos, vel, t_pos.x, t_pos.y,
+                        p_speed * chase_mult, mov, game_time)
             face_toward(world, eid, t_pos)
 
         # ── Attack behaviour ─────────────────────────────────────────
@@ -315,27 +303,22 @@ class AttackTargetGoal(Goal):
                 else:
                     from logic.combat import npc_melee_attack
                     npc_melee_attack(world, eid, target_eid)
+                    mov["_melee_just_hit"] = True
                 memory.set("_atk_cooldown", game_time + atk_cfg.cooldown)
 
-            # Movement during attack
+            # Movement during attack (shared with combat_engagement)
             if is_ranged:
-                too_close = atk_cfg.range * 0.4
-                if dist < too_close:
-                    move_away(pos, vel, t_pos.x, t_pos.y, p_speed * 1.3)
-                else:
-                    _do_strafe(pos, vel, t_pos, p_speed * 0.6, memory, dt)
+                cmove.ranged_attack(pos, vel, t_pos.x, t_pos.y, dist,
+                                    atk_cfg.range, p_speed, mov, dt)
             else:
-                if dist > atk_cfg.range * 0.5:
-                    move_toward(pos, vel, t_pos.x, t_pos.y, p_speed * 0.5)
-                else:
-                    vel.x, vel.y = 0.0, 0.0
+                cmove.melee_attack(pos, vel, t_pos.x, t_pos.y, dist,
+                                   atk_cfg.range, p_speed, mov, dt)
 
     def stop(self, world, eid, memory):
         memory.forget("attack_target")
-        memory.forget("_atk_path")
-        memory.forget("_atk_path_time")
         memory.forget("_atk_mode")
         memory.forget("_atk_cooldown")
+        memory.forget("_mov")
         vel = world.get(eid, Velocity)
         if vel:
             vel.x, vel.y = 0.0, 0.0
@@ -578,50 +561,4 @@ class ForageGoal(Goal):
             vel.x, vel.y = 0.0, 0.0
 
 
-# ══════════════════════════════════════════════════════════════════════
-#  PRIVATE HELPERS
-# ══════════════════════════════════════════════════════════════════════
 
-def _try_dodge_proxy(world, eid, pos, vel, state, dt, game_time):
-    """Dodge using legacy helper with a state-dict proxy."""
-    hf = world.get(eid, HitFlash)
-    if hf is None or hf.remaining < 0.08:
-        return False
-    if state.get("dodge_until", 0.0) > game_time:
-        return False
-    p_eid, p_pos = find_player(world)
-    if p_pos is None:
-        return False
-    dx = p_pos.x - pos.x
-    dy = p_pos.y - pos.y
-    d = math.hypot(dx, dy)
-    if d < 0.05:
-        return False
-    patrol = world.get(eid, Patrol)
-    dodge_speed = (patrol.speed if patrol else 2.0) * 3.0
-    direction = 1 if random.random() > 0.5 else -1
-    vel.x = (-dy / d) * direction * dodge_speed
-    vel.y = (dx / d) * direction * dodge_speed
-    state["dodge_until"] = game_time + 1.5
-    return True
-
-
-def _try_heal_proxy(world, eid, state, game_time):
-    """Heal using legacy helper with a state-dict proxy."""
-    from components import Brain
-    brain = world.get(eid, Brain)
-    if brain:
-        return try_heal(world, eid, brain, brain.state, game_time)
-    return False
-
-
-def _do_strafe(pos, vel, target_pos, speed, memory, dt):
-    """Ranged strafe with direction toggling."""
-    s_dir = memory.get("_strafe_dir", 1)
-    s_timer = memory.get("_strafe_timer", 0.0) - dt
-    if s_timer <= 0:
-        s_timer = random.uniform(0.8, 2.0)
-        s_dir *= -1
-        memory.set("_strafe_dir", s_dir)
-    memory.set("_strafe_timer", s_timer)
-    strafe(pos, vel, target_pos, speed, s_dir)
