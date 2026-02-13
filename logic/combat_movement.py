@@ -50,35 +50,75 @@ def return_home(pos, vel, ox: float, oy: float, speed: float,
 def ranged_attack(pos, vel, tx: float, ty: float, dist: float,
                   atk_range: float, speed: float, state: dict,
                   dt: float, *, wall_blocked: bool = False,
-                  los_blocked: bool = False, game_time: float = 0.0):
+                  los_blocked: bool = False, game_time: float = 0.0,
+                  repos_target: tuple[float, float] | None = None):
     """Ranged attack positioning: kite / strafe / reposition."""
     target_proxy = type("P", (), {"x": tx, "y": ty})()
 
     if wall_blocked:
-        # Can't see target through wall — pathfind around it
-        move_toward_pathfind(
-            pos, vel, tx, ty,
-            speed * _tun("combat.engagement", "chase_mult_ranged", 1.2),
-            state, game_time,
-        )
+        # Pathfind to a flanking position with LOS (if found),
+        # otherwise pathfind toward the target as fallback.
+        if repos_target:
+            rx, ry = repos_target
+            d_repos = math.hypot(pos.x - rx, pos.y - ry)
+            if d_repos < 0.5:
+                # Arrived at reposition spot — stop and wait for
+                # next sensor tick to clear wall_blocked
+                vel.x, vel.y = 0.0, 0.0
+            else:
+                move_toward_pathfind(
+                    pos, vel, rx, ry,
+                    speed * _tun("combat.engagement",
+                                 "reposition_speed_mult", 1.4),
+                    state, game_time,
+                )
+        else:
+            move_toward_pathfind(
+                pos, vel, tx, ty,
+                speed * _tun("combat.engagement",
+                             "chase_mult_ranged", 1.2),
+                state, game_time,
+            )
         return
 
-    too_close = atk_range * _tun("combat.engagement", "kite_close_factor", 0.4)
+    # ── Range maintenance — stay in optimal band ─────────────────
+    ideal_min = atk_range * _tun("combat.engagement",
+                                 "ranged_ideal_min_factor", 0.5)
+    ideal_max = atk_range * _tun("combat.engagement",
+                                 "ranged_ideal_max_factor", 0.85)
+
+    too_close = atk_range * _tun("combat.engagement",
+                                 "kite_close_factor", 0.35)
     if dist < too_close:
+        # Panic kite — way too close
         move_away(pos, vel, tx, ty,
-                  speed * _tun("combat.engagement", "kite_away_speed_mult", 1.3))
+                  speed * _tun("combat.engagement",
+                               "kite_away_speed_mult", 1.5))
+    elif dist < ideal_min:
+        # Back away while strafing to reach ideal range
+        _strafe_with_drift(pos, vel, target_proxy, speed, state, dt,
+                           drift=-0.5)  # negative = away
+    elif dist > ideal_max and dist < atk_range * 1.3:
+        # Close in slightly while strafing
+        _strafe_with_drift(pos, vel, target_proxy, speed, state, dt,
+                           drift=0.4)  # positive = toward
     elif los_blocked:
         _do_strafe(pos, vel, target_proxy, speed,
                    _tun("combat.engagement", "strafe_speed_los_mult", 1.2),
                    state, dt,
-                   min_t=_tun("combat.engagement", "strafe_timer_los_min", 0.4),
-                   max_t=_tun("combat.engagement", "strafe_timer_los_max", 0.8))
+                   min_t=_tun("combat.engagement",
+                              "strafe_timer_los_min", 0.4),
+                   max_t=_tun("combat.engagement",
+                              "strafe_timer_los_max", 0.8))
     else:
         _do_strafe(pos, vel, target_proxy, speed,
-                   _tun("combat.engagement", "strafe_speed_normal_mult", 0.6),
+                   _tun("combat.engagement",
+                        "strafe_speed_normal_mult", 0.6),
                    state, dt,
-                   min_t=_tun("combat.engagement", "strafe_timer_normal_min", 0.8),
-                   max_t=_tun("combat.engagement", "strafe_timer_normal_max", 2.0))
+                   min_t=_tun("combat.engagement",
+                              "strafe_timer_normal_min", 0.8),
+                   max_t=_tun("combat.engagement",
+                              "strafe_timer_normal_max", 2.0))
 
 
 def _do_strafe(pos, vel, target_proxy, speed: float, speed_mult: float,
@@ -90,6 +130,44 @@ def _do_strafe(pos, vel, target_proxy, speed: float, speed_mult: float,
         state["strafe_timer"] = random.uniform(min_t, max_t)
         state["strafe_dir"] *= -1
     strafe(pos, vel, target_proxy, speed * speed_mult, state["strafe_dir"])
+
+
+def _strafe_with_drift(pos, vel, target_proxy, speed: float,
+                       state: dict, dt: float, drift: float = 0.0):
+    """Strafe while drifting toward/away from target for range maintenance.
+
+    *drift* < 0 means away, > 0 means toward.  The tangential
+    (strafing) component is blended with a radial component so the
+    NPC adjusts distance while still moving laterally.
+    """
+    state.setdefault("strafe_dir", 1)
+    state["strafe_timer"] = state.get("strafe_timer", 0.0) - dt
+    if state["strafe_timer"] <= 0:
+        state["strafe_timer"] = random.uniform(0.6, 1.5)
+        state["strafe_dir"] *= -1
+
+    # Radial direction (toward target)
+    dx = target_proxy.x - pos.x
+    dy = target_proxy.y - pos.y
+    d = math.hypot(dx, dy)
+    if d < 0.1:
+        vel.x, vel.y = 0.0, 0.0
+        return
+    nx, ny = dx / d, dy / d
+    # Tangential direction (strafe)
+    cdir = state["strafe_dir"]
+    tang_x = -ny * cdir
+    tang_y = nx * cdir
+    # Blend: mostly tangential, some radial drift
+    bx = tang_x * 0.7 + nx * drift
+    by = tang_y * 0.7 + ny * drift
+    blen = math.hypot(bx, by)
+    spd = speed * 0.8
+    if blen > 0.01:
+        vel.x = (bx / blen) * spd
+        vel.y = (by / blen) * spd
+    else:
+        vel.x, vel.y = 0.0, 0.0
 
 
 # ── Melee attack sub-FSM ────────────────────────────────────────────

@@ -49,26 +49,26 @@ ranged_chase_to_attack       = 1.1
 ranged_attack_to_chase       = 1.8
 melee_attack_to_chase        = 1.6
 melee_close_in_factor        = 0.5
-melee_close_in_speed         = 0.5
+melee_close_in_speed         = 1.2
 
 # ── melee dynamics (sub-states within attack mode) ──
-melee_circle_speed           = 0.7
+melee_circle_speed           = 0.85
 melee_circle_radius          = 0.75
 melee_lunge_speed            = 3.5
 melee_lunge_dist             = 0.4
-melee_retreat_speed          = 2.0
+melee_retreat_speed          = 2.5
 melee_retreat_duration       = 0.4
 melee_circle_time_min        = 0.6
 melee_circle_time_max        = 1.8
 melee_post_hit_retreat       = true
 melee_direction_jitter       = 0.3
 
-strafe_timer_los_min         = 0.4
-strafe_timer_los_max         = 0.8
-strafe_timer_normal_min      = 0.8
-strafe_timer_normal_max      = 2.0
-strafe_speed_los_mult        = 1.2
-strafe_speed_normal_mult     = 0.6
+strafe_timer_los_min         = 0.3
+strafe_timer_los_max         = 0.6
+strafe_timer_normal_min      = 0.6
+strafe_timer_normal_max      = 1.5
+strafe_speed_los_mult        = 1.3
+strafe_speed_normal_mult     = 0.8
 
 flee_recovery_mult           = 2.5
 return_arrive_dist           = 1.0

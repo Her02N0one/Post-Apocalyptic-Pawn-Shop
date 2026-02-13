@@ -136,6 +136,13 @@ def _run_sensor_tick(world, eid, brain, pos, vel, patrol, threat, atk_cfg,
             return True           # dodge set velocity — skip movement
         try_heal(world, eid, brain, c, game_time)
 
+    # ── Refresh LOS flags from fresh sensor data ────────────────
+    if is_ranged:
+        c["_wall_blocked"] = not target.wall_los
+        if target.wall_los:
+            # LOS regained — find a good firing spot for next time
+            c.pop("_repos_target", None)
+
     # ── FSM transitions ──────────────────────────────────────────
     _update_fsm(world, eid, pos, threat, atk_cfg, c, target,
                 is_ranged, game_time)
@@ -257,6 +264,11 @@ def _try_attack(world, eid, pos, atk_cfg, c, target, is_ranged, game_time):
                 _log(world, eid, "combat",
                      f"ally in fire ({blocked}/{patience})", game_time)
                 return
+            # Patience exhausted — recheck wall LOS before firing
+            if not target.wall_los:
+                _log(world, eid, "combat",
+                     "force-fire blocked by wall", game_time)
+                return
             c["_los_blocked_count"] = 0
             _log(world, eid, "attack",
                  "fired (forced, LOS patience)", game_time)
@@ -319,12 +331,21 @@ def _run_movement(world, eid, pos, vel, patrol, atk_cfg,
         face_toward(world, eid, type("P", (), {"x": px, "y": py})())
         dist = math.hypot(pos.x - px, pos.y - py)
         if is_ranged:
+            # When wall-blocked, find a flanking position with LOS
+            wall_blk = c.get("_wall_blocked", False)
+            if wall_blk and not c.get("_repos_target"):
+                rp = sense.find_los_position(
+                    pos.zone, pos.x, pos.y, px, py,
+                    atk_cfg.range, c.get("origin"))
+                if rp:
+                    c["_repos_target"] = rp
             move.ranged_attack(
                 pos, vel, px, py, dist, atk_cfg.range, p_speed,
                 c, dt,
-                wall_blocked=c.get("_wall_blocked", False),
+                wall_blocked=wall_blk,
                 los_blocked=c.get("_los_blocked", False),
                 game_time=game_time,
+                repos_target=c.get("_repos_target"),
             )
         else:
             move.melee_attack(pos, vel, px, py, dist,

@@ -60,15 +60,10 @@ def movement_system(world: World, dt: float, tiles: list[list[int]]):
                 vel.y = 0.0
                 continue
 
-        # Knockback friction: non-player entities lose velocity each frame
-        if not world.has(eid, Player):
-            vel.x *= 0.85
-            vel.y *= 0.85
-            # Snap to zero when negligible
-            if abs(vel.x) < 0.05:
-                vel.x = 0.0
-            if abs(vel.y) < 0.05:
-                vel.y = 0.0
+        # Knockback friction: applied AFTER position update below so
+        # that brain-driven velocity is used at full strength for the
+        # current frame.  The dampening only reduces residual velocity
+        # (e.g. knockback) that isn't overwritten by the brain next frame.
 
         nx = pos.x + vel.x * dt
         ny = pos.y + vel.y * dt
@@ -111,6 +106,17 @@ def movement_system(world: World, dt: float, tiles: list[list[int]]):
         # Commit movement
         pos.x = nx
         pos.y = ny
+
+        # Knockback friction (post-commit): dampen residual velocity
+        # so knockback decays.  Brain overwrites vel every frame,
+        # making this a no-op for intentional movement.
+        if not world.has(eid, Player):
+            vel.x *= 0.85
+            vel.y *= 0.85
+            if abs(vel.x) < 0.05:
+                vel.x = 0.0
+            if abs(vel.y) < 0.05:
+                vel.y = 0.0
 
 
 def input_system(world: World, move: tuple[float, float] | None = None) -> None:

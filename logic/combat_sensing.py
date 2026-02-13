@@ -126,6 +126,59 @@ def ally_in_line_of_fire(world: World, eid: int, pos,
     return False
 
 
+def find_los_position(zone: str, sx: float, sy: float,
+                      tx: float, ty: float,
+                      atk_range: float,
+                      origin: tuple[float, float] | None = None,
+                      ) -> tuple[float, float] | None:
+    """Find the best nearby position that has LOS to the target.
+
+    Samples candidate positions on concentric rings around the NPC,
+    scoring by range, LOS clarity, and proximity to origin (leash).
+    Returns ``(x, y)`` or ``None`` if nothing beats the current spot.
+    """
+    from core.zone import is_passable as _passable
+
+    best: tuple[float, float] | None = None
+    best_score = -999.0
+    ideal_range = atk_range * 0.7
+
+    # Search radii: 2, 4, 6 tiles out in 12 directions
+    for radius in (2.0, 4.0, 6.0):
+        for i in range(12):
+            angle = math.pi * 2.0 * i / 12.0
+            cx = sx + math.cos(angle) * radius
+            cy = sy + math.sin(angle) * radius
+
+            if not _passable(zone, cx, cy):
+                continue
+
+            # Must have wall-LOS to target
+            if not has_line_of_sight(zone, cx + 0.4, cy + 0.4,
+                                    tx + 0.4, ty + 0.4):
+                continue
+
+            d_to_target = math.hypot(cx - tx, cy - ty)
+            # Score: prefer ideal range, penalise extremes
+            range_score = -abs(d_to_target - ideal_range) / max(ideal_range, 1.0)
+
+            # Prefer positions closer to ourselves (less travel)
+            travel_score = -math.hypot(cx - sx, cy - sy) * 0.1
+
+            # Leash: penalise positions far from origin
+            leash_score = 0.0
+            if origin:
+                leash_score = -math.hypot(cx - origin[0],
+                                          cy - origin[1]) * 0.05
+
+            score = range_score + travel_score + leash_score
+            if score > best_score:
+                best_score = score
+                best = (cx, cy)
+
+    return best
+
+
 def ally_near_target(world: World, eid: int, pos,
                      tx: float, ty: float,
                      melee_range: float) -> bool:
