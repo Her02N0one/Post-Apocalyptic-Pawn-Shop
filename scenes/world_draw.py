@@ -176,7 +176,7 @@ def draw_muzzle_flash(surface: pygame.Surface, scene, ox: int, oy: int):
 
 def draw_particles(pm, surface: pygame.Surface, cam_ox: int, cam_oy: int, tile_size: int):
     """Render all particles.  Extracted from ParticleManager.draw()."""
-    for p in pm._particles:
+    for p in pm.particles:
         sx = cam_ox + int(p.x * tile_size)
         sy = cam_oy + int(p.y * tile_size)
         if p.fade:

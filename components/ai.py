@@ -62,11 +62,35 @@ class AttackConfig:
     ``range`` — melee reach or ranged standoff distance (tiles).
     ``cooldown`` — seconds between attacks.
     ``last_attack_time`` — absolute GameClock.time of last attack.
+    ``accuracy`` — 0.0–1.0 projectile accuracy (1 = perfect).  Used by
+                   ``npc_ranged_attack`` when no Equipment/ItemRegistry.
+    ``proj_speed`` — projectile speed (tiles/sec) when no weapon item.
     """
     attack_type: str = "melee"
     range: float = 1.2
     cooldown: float = 0.5
     last_attack_time: float = 0.0
+    accuracy: float = 0.85
+    proj_speed: float = 14.0
+
+
+@dataclass
+class VisionCone:
+    """Directional perception for high-LOD AI entities.
+
+    ``fov_degrees``      — total field-of-view angle (e.g. 120 = ±60° from facing).
+    ``view_distance``    — forward detection range (tiles).
+    ``peripheral_range`` — omnidirectional close-range awareness (tiles).
+                           Enemies inside this radius are always detected
+                           regardless of facing direction.
+
+    When present alongside ``Threat``, combat_engagement uses the cone
+    for idle→chase transitions instead of the simple radius check.
+    ``Threat.aggro_radius`` still serves as the absolute max range cap.
+    """
+    fov_degrees: float = 120.0
+    view_distance: float = 12.0
+    peripheral_range: float = 4.0
 
 
 @dataclass

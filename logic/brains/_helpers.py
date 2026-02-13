@@ -16,9 +16,54 @@ from components import (
     Position, Velocity, Health, Player, Facing,
     HitFlash, Faction, Inventory, ItemRegistry, Identity,
 )
+from components.ai import VisionCone
 from core.zone import is_passable
 from logic.pathfinding import find_path, path_next_waypoint
 from core.tuning import get as _tun
+
+
+# ── Vision cone utilities ────────────────────────────────────────────
+
+_FACING_ANGLES: dict[str, float] = {
+    "right": 0.0,
+    "down":  math.pi / 2,
+    "left":  math.pi,
+    "up":    -math.pi / 2,
+}
+
+
+def facing_to_angle(direction: str) -> float:
+    """Convert a cardinal Facing.direction string to radians.
+
+    right → 0, down → π/2, left → π, up → −π/2
+    """
+    return _FACING_ANGLES.get(direction, 0.0)
+
+
+def in_vision_cone(pos, facing_dir: str, target_pos,
+                   cone: VisionCone) -> bool:
+    """Return True if *target_pos* is visible from *pos* given a VisionCone.
+
+    Detection succeeds if:
+    • target is within ``cone.peripheral_range`` (omni-directional), OR
+    • target is within ``cone.view_distance`` AND within the facing arc.
+    """
+    dx = target_pos.x - pos.x
+    dy = target_pos.y - pos.y
+    dist = math.hypot(dx, dy)
+    # Close-range peripheral — always detected
+    if dist <= cone.peripheral_range:
+        return True
+    # Beyond forward range
+    if dist > cone.view_distance:
+        return False
+    # Angle check
+    angle_to_target = math.atan2(dy, dx)
+    face_angle = facing_to_angle(facing_dir)
+    diff = abs(math.atan2(math.sin(angle_to_target - face_angle),
+                          math.cos(angle_to_target - face_angle)))
+    half_fov = math.radians(cone.fov_degrees / 2.0)
+    return diff <= half_fov
 
 
 # ── Targeting ────────────────────────────────────────────────────────
@@ -28,6 +73,70 @@ def find_player(world: World):
     res = world.query_one(Player, Position)
     if res:
         return res[0], res[2]
+    return None, None
+
+
+def find_nearest_enemy(world: World, eid: int, max_range: float = 999.0,
+                       use_vision_cone: bool = False):
+    """Return (target_eid, target_Position) of the nearest hostile entity.
+
+    An entity is considered hostile if it belongs to a *different*
+    faction group and has a ``Health`` component (i.e. is alive and
+    can be damaged).  Entities with no ``Faction`` are skipped.
+
+    If *use_vision_cone* is True and the entity has a ``VisionCone``
+    component, only targets inside the cone (or within peripheral
+    range) are considered.
+
+    Returns (None, None) if no enemy is within *max_range* tiles.
+    """
+    pos = world.get(eid, Position)
+    faction = world.get(eid, Faction)
+    if pos is None or faction is None:
+        return None, None
+
+    # Vision cone setup
+    cone = None
+    facing_dir = "down"
+    if use_vision_cone:
+        cone = world.get(eid, VisionCone)
+        facing = world.get(eid, Facing)
+        if facing:
+            facing_dir = facing.direction
+
+    my_group = faction.group
+    best_eid = None
+    best_pos = None
+    best_dist = max_range + 1
+
+    for other_eid, other_pos in world.all_of(Position):
+        if other_eid == eid:
+            continue
+        if other_pos.zone != pos.zone:
+            continue
+        if not world.has(other_eid, Health):
+            continue
+        other_hp = world.get(other_eid, Health)
+        if other_hp.current <= 0:
+            continue
+        other_fac = world.get(other_eid, Faction)
+        if other_fac is None:
+            continue
+        if other_fac.group == my_group:
+            continue  # same team
+        d = math.hypot(other_pos.x - pos.x, other_pos.y - pos.y)
+        if d >= best_dist:
+            continue
+        # Vision cone filter (if enabled and component exists)
+        if cone is not None:
+            if not in_vision_cone(pos, facing_dir, other_pos, cone):
+                continue
+        best_dist = d
+        best_eid = other_eid
+        best_pos = other_pos
+
+    if best_eid is not None:
+        return best_eid, best_pos
     return None, None
 
 
@@ -201,7 +310,10 @@ def try_dodge(world: World, eid: int, brain: Brain,
         return False
     if s.get("dodge_until", 0.0) > game_time:
         return False
+    # Dodge away from the nearest threat (player or enemy)
     p_eid, p_pos = find_player(world)
+    if p_pos is None or p_pos.zone != pos.zone:
+        p_eid, p_pos = find_nearest_enemy(world, eid, max_range=8.0)
     if p_pos is None:
         return False
     dx = p_pos.x - pos.x

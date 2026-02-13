@@ -27,7 +27,7 @@ from components.rpg import Health, Hunger, Needs, Inventory, Equipment
 from components.combat import Combat, Loot, LootTableRef, Projectile
 
 # ── AI ───────────────────────────────────────────────────────────────
-from components.ai import Brain, Patrol, Threat, AttackConfig, Task, Memory, GoalSet
+from components.ai import Brain, Patrol, Threat, AttackConfig, VisionCone, Task, Memory, GoalSet
 
 # ── Social ───────────────────────────────────────────────────────────
 from components.social import Faction, Dialogue, Ownership, CrimeRecord, Locked
@@ -53,7 +53,7 @@ __all__ = [
     # combat
     "Combat", "Loot", "LootTableRef", "Projectile",
     # ai
-    "Brain", "Patrol", "Threat", "AttackConfig", "Task", "Memory", "GoalSet",
+    "Brain", "Patrol", "Threat", "AttackConfig", "VisionCone", "Task", "Memory", "GoalSet",
     # social
     "Faction", "Dialogue", "Ownership", "CrimeRecord", "Locked",
     # resources

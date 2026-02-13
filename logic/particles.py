@@ -61,6 +61,11 @@ class ParticleManager:
     def count(self) -> int:
         return len(self._particles)
 
+    @property
+    def particles(self) -> list[Particle]:
+        """Public read-only access to the live particle list."""
+        return self._particles
+
     # ── emitters ─────────────────────────────────────────────────────
 
     def emit(self, p: Particle):

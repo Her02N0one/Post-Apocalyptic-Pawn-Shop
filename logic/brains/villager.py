@@ -467,9 +467,8 @@ def _wander_step(patrol: Patrol, pos, vel, s: dict, dt: float,
     ox, oy = s.get("origin", (pos.x, pos.y))
     wpath = s.get("_wander_path")
     pick_time = s.get("_wander_pick_t", 0.0)
-    pick_ivl = s.get("_wander_pick_ivl", _WANDER_PICK_MAX)
-
     w_pick_max = _tun("ai.villager", "wander_pick_max", 4.5)
+    pick_ivl = s.get("_wander_pick_ivl", w_pick_max)
     need_new = (
         wpath is None
         or len(wpath) == 0

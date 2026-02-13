@@ -20,19 +20,35 @@ import math
 from core.ecs import World
 from components import (
     Brain, Patrol, Threat, AttackConfig,
-    Position, Velocity, GameClock, Lod,
+    Position, Velocity, GameClock, Lod, Facing,
 )
+from components.ai import VisionCone
 from logic.brains import register_brain
 from components import Faction, Health, Hurtbox, Identity
 from components.dev_log import DevLog
 from logic.brains._helpers import (
-    find_player, dist_pos, hp_ratio,
+    find_player, find_nearest_enemy, dist_pos, hp_ratio,
     move_toward, move_toward_pathfind, move_away, strafe, face_toward,
     run_idle, should_engage, try_dodge, try_heal,
     reset_faction_on_return,
+    in_vision_cone,
 )
 from core.tuning import get as _tun
 from core.events import EventBus, AttackIntent
+
+
+def _update_facing_from_vel(world: World, eid: int, vel):
+    """Set Facing to match current velocity so idle-wandering NPCs look
+    where they walk — lets the vision cone sweep naturally."""
+    if abs(vel.x) < 0.01 and abs(vel.y) < 0.01:
+        return
+    facing = world.get(eid, Facing)
+    if facing is None:
+        return
+    if abs(vel.x) >= abs(vel.y):
+        facing.direction = "right" if vel.x > 0 else "left"
+    else:
+        facing.direction = "down" if vel.y > 0 else "up"
 
 
 def _log(world: World, eid: int, cat: str, msg: str, t: float = 0.0, **kw):
@@ -161,6 +177,12 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
             return
 
         p_eid, p_pos = find_player(world)
+        # Fallback: if no player, target nearest enemy faction.
+        # Target *acquisition* is omnidirectional — the vision cone only
+        # gates the idle → chase transition (below).
+        if p_pos is None or p_pos.zone != pos.zone:
+            p_eid, p_pos = find_nearest_enemy(world, eid,
+                                               max_range=threat.aggro_radius * 3)
         if p_pos is None or p_pos.zone != pos.zone:
             c["p_eid"] = None
             c["p_pos"] = None
@@ -168,6 +190,7 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
                 _log(world, eid, "combat", "target lost → idle", game_time)
             if patrol:
                 run_idle(patrol, pos, vel, c, dt)
+                _update_facing_from_vel(world, eid, vel)
             else:
                 vel.x, vel.y = 0.0, 0.0
             return
@@ -191,12 +214,22 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
         can_flee = threat.flee_threshold > 0.0
 
         if mode == "idle":
-            if dist <= threat.aggro_radius:
+            # Vision cone aware detection: use cone if component exists,
+            # otherwise fall back to simple aggro_radius.
+            cone = world.get(eid, VisionCone)
+            if cone is not None:
+                facing = world.get(eid, Facing)
+                fdir = facing.direction if facing else "down"
+                detected = in_vision_cone(pos, fdir, p_pos, cone)
+            else:
+                detected = (dist <= threat.aggro_radius)
+            if detected:
                 c["mode"] = "chase"
                 _log(world, eid, "combat", f"idle → chase (dist={dist:.1f})", game_time)
             else:
                 if patrol:
                     run_idle(patrol, pos, vel, c, dt)
+                    _update_facing_from_vel(world, eid, vel)
                 else:
                     vel.x, vel.y = 0.0, 0.0
                 return
@@ -213,9 +246,11 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
                 _log(world, eid, "combat", f"chase → attack (ranged, dist={dist:.1f})", game_time)
             elif not is_ranged and dist <= atk_cfg.range:
                 c["mode"] = "attack"
+                c["melee_sub"] = "approach"  # reset melee sub-state
                 _log(world, eid, "combat", f"chase → attack (melee, dist={dist:.1f})", game_time)
 
         elif mode == "attack":
+            chase_give_up = threat.leash_radius
             if can_flee and cur_hp_ratio <= threat.flee_threshold:
                 c["mode"] = "flee"
                 _log(world, eid, "combat", f"attack → flee (hp={cur_hp_ratio:.0%})", game_time)
@@ -235,9 +270,27 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
                     # Check line of fire — strafe to reposition if ally is in the way
                     if _ally_in_line_of_fire(world, eid, pos, p_pos.x, p_pos.y):
                         c["_los_blocked"] = True
-                        _log(world, eid, "combat", "LOS blocked by ally, strafing", game_time)
+                        blocked_count = c.get("_los_blocked_count", 0) + 1
+                        c["_los_blocked_count"] = blocked_count
+                        patience = int(_tun("combat.engagement", "los_blocked_patience", 3))
+                        if blocked_count >= patience:
+                            # Patience exhausted — fire anyway to avoid
+                            # strafing forever while ally gets killed
+                            c["_los_blocked"] = False
+                            c["_los_blocked_count"] = 0
+                            bus = world.res(EventBus)
+                            if bus:
+                                bus.emit(AttackIntent(attacker_eid=eid, target_eid=p_eid, attack_type="ranged"))
+                            else:
+                                from logic.combat import npc_ranged_attack
+                                npc_ranged_attack(world, eid, p_eid)
+                            c["attack_until"] = game_time + atk_cfg.cooldown
+                            _log(world, eid, "attack", "fired (forced, LOS patience)", game_time)
+                        else:
+                            _log(world, eid, "combat", f"LOS blocked by ally ({blocked_count}/{patience}), strafing", game_time)
                     else:
                         c["_los_blocked"] = False
+                        c["_los_blocked_count"] = 0
                         bus = world.res(EventBus)
                         if bus:
                             bus.emit(AttackIntent(attacker_eid=eid, target_eid=p_eid, attack_type="ranged"))
@@ -247,18 +300,17 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
                         c["attack_until"] = game_time + atk_cfg.cooldown
                         _log(world, eid, "attack", "fired ranged attack", game_time)
                 else:
-                    # Check for allies near target before swinging
-                    if _ally_near_target(world, eid, pos, p_pos.x, p_pos.y, atk_cfg.range):
-                        _log(world, eid, "combat", "melee held — ally near target", game_time)
+                    # Melee: always swing — holding back while an ally is
+                    # being beaten is worse than occasional friendly contact
+                    bus = world.res(EventBus)
+                    if bus:
+                        bus.emit(AttackIntent(attacker_eid=eid, target_eid=p_eid, attack_type="melee"))
                     else:
-                        bus = world.res(EventBus)
-                        if bus:
-                            bus.emit(AttackIntent(attacker_eid=eid, target_eid=p_eid, attack_type="melee"))
-                        else:
-                            from logic.combat import npc_melee_attack
-                            npc_melee_attack(world, eid, p_eid)
-                        c["attack_until"] = game_time + atk_cfg.cooldown
-                        _log(world, eid, "attack", "melee strike", game_time)
+                        from logic.combat import npc_melee_attack
+                        npc_melee_attack(world, eid, p_eid)
+                    c["attack_until"] = game_time + atk_cfg.cooldown
+                    c["_melee_just_hit"] = True  # signal retreat sub-state
+                    _log(world, eid, "attack", "melee strike", game_time)
 
         elif mode == "flee":
             if cur_hp_ratio > threat.flee_threshold * _tun("combat.engagement", "flee_recovery_mult", 2.5) or dist > threat.aggro_radius:
@@ -283,6 +335,7 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
     if mode == "idle":
         if patrol:
             run_idle(patrol, pos, vel, c, dt)
+            _update_facing_from_vel(world, eid, vel)
         else:
             vel.x, vel.y = 0.0, 0.0
 
@@ -327,11 +380,105 @@ def _combat_brain(world: World, eid: int, brain: Brain, dt: float,
                     c["strafe_dir"] *= -1
                 strafe(pos, vel, p_proxy, p_speed * _tun("combat.engagement", "strafe_speed_normal_mult", 0.6), c["strafe_dir"])
         else:
-            # Melee: close in or stand
-            if dist > atk_cfg.range * _tun("combat.engagement", "melee_close_in_factor", 0.5):
-                move_toward(pos, vel, px, py, p_speed * _tun("combat.engagement", "melee_close_in_speed", 0.5))
+            # ── Dynamic melee movement ───────────────────────────
+            # Sub-states: approach → circle → lunge → retreat → circle …
+            # Gives melee fights a push/pull rhythm instead of
+            # standing still and trading blows.
+            msub = c.get("melee_sub", "approach")
+            ideal_r = atk_cfg.range * _tun("combat.engagement", "melee_circle_radius", 0.75)
+
+            if msub == "approach":
+                # Close the distance to the target
+                if dist > atk_cfg.range * _tun("combat.engagement", "melee_close_in_factor", 0.5):
+                    move_toward(pos, vel, px, py,
+                                p_speed * _tun("combat.engagement", "melee_close_in_speed", 0.5))
+                else:
+                    # Arrived — start circling
+                    c["melee_sub"] = "circle"
+                    c["melee_circle_timer"] = random.uniform(
+                        _tun("combat.engagement", "melee_circle_time_min", 0.6),
+                        _tun("combat.engagement", "melee_circle_time_max", 1.8),
+                    )
+                    c.setdefault("melee_circle_dir", random.choice((-1, 1)))
+
+            elif msub == "circle":
+                # Orbit around the target, maintaining ideal distance
+                c["melee_circle_timer"] = c.get("melee_circle_timer", 1.0) - dt
+                circ_speed = p_speed * _tun("combat.engagement", "melee_circle_speed", 0.7)
+
+                # Blend: orbit tangent + distance correction
+                if dist > 0.1:
+                    # Tangent (perpendicular to target direction)
+                    nx = (px - pos.x) / dist
+                    ny = (py - pos.y) / dist
+                    cdir = c.get("melee_circle_dir", 1)
+                    tx_v = -ny * cdir
+                    ty_v = nx * cdir
+
+                    # Radial correction — stay near ideal range
+                    drift = (dist - ideal_r) / max(ideal_r, 0.5)
+                    jitter = _tun("combat.engagement", "melee_direction_jitter", 0.3)
+                    drift += random.uniform(-jitter, jitter) * dt
+                    bx = tx_v + nx * drift * 1.5
+                    by = ty_v + ny * drift * 1.5
+                    blen = math.hypot(bx, by)
+                    if blen > 0.01:
+                        vel.x = (bx / blen) * circ_speed
+                        vel.y = (by / blen) * circ_speed
+                    else:
+                        vel.x, vel.y = 0.0, 0.0
+                else:
+                    vel.x, vel.y = 0.0, 0.0
+
+                # Timer expired or very close → lunge
+                if c["melee_circle_timer"] <= 0 or dist < ideal_r * 0.5:
+                    c["melee_sub"] = "lunge"
+
+                # Target ran away → chase again
+                if dist > atk_cfg.range * 1.5:
+                    c["melee_sub"] = "approach"
+
+            elif msub == "lunge":
+                # Burst toward target to deliver the hit
+                lunge_speed = p_speed * _tun("combat.engagement", "melee_lunge_speed", 3.5)
+                lunge_close = atk_cfg.range * _tun("combat.engagement", "melee_lunge_dist", 0.4)
+                if dist > lunge_close:
+                    move_toward(pos, vel, px, py, lunge_speed)
+                else:
+                    vel.x, vel.y = 0.0, 0.0
+                # After cooldown fires (attack actually lands), switch to retreat
+                if c.get("_melee_just_hit"):
+                    c["_melee_just_hit"] = False
+                    if _tun("combat.engagement", "melee_post_hit_retreat", True):
+                        c["melee_sub"] = "retreat"
+                        c["melee_retreat_timer"] = _tun(
+                            "combat.engagement", "melee_retreat_duration", 0.4)
+                    else:
+                        c["melee_sub"] = "circle"
+                        c["melee_circle_timer"] = random.uniform(
+                            _tun("combat.engagement", "melee_circle_time_min", 0.6),
+                            _tun("combat.engagement", "melee_circle_time_max", 1.8),
+                        )
+                # Target ran away → chase
+                if dist > atk_cfg.range * 2.0:
+                    c["melee_sub"] = "approach"
+
+            elif msub == "retreat":
+                # Brief backstep after landing a hit
+                c["melee_retreat_timer"] = c.get("melee_retreat_timer", 0.3) - dt
+                retreat_speed = p_speed * _tun("combat.engagement", "melee_retreat_speed", 2.0)
+                move_away(pos, vel, px, py, retreat_speed)
+                if c["melee_retreat_timer"] <= 0:
+                    c["melee_sub"] = "circle"
+                    c["melee_circle_timer"] = random.uniform(
+                        _tun("combat.engagement", "melee_circle_time_min", 0.6),
+                        _tun("combat.engagement", "melee_circle_time_max", 1.8),
+                    )
+                    c["melee_circle_dir"] = random.choice((-1, 1))
+
             else:
-                vel.x, vel.y = 0.0, 0.0
+                # Unknown sub-state — reset
+                c["melee_sub"] = "approach"
 
     elif mode == "flee" and p_cache:
         move_away(pos, vel, p_cache[0], p_cache[1], p_speed * _tun("combat.engagement", "flee_speed_mult", 1.3))

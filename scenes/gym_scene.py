@@ -4,7 +4,7 @@ A flat arena with a controllable test entity and real-time metrics.
 Use this to test A*, collision, and movement systems in isolation.
 
 Controls:
-    WASD         — move the test entity
+    WASD         — move the test entity (hold Shift to sprint)
     1-3          — preset tile layouts (open, maze, rooms)
     LMB          — paint / erase walls
     RMB          — set A* goal marker
@@ -12,24 +12,26 @@ Controls:
     P            — toggle A* path visualisation
     R            — reset arena
     Tab          — cycle metrics panel
-    Escape / F3  — back to scene picker
+    F1           — debug overlay
+    F3           — scene picker
+    F4           — reload tuning
+    Escape       — back
 """
 
 from __future__ import annotations
 import math
 import pygame
-from core.scene import Scene
 from core.app import App
-from core.ecs import World
-from core.constants import TILE_SIZE, TILE_COLORS, TILE_WALL, TILE_GRASS, TILE_STONE
+from core.constants import TILE_SIZE, TILE_WALL, TILE_GRASS, TILE_STONE
+from core.zone import ZONE_MAPS
 from components import (
     Position, Velocity, Sprite, Identity, Player, Camera, Collider,
     Hurtbox, Health, Brain, Facing, Lod, GameClock,
 )
 from components.ai import Patrol
-from logic.pathfinding import find_path, path_next_waypoint
-from logic.systems import movement_system
-from core.zone import ZONE_MAPS
+from logic.pathfinding import find_path
+from logic.tick import tick_systems
+from scenes.test_scene_base import TestScene
 
 
 # ── Arena presets ────────────────────────────────────────────────────
@@ -37,6 +39,7 @@ from core.zone import ZONE_MAPS
 _W = TILE_WALL
 _G = TILE_GRASS
 _S = TILE_STONE
+
 
 def _make_open(w: int = 30, h: int = 20) -> list[list[int]]:
     """Flat grass arena with stone border."""
@@ -101,16 +104,17 @@ _PRESETS = {
 }
 
 
-class GymScene(Scene):
+class GymScene(TestScene):
     """Movement & Pathfinding Gym."""
 
     def __init__(self):
+        super().__init__()
+        self.zone = "__gym__"
         self.tiles = _make_open()
         self.map_h = len(self.tiles)
         self.map_w = len(self.tiles[0])
         self.show_grid = True
         self.show_path = True
-        self.zone = "__gym__"
         self.preset_name = "Open Arena"
 
         # A* goal (RMB click)
@@ -135,18 +139,10 @@ class GymScene(Scene):
     # ── Lifecycle ────────────────────────────────────────────────────
 
     def on_enter(self, app: App):
-        from core import tuning as tuning_mod
-        tuning_mod.load()
+        super().on_enter(app)  # Camera, Clock, Tuning, DevLog, ZONE_MAPS
         w = app.world
-        if not w.res(Camera):
-            w.set_res(Camera())
-        if not w.res(GameClock):
-            w.set_res(GameClock())
 
-        # Register tiles so A* pathfinding can find them
-        ZONE_MAPS[self.zone] = self.tiles
-
-        # Spawn controllable test entity (like a "player" but in the gym)
+        # Spawn controllable test entity
         self._player_eid = w.spawn()
         w.add(self._player_eid, Position(x=5.0, y=5.0, zone=self.zone))
         w.add(self._player_eid, Velocity())
@@ -156,6 +152,7 @@ class GymScene(Scene):
         w.add(self._player_eid, Collider())
         w.add(self._player_eid, Facing())
         w.zone_add(self._player_eid, self.zone)
+        self._eids.append(self._player_eid)
 
         # Spawn a few A*-walking NPCs for group pathfinding tests
         npc_defs = [
@@ -176,28 +173,24 @@ class GymScene(Scene):
             w.add(eid, Patrol(origin_x=nx, origin_y=ny, radius=10.0, speed=2.5))
             w.zone_add(eid, self.zone)
             self._npc_eids.append(eid)
+            self._eids.append(eid)
 
-        cam = w.res(Camera)
+        cam = self._camera
         if cam:
             cam.x = self.map_w / 2.0
             cam.y = self.map_h / 2.0
-        ZONE_MAPS[self.zone] = self.tiles
 
     def on_exit(self, app: App):
-        # Clean up gym entities
-        for eid in [self._player_eid] + self._npc_eids:
-            if app.world.alive(eid):
-                app.world.kill(eid)
-        app.world.purge()
+        super().on_exit(app)  # kills all _eids, purges
         self._npc_eids.clear()
 
     # ── Events ───────────────────────────────────────────────────────
 
     def handle_event(self, event: pygame.event.Event, app: App):
+        # Shared keys: F1, F3, F4, Escape
+        super().handle_event(event, app)
+
         if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_ESCAPE:
-                app.pop_scene()
-                return
             if event.key == pygame.K_g:
                 self.show_grid = not self.show_grid
             elif event.key == pygame.K_p:
@@ -248,7 +241,7 @@ class GymScene(Scene):
         self._frames += 1
         self._elapsed += dt
 
-        # Player input
+        # Player WASD input (Shift = run at 2× speed)
         keys = pygame.key.get_pressed()
         dx = float(keys[pygame.K_d]) - float(keys[pygame.K_a])
         dy = float(keys[pygame.K_s]) - float(keys[pygame.K_w])
@@ -257,11 +250,13 @@ class GymScene(Scene):
             dx /= length
             dy /= length
 
+        sprint = 2.0 if (keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]) else 1.0
+
         vel = w.get(self._player_eid, Velocity)
         player = w.get(self._player_eid, Player)
         if vel and player:
-            vel.x = dx * player.speed
-            vel.y = dy * player.speed
+            vel.x = dx * player.speed * sprint
+            vel.y = dy * player.speed * sprint
 
         # Track movement distance
         pos = w.get(self._player_eid, Position)
@@ -271,19 +266,12 @@ class GymScene(Scene):
         if pos:
             self._prev_pos = (pos.x, pos.y)
 
-        # NPC brains (wander)
-        from logic.brains import run_brains
-        clock = w.res(GameClock)
-        if clock:
-            clock.time += dt
-        run_brains(w, dt)
-
-        # Physics
-        movement_system(w, dt, self.tiles)
+        # Unified system tick (replaces inline run_brains + movement_system)
+        tick_systems(w, dt, self.tiles, skip_lod=True, skip_needs=True)
         w.purge()
 
         # Camera follows player
-        cam = w.res(Camera)
+        cam = self._camera
         if pos and cam:
             cam.x = pos.x
             cam.y = pos.y
@@ -292,29 +280,20 @@ class GymScene(Scene):
 
     def draw(self, surface: pygame.Surface, app: App):
         surface.fill((20, 20, 25))
-        cam = app.world.res(Camera) or Camera()
+        ox, oy = self._cam_offset(surface)
         sw, sh = surface.get_size()
-        ox = sw // 2 - int(cam.x * TILE_SIZE)
-        oy = sh // 2 - int(cam.y * TILE_SIZE)
 
-        # Tiles
-        for row in range(self.map_h):
-            for col in range(self.map_w):
-                tid = self.tiles[row][col]
-                color = TILE_COLORS.get(tid, (255, 0, 255))
-                rect = pygame.Rect(ox + col * TILE_SIZE, oy + row * TILE_SIZE,
-                                   TILE_SIZE, TILE_SIZE)
-                pygame.draw.rect(surface, color, rect)
-                if self.show_grid:
-                    pygame.draw.rect(surface, (50, 50, 50), rect, 1)
+        # Tiles (shared renderer)
+        self._draw_tiles(surface, show_grid=self.show_grid)
 
         # Goal marker
         if self.goal:
             gx = ox + int(self.goal[0] * TILE_SIZE)
             gy = oy + int(self.goal[1] * TILE_SIZE)
+            from scenes.world_draw import _draw_diamond
             _draw_diamond(surface, (255, 50, 50), gx, gy, 6)
 
-        # A* path
+        # A* path from player
         if self.show_path and self.astar_path:
             pos = app.world.get(self._player_eid, Position)
             if pos:
@@ -348,32 +327,30 @@ class GymScene(Scene):
                     pygame.draw.circle(surface, color, (wpx, wpy), 2)
                     prev = (wpx, wpy)
 
-        # Entities
-        for eid, pos, sprite in app.world.query(Position, Sprite):
-            if pos.zone != self.zone:
-                continue
-            sx = ox + int(pos.x * TILE_SIZE)
-            sy = oy + int(pos.y * TILE_SIZE)
-            app.draw_text(surface, sprite.char, sx + 8, sy + 4,
-                          color=sprite.color, font=app.font_lg)
-            # Name label
-            ident = app.world.get(eid, Identity)
-            if ident:
-                app.draw_text(surface, ident.name, sx - 8, sy - 14,
-                              color=(180, 180, 180), font=app.font_sm)
+        # Entities (shared renderer — sprites + names + health bars)
+        self._draw_entities(surface, app)
+
+        # ── Header bar ───────────────────────────────────────────────
+        bar = pygame.Surface((sw, 28), pygame.SRCALPHA)
+        bar.fill((0, 0, 0, 180))
+        surface.blit(bar, (0, 0))
+
+        hdr = f"GYM: {self.preset_name}  ({self.map_w}\u00d7{self.map_h})  NPCs: {len(self._npc_eids)}"
+        app.draw_text(surface, hdr, 8, 7, (0, 255, 200), app.font_sm)
+
+        tags = []
+        tags.append(f"[G]rid:{'ON' if self.show_grid else 'off'}")
+        tags.append(f"[P]ath:{'ON' if self.show_path else 'off'}")
+        tag_str = "  ".join(tags) + "  [1-3]preset  [R]eset  [Esc]back"
+        app.draw_text(surface, tag_str, sw - len(tag_str) * 7 - 8, 7,
+                      (80, 100, 90), app.font_sm)
 
         # ── Metrics panel ────────────────────────────────────────────
         self._draw_metrics(surface, app)
 
-        # ── Controls legend ──────────────────────────────────────────
-        legend = [
-            "WASD=move  1/2/3=preset  LMB=wall  RMB=goal",
-            "G=grid  P=path  R=reset  Tab=metrics  Esc=back",
-        ]
-        y = sh - 30
-        for line in legend:
-            app.draw_text_bg(surface, line, 8, y, (180, 180, 180))
-            y += 14
+        # ── Footer ───────────────────────────────────────────────────
+        footer = "WASD=move  Shift=sprint  LMB=wall  RMB=goal  Tab=metrics"
+        app.draw_text_bg(surface, footer, 8, sh - 18, (140, 140, 140))
 
     # ── Internal ─────────────────────────────────────────────────────
 
@@ -424,18 +401,6 @@ class GymScene(Scene):
             app.draw_text(surface, f"NPCs pathfinding: {len(self._npc_eids)}",
                           bx + 6, y, (200, 200, 200), app.font_sm)
 
-    def _mouse_to_tile(self, app: App) -> tuple[int, int] | None:
-        cam = app.world.res(Camera) or Camera()
-        mx, my = app.mouse_pos()
-        sw, sh = app._virtual_size
-        ox = sw // 2 - int(cam.x * TILE_SIZE)
-        oy = sh // 2 - int(cam.y * TILE_SIZE)
-        col = (mx - ox) // TILE_SIZE
-        row = (my - oy) // TILE_SIZE
-        if 0 <= row < self.map_h and 0 <= col < self.map_w:
-            return row, col
-        return None
-
     def _recalc_path(self, app: App):
         if not self.goal:
             self.astar_path = None
@@ -445,7 +410,6 @@ class GymScene(Scene):
             return
         import time
         t0 = time.perf_counter()
-        # Ensure ZONE_MAPS has the latest tiles (after wall painting)
         ZONE_MAPS[self.zone] = self.tiles
         self.astar_path = find_path(
             self.zone, pos.x, pos.y, self.goal[0], self.goal[1],
@@ -468,9 +432,3 @@ class GymScene(Scene):
         if pos:
             pos.x = 5.0
             pos.y = 5.0
-
-
-def _draw_diamond(surface, color, cx, cy, size):
-    points = [(cx, cy - size), (cx + size, cy),
-              (cx, cy + size), (cx - size, cy)]
-    pygame.draw.polygon(surface, color, points, 2)

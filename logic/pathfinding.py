@@ -135,12 +135,43 @@ def find_path(
         return None
 
     # ── Agent clearance tuning ───────────────────────────────────────
-    wall_margin_pen = _tun("pathfinding", "wall_margin_penalty", 2.0)
+    wall_margin_pen = _tun("pathfinding", "wall_margin_penalty", 4.0)
     agent_size = _tun("pathfinding", "agent_size", 0.8)
     # Offset so entity hitbox centre = tile centre.
     # entity.pos is top-left; hitbox extends +agent_size in x/y.
     # Centering: pos_x = col + (1 - agent_size)/2
     agent_margin = max(0.0, (1.0 - agent_size) / 2.0)  # 0.1 for 0.8
+
+    # Pre-compute which tiles are passable when considering the agent's
+    # physical body.  A tile is only truly passable if placing the
+    # agent's hitbox centred on it doesn't overlap any wall tile.
+    # For 0.8×0.8 on a 1×1 grid the box is (r-0, c-0) to (r+0, c+0)
+    # i.e. the entity fits within one tile — but we still penalise
+    # tiles near walls so the path stays clear of geometry.
+    #
+    # Also pre-compute margin flags: whether any of the 8 neighbours
+    # is a wall / OOB.  This is used for the soft penalty (paths
+    # prefer clearance but can still go through tight gaps).
+    _wall_adj: set[tuple[int, int]] = set()
+    if wall_margin_pen > 0:
+        for _r in range(rows):
+            for _c in range(cols):
+                if pen.get(tiles[_r][_c], 0) < 0:
+                    continue
+                for dr2 in (-1, 0, 1):
+                    for dc2 in (-1, 0, 1):
+                        if dr2 == 0 and dc2 == 0:
+                            continue
+                        nr2, nc2 = _r + dr2, _c + dc2
+                        if nr2 < 0 or nc2 < 0 or nr2 >= rows or nc2 >= cols:
+                            _wall_adj.add((_r, _c))
+                            break
+                        if pen.get(tiles[nr2][nc2], 0) < 0:
+                            _wall_adj.add((_r, _c))
+                            break
+                    else:
+                        continue
+                    break
 
     # Open set: (f_score, row, col)
     open_set: list[tuple[float, int, int]] = [(0.0, sr, sc)]
@@ -192,19 +223,9 @@ def find_path(
                     continue
 
             # ── Wall-margin penalty ──────────────────────────────────
-            # If any cardinal neighbour of (nr, nc) is a wall or OOB,
-            # add a penalty so A* prefers routes with clearance.
-            margin_cost = 0.0
-            if wall_margin_pen > 0:
-                for mr, mc in ((nr-1, nc), (nr+1, nc),
-                               (nr, nc-1), (nr, nc+1)):
-                    if (mr < 0 or mc < 0
-                            or mr >= rows or mc >= cols):
-                        margin_cost = wall_margin_pen
-                        break
-                    if pen.get(tiles[mr][mc], 0) < 0:
-                        margin_cost = wall_margin_pen
-                        break
+            # Penalise tiles adjacent to any wall (all 8 neighbours)
+            # so A* prefers routes with clearance.
+            margin_cost = wall_margin_pen if (nr, nc) in _wall_adj else 0.0
 
             new_g = g_score[(r, c)] + move_cost + tile_pen + margin_cost
             if new_g < g_score.get((nr, nc), float("inf")):

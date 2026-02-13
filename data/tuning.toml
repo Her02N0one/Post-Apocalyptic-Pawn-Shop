@@ -2,6 +2,9 @@
 #  GAME TUNING CONSTANTS
 #  All gameplay numbers live here. Systems read via core.tuning.get().
 #  Hot-reloadable: press F4 in-game to reload without restarting.
+#
+#  UNIT SYSTEM:  1 tile = 1 metre.  Speeds are m/s, distances are m.
+#  Rendering: TILE_SIZE (32 px) converts tile-units → screen pixels.
 # ═══════════════════════════════════════════════════════════════════════
 
 
@@ -47,6 +50,18 @@ ranged_attack_to_chase       = 1.8
 melee_attack_to_chase        = 1.6
 melee_close_in_factor        = 0.5
 melee_close_in_speed         = 0.5
+
+# ── melee dynamics (sub-states within attack mode) ──
+melee_circle_speed           = 0.7
+melee_circle_radius          = 0.75
+melee_lunge_speed            = 3.5
+melee_lunge_dist             = 0.4
+melee_retreat_speed          = 2.0
+melee_retreat_duration       = 0.4
+melee_circle_time_min        = 0.6
+melee_circle_time_max        = 1.8
+melee_post_hit_retreat       = true
+melee_direction_jitter       = 0.3
 
 strafe_timer_los_min         = 0.4
 strafe_timer_los_max         = 0.8
@@ -186,7 +201,7 @@ crime_flee_duration          = 20.0
 [pathfinding]
 max_dist_default             = 32
 waypoint_reach               = 0.5
-wall_margin_penalty          = 2.0
+wall_margin_penalty          = 4.0
 agent_size                   = 0.8
 
 [pathfinding.penalties]

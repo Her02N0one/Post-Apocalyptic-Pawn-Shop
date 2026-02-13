@@ -339,17 +339,23 @@ def npc_ranged_attack(world, attacker_eid: int, target_eid: int) -> bool:
 
     equip = world.get(attacker_eid, Equipment)
     registry = world.res(ItemRegistry)
-    accuracy = 0.7
-    proj_speed = 12.0
+    atk_cfg = world.get(attacker_eid, AttackConfig)
+    # Defaults — overridden by Equipment or AttackConfig
+    accuracy = 0.85
+    proj_speed = 14.0
     max_range = 10.0
     pchar = "."
     pcolor = (255, 200, 100)
     if equip and equip.weapon and registry:
-        accuracy = registry.get_field(equip.weapon, "accuracy", 0.7)
-        proj_speed = registry.get_field(equip.weapon, "proj_speed", 12.0)
+        accuracy = registry.get_field(equip.weapon, "accuracy", 0.85)
+        proj_speed = registry.get_field(equip.weapon, "proj_speed", 14.0)
         max_range = registry.get_field(equip.weapon, "range", 10.0)
         pchar = registry.get_field(equip.weapon, "proj_char", ".")
         pcolor = registry.get_field(equip.weapon, "proj_color", (255, 200, 100))
+    elif atk_cfg:
+        accuracy = atk_cfg.accuracy
+        proj_speed = atk_cfg.proj_speed
+        max_range = atk_cfg.range
 
     # Apply accuracy spread
     angle = math.atan2(dy, dx)
