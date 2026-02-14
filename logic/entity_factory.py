@@ -12,9 +12,9 @@ from __future__ import annotations
 from typing import Any, Callable
 from core.ecs import World
 from components import (
-    Position, Velocity, Sprite, Identity, Meta, Brain, Patrol, Threat, AttackConfig,
+    Position, Velocity, Sprite, Identity, SpawnInfo, Brain, HomeRange, Threat, AttackConfig,
     Collider, Health, Hunger, Needs, Inventory, Equipment, Facing,
-    Lod, Hurtbox, Combat, Loot, LootTableRef,
+    Lod, Hurtbox, CombatStats, Loot, LootTableRef,
     Faction, Dialogue, Ownership, Locked,
     SubzonePos, TravelPlan, Home, WorldMemory,
 )
@@ -51,7 +51,7 @@ _COMPONENT_TABLE: list[tuple[str, type, dict[str, tuple[str, Callable, Any]]]] =
         "current": ("current", _float, 100.0),
         "maximum": ("maximum", _float, 100.0),
     }),
-    ("combat", Combat, {
+    ("combat_stats", CombatStats, {
         "damage":  ("damage",  _float, 5.0),
         "defense": ("defense", _float, 0.0),
     }),
@@ -102,7 +102,7 @@ _COMPONENT_TABLE: list[tuple[str, type, dict[str, tuple[str, Callable, Any]]]] =
         "faction_access": ("faction_access", _str, "settlers"),
         "difficulty":     ("difficulty", lambda v, d: int(v) if v is not None else d, 1),
     }),
-    ("meta", Meta, {
+    ("spawn_info", SpawnInfo, {
         "zone":         ("zone",         _str, ""),
         "abstract":     ("abstract",     _bool, False),
         "spawn_radius": ("spawn_radius", _float, 8.0),
@@ -170,7 +170,7 @@ def spawn_from_descriptor(world: World, desc: dict, zone: str) -> int:
         if key not in desc or not isinstance(desc[key], dict):
             continue
         sub = desc[key]
-        comp = _build_component(cls, field_map, sub, **({"zone": zone} if key == "meta" and "zone" not in sub else {}))
+        comp = _build_component(cls, field_map, sub, **({"zone": zone} if key == "spawn_info" and "zone" not in sub else {}))
         world.add(eid, comp)
 
     # ── Hunger auto-attaches Needs ───────────────────────────────────
@@ -242,7 +242,7 @@ def spawn_from_descriptor(world: World, desc: dict, zone: str) -> int:
 # ── Brain-split helper ───────────────────────────────────────────────
 
 def _apply_brain_split(world: World, eid: int, desc: dict) -> None:
-    """Handle Brain + Patrol + Threat + AttackConfig from descriptor.
+    """Handle Brain + HomeRange + Threat + AttackConfig from descriptor.
 
     Supports both new-style (separate ``patrol``, ``threat``,
     ``attack_config`` keys) and old-style (everything in ``brain``).
@@ -264,17 +264,17 @@ def _apply_brain_split(world: World, eid: int, desc: dict) -> None:
         b = {}
     kind = b.get("kind", "wander")
 
-    # ── Patrol ───────────────────────────────────────────────────────
-    if "patrol" in desc and isinstance(desc["patrol"], dict):
-        p = desc["patrol"]
-        world.add(eid, Patrol(
+    # ── HomeRange ───────────────────────────────────────────────────────
+    if "home_range" in desc and isinstance(desc["home_range"], dict):
+        p = desc["home_range"]
+        world.add(eid, HomeRange(
             origin_x=_float(p.get("origin_x"), 0.0),
             origin_y=_float(p.get("origin_y"), 0.0),
             radius=_float(p.get("radius"), 5.0),
             speed=_float(p.get("speed"), 2.0),
         ))
     else:
-        world.add(eid, Patrol(
+        world.add(eid, HomeRange(
             radius=_float(b.get("patrol_radius"), 5.0),
             speed=_float(b.get("patrol_speed"), 2.0),
         ))
@@ -315,7 +315,7 @@ def _apply_brain_split(world: World, eid: int, desc: dict) -> None:
 def spawn_zone_entities(world: World, zone: str, npcs_enabled: bool = True) -> list[int]:
     """Spawn all entities defined in the zone's spawn data.
 
-    Skips spawning if any entity with Meta.zone == zone already exists
+    Skips spawning if any entity with SpawnInfo.zone == zone already exists
     (prevents duplicates on re-entry).
     Returns list of spawned entity IDs.
     """
@@ -325,7 +325,7 @@ def spawn_zone_entities(world: World, zone: str, npcs_enabled: bool = True) -> l
     from core.zone import ZONE_SPAWNS
 
     # Check for existing entities in this zone
-    for _eid, meta in world.all_of(Meta):
+    for _eid, meta in world.all_of(SpawnInfo):
         if getattr(meta, "zone", None) == zone:
             return []
 
@@ -333,9 +333,9 @@ def spawn_zone_entities(world: World, zone: str, npcs_enabled: bool = True) -> l
     eids: list[int] = []
     for desc in spawns:
         # Inject meta if not provided so abstract/zone are set properly
-        if "meta" not in desc:
+        if "spawn_info" not in desc:
             has_pos = "position" in desc or ("x" in desc and "y" in desc)
-            desc = {**desc, "meta": {
+            desc = {**desc, "spawn_info": {
                 "zone": zone,
                 "abstract": not has_pos,
                 "spawn_radius": 8.0,

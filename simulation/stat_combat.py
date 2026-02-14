@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from components import (
-    Health, Combat, Equipment, ItemRegistry, Inventory,
+    Health, CombatStats, Equipment, ItemRegistry, Inventory,
     Identity, Loot,
 )
 from components.simulation import SubzonePos, TravelPlan, WorldMemory, Home
@@ -42,7 +42,7 @@ def stat_check_combat(world: Any, attacker_eid: int,
                       defender_eid: int) -> CombatResult:
     """Resolve combat between two entities via stat check.
 
-    Both are real entities with real Health, Combat, and Inventory.
+    Both are real entities with real Health, CombatStats, and Inventory.
     Returns a CombatResult describing the outcome.
     """
     # Gather stats
@@ -56,8 +56,8 @@ def stat_check_combat(world: Any, attacker_eid: int,
         # Can't fight without health — attacker wins by default
         return CombatResult(winner_eid=attacker_eid, loser_eid=defender_eid)
 
-    atk_combat = world.get(attacker_eid, Combat)
-    def_combat = world.get(defender_eid, Combat)
+    atk_combat = world.get(attacker_eid, CombatStats)
+    def_combat = world.get(defender_eid, CombatStats)
 
     # Account for defense
     atk_def = def_combat.defense if def_combat else 0.0
@@ -197,7 +197,7 @@ def resolve_encounter(world: Any, eid_a: int, eid_b: int,
 
 def _effective_dps(world: Any, eid: int) -> float:
     """Compute total DPS for an entity (base + weapon)."""
-    combat = world.get(eid, Combat)
+    combat = world.get(eid, CombatStats)
     base_damage = combat.damage if combat else 1.0
 
     equip = world.get(eid, Equipment)
@@ -228,9 +228,9 @@ def _flee_roll(world: Any, fleer_eid: int, opponent_eid: int) -> bool:
 
     Based on relative speed and some randomness.
     """
-    from components import Patrol
-    fleer_patrol = world.get(fleer_eid, Patrol)
-    opp_patrol = world.get(opponent_eid, Patrol)
+    from components import HomeRange
+    fleer_patrol = world.get(fleer_eid, HomeRange)
+    opp_patrol = world.get(opponent_eid, HomeRange)
     fleer_speed = fleer_patrol.speed if fleer_patrol else 2.0
     opp_speed = opp_patrol.speed if opp_patrol else 2.0
 

@@ -42,8 +42,8 @@ from components import (
     Position, Velocity, Identity, Health, Facing, Brain,
     Collider, Hurtbox, Sprite, Player, Lod,
 )
-from components.ai import Patrol, Threat, AttackConfig, VisionCone
-from components.combat import Combat
+from components.ai import HomeRange, Threat, AttackConfig, VisionCone
+from components.combat import CombatStats
 from components.social import Faction
 from components.resources import GameClock
 
@@ -114,10 +114,10 @@ def _spawn_npc(w: World, x: float, y: float, *,
     w.add(eid, Hurtbox())
     w.add(eid, Facing(direction="right"))
     w.add(eid, Health(current=hp, maximum=hp))
-    w.add(eid, Combat(damage=10, defense=2))
+    w.add(eid, CombatStats(damage=10, defense=2))
     w.add(eid, Lod(level="high"))
     w.add(eid, Brain(kind=brain_kind, active=active))
-    w.add(eid, Patrol(origin_x=x, origin_y=y, radius=12.0, speed=speed))
+    w.add(eid, HomeRange(origin_x=x, origin_y=y, radius=12.0, speed=speed))
     w.add(eid, Faction(group=faction_group, disposition="hostile",
                        home_disposition="hostile"))
     # sensor_interval=0 → sensor runs every tick (deterministic)
@@ -154,7 +154,7 @@ def _spawn_target(w: World, x: float, y: float, *,
 
 def _tick(w: World, npc_eid: int, dt: float = 0.016):
     """Run one combat brain tick at the current GameClock time."""
-    from logic.combat_engagement import _combat_brain
+    from logic.combat.engagement import _combat_brain
     clock = w.res(GameClock)
     brain = w.get(npc_eid, Brain)
     _combat_brain(w, npc_eid, brain, dt, clock.time)
@@ -882,7 +882,7 @@ try:
     tiles = _make_arena(20, 20, walls=wall_cells)
     w = _make_world()
 
-    from logic.combat_sensing import find_los_position
+    from logic.combat.targeting import find_los_position
     from core.zone import has_line_of_sight
 
     result = find_los_position(
@@ -918,7 +918,7 @@ try:
             thick_walls.append((r, c_off))
     _make_arena(20, 20, walls=thick_walls)
 
-    from logic.combat_sensing import find_los_position
+    from logic.combat.targeting import find_los_position
 
     result = find_los_position(
         ZONE, 5.0, 10.0,    # NPC position behind thick wall
@@ -964,7 +964,7 @@ try:
     brain_speed = math.hypot(vel.x, vel.y)
 
     # Now run movement system
-    from logic.systems import movement_system
+    from logic.movement import movement_system
     tiles = ZONE_MAPS[ZONE]
     movement_system(w, 0.016, tiles)
 
@@ -1005,7 +1005,7 @@ try:
     npc = _spawn_npc(w, 5.0, 10.0)
     tgt = _spawn_target(w, 10.0, 10.0)
 
-    from logic.combat_sensing import acquire_target
+    from logic.combat.targeting import acquire_target
 
     pos = w.get(npc, Position)
     info = acquire_target(w, npc, pos, 12.0)
@@ -1027,7 +1027,7 @@ try:
     npc = _spawn_npc(w, 8.0, 10.0)
     tgt = _spawn_target(w, 12.0, 10.0)
 
-    from logic.combat_sensing import acquire_target
+    from logic.combat.targeting import acquire_target
 
     pos = w.get(npc, Position)
     info = acquire_target(w, npc, pos, 12.0)
@@ -1048,7 +1048,7 @@ try:
     npc = _spawn_npc(w, 5.0, 10.0)
     tgt = _spawn_target(w, 10.0, 10.0)
 
-    from logic.combat_sensing import acquire_target
+    from logic.combat.targeting import acquire_target
 
     pos = w.get(npc, Position)
     info = acquire_target(w, npc, pos, 12.0)
@@ -1077,7 +1077,7 @@ try:
                         home_disposition="hostile"))
     w.zone_add(ally, ZONE)
 
-    from logic.combat_sensing import ally_in_line_of_fire
+    from logic.combat.targeting import ally_in_line_of_fire
 
     npc_pos = w.get(npc, Position)
     result = ally_in_line_of_fire(w, npc, npc_pos, 15.0, 15.0)
@@ -1106,7 +1106,7 @@ try:
                         home_disposition="hostile"))
     w.zone_add(ally, ZONE)
 
-    from logic.combat_sensing import ally_in_line_of_fire
+    from logic.combat.targeting import ally_in_line_of_fire
 
     npc_pos = w.get(npc, Position)
     result = ally_in_line_of_fire(w, npc, npc_pos, 15.0, 15.0)
@@ -1133,7 +1133,7 @@ try:
     # Target is to the LEFT (behind the NPC's facing)
     tgt = _spawn_target(w, 5.0, 15.0)
 
-    from logic.combat_sensing import is_detected_idle
+    from logic.combat.targeting import is_detected_idle
 
     npc_pos = w.get(npc, Position)
     dist = math.hypot(15.0 - 5.0, 0)

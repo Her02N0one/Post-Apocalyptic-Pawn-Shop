@@ -5,9 +5,9 @@ Submodules
 spatial        Position, Velocity, Collider, Facing, Hurtbox
 rendering      Identity, Sprite, HitFlash
 rpg            Health, Hunger, Inventory, Equipment
-combat         Combat, Loot, LootTableRef, Projectile
+combat         CombatStats, Loot, LootTableRef, Projectile
 ai             Brain, Task
-resources      Camera, Meta, Lod, ZoneMetadata, Player
+resources      Camera, SpawnInfo, Lod, ZoneMetadata, Player
 item_registry  ItemRegistry
 
 All public names are re-exported here so existing code that does
@@ -23,17 +23,17 @@ from components.rendering import Identity, Sprite, HitFlash
 # ── RPG ──────────────────────────────────────────────────────────────
 from components.rpg import Health, Hunger, Needs, Inventory, Equipment
 
-# ── Combat ───────────────────────────────────────────────────────────
-from components.combat import Combat, Loot, LootTableRef, Projectile
+# ── CombatStats ───────────────────────────────────────────────────────────
+from components.combat import CombatStats, Loot, LootTableRef, Projectile
 
 # ── AI ───────────────────────────────────────────────────────────────
-from components.ai import Brain, Patrol, Threat, AttackConfig, VisionCone, Task, Memory, GoalSet
+from components.ai import Brain, HomeRange, Threat, AttackConfig, VisionCone, Task, Memory, GoalSet
 
 # ── Social ───────────────────────────────────────────────────────────
 from components.social import Faction, Dialogue, Ownership, CrimeRecord, Locked
 
 # ── World resources / singletons ─────────────────────────────────────
-from components.resources import Camera, GameClock, Meta, Lod, ZoneMetadata, Player
+from components.resources import Camera, GameClock, SpawnInfo, Lod, ZoneMetadata, Player, LodTimer, RefillTimers
 
 # ── Registries ───────────────────────────────────────────────────────
 from components.item_registry import ItemRegistry
@@ -51,13 +51,14 @@ __all__ = [
     # rpg
     "Health", "Hunger", "Needs", "Inventory", "Equipment",
     # combat
-    "Combat", "Loot", "LootTableRef", "Projectile",
+    "CombatStats", "Loot", "LootTableRef", "Projectile",
     # ai
-    "Brain", "Patrol", "Threat", "AttackConfig", "VisionCone", "Task", "Memory", "GoalSet",
+    "Brain", "HomeRange", "Threat", "AttackConfig", "VisionCone", "Task", "Memory", "GoalSet",
     # social
     "Faction", "Dialogue", "Ownership", "CrimeRecord", "Locked",
     # resources
-    "Camera", "GameClock", "Meta", "Lod", "ZoneMetadata", "Player",
+    "Camera", "GameClock", "SpawnInfo", "Lod", "ZoneMetadata", "Player",
+    "LodTimer", "RefillTimers",
     # registries
     "ItemRegistry",
     # simulation

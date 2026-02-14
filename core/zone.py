@@ -264,7 +264,7 @@ def find_safe_spawn(zone: str, row: float, col: float) -> tuple[float, float]:
     tiles = ZONE_MAPS.get(zone)
     if not tiles:
         return col + 0.1, row + 0.1
-    from logic.systems import _aabb_hits_wall, HITBOX_W, HITBOX_H
+    from core.collision import aabb_hits_wall as _aabb_hits_wall, HITBOX_W, HITBOX_H
     map_h = len(tiles)
     map_w = len(tiles[0]) if tiles else 0
     off = (1.0 - HITBOX_W) / 2.0          # 0.1 for 0.8 hitbox

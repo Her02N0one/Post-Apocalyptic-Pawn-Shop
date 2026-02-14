@@ -262,7 +262,7 @@ maximum                      = 100.0
 rate                         = 0.03
 starve_dps                   = 0.3
 
-[defaults.patrol]
+[defaults.home_range]
 radius                       = 5.0
 speed                        = 2.0
 

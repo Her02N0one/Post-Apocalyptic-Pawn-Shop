@@ -12,9 +12,9 @@ from components import (
     Position, Velocity, Sprite, Identity, Collider, Facing,
     Health, Hunger, Lod, Brain, Needs, Inventory,
 )
-from components.ai import Patrol
-from logic.systems import movement_system
-from logic.brains import run_brains
+from components.ai import HomeRange
+from logic.movement import movement_system
+from logic.ai.brains import tick_ai
 from scenes.exhibits.base import Exhibit
 
 
@@ -51,7 +51,7 @@ class NeedsExhibit(Exhibit):
             w.add(eid, Health(current=100, maximum=100))
             w.add(eid, Lod(level="high"))
             w.add(eid, Brain(kind="wander", active=True))
-            w.add(eid, Patrol(origin_x=x, origin_y=y, radius=3.0, speed=1.5))
+            w.add(eid, HomeRange(origin_x=x, origin_y=y, radius=3.0, speed=1.5))
             w.add(eid, Hunger(current=start_hunger, maximum=100.0,
                               rate=0.5, starve_dps=2.0))
             w.add(eid, Needs())
@@ -73,9 +73,9 @@ class NeedsExhibit(Exhibit):
                eids: list[int]):
         if not self.running:
             return
-        from logic.needs_system import hunger_system
+        from logic.needs import hunger_system
         hunger_system(app.world, dt * self._time_scale)
-        run_brains(app.world, dt)
+        tick_ai(app.world, dt)
         movement_system(app.world, dt, tiles)
 
     def draw(self, surface: pygame.Surface, ox: int, oy: int,

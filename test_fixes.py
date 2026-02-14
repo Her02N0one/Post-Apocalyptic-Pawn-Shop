@@ -85,7 +85,7 @@ try:
     from core.ecs import World
     from components import (
         Identity, Position, Velocity, Collider, Hurtbox, Facing,
-        Health, Brain, Lod, Inventory, Patrol,
+        Health, Brain, Lod, Inventory, HomeRange,
     )
     from components.simulation import SubzonePos
     from simulation.subzone import SubzoneGraph
@@ -132,7 +132,7 @@ try:
     world.add(npc_eid, SubzonePos(zone="settlement", subzone="sett_market"))
     world.add(npc_eid, Health(current=100.0, maximum=100.0))
     world.add(npc_eid, Brain(kind="villager", active=False, state={}))
-    world.add(npc_eid, Patrol(origin_x=20, origin_y=22, radius=5, speed=2.0))
+    world.add(npc_eid, HomeRange(origin_x=20, origin_y=22, radius=5, speed=2.0))
     world.add(npc_eid, Lod(level="low"))
 
     result = promote_entity(world, npc_eid, graph, scheduler, game_time)
@@ -160,7 +160,7 @@ print("\n=== Test 3: NPC gateway placement ===")
 try:
     from core.ecs import World
     from components import (
-        Identity, Position, Health, Brain, Lod, Patrol,
+        Identity, Position, Health, Brain, Lod, HomeRange,
     )
     from components.simulation import SubzonePos, TravelPlan
     from simulation.subzone import SubzoneGraph
@@ -185,7 +185,7 @@ try:
     world.add(npc_eid, SubzonePos(zone="settlement", subzone="sett_gate"))
     world.add(npc_eid, Health(current=100.0, maximum=100.0))
     world.add(npc_eid, Brain(kind="villager", active=False, state={}))
-    world.add(npc_eid, Patrol(origin_x=20, origin_y=2, radius=8, speed=2.0))
+    world.add(npc_eid, HomeRange(origin_x=20, origin_y=2, radius=8, speed=2.0))
     world.add(npc_eid, Lod(level="low"))
     world.add(npc_eid, TravelPlan(
         destination="road_sett_end",
@@ -261,13 +261,13 @@ print("\n=== Test 4: Villager brain schedule ===")
 try:
     from core import tuning as tuning_mod
     tuning_mod.load()
-    from logic.brains.villager import (
+    from logic.ai.villager import (
         _time_of_day, _day_length, _villager_brain,
         _walk_toward,
     )
     from core.ecs import World
     from components import (
-        Brain, Patrol, Position, Velocity, Identity, Lod,
+        Brain, HomeRange, Position, Velocity, Identity, Lod,
         GameClock,
     )
     from simulation.subzone import SubzoneGraph
@@ -297,7 +297,7 @@ try:
     world.add(npc, Position(x=20.0, y=22.0, zone="settlement"))
     world.add(npc, Velocity(x=0.0, y=0.0))
     world.add(npc, Brain(kind="villager", active=True, state={}))
-    world.add(npc, Patrol(origin_x=20, origin_y=22, radius=8, speed=2.0))
+    world.add(npc, HomeRange(origin_x=20, origin_y=22, radius=8, speed=2.0))
     world.add(npc, Lod(level="high"))
 
     brain = world.get(npc, Brain)
@@ -333,7 +333,7 @@ try:
     world2.add(npc2, Position(x=20.0, y=2.0, zone="settlement"))
     world2.add(npc2, Velocity(x=0.0, y=0.0))
     world2.add(npc2, brain2)
-    world2.add(npc2, Patrol(origin_x=20, origin_y=2, radius=8, speed=2.0))
+    world2.add(npc2, HomeRange(origin_x=20, origin_y=2, radius=8, speed=2.0))
     world2.add(npc2, Lod(level="high"))
 
     _villager_brain(world2, npc2, brain2, dt, 0.0)
@@ -412,7 +412,7 @@ try:
     from core.ecs import World
     from components import (
         Identity, Position, Velocity, Collider, Hurtbox, Facing,
-        Health, Brain, Lod, Inventory, Patrol, Player,
+        Health, Brain, Lod, Inventory, HomeRange, Player,
     )
     from components.simulation import SubzonePos
     from simulation.subzone import SubzoneGraph
@@ -430,7 +430,7 @@ try:
     world.add(npc1, SubzonePos(zone="settlement", subzone="sett_market"))
     world.add(npc1, Health(current=80, maximum=80))
     world.add(npc1, Brain(kind="villager", active=False, state={}))
-    world.add(npc1, Patrol(origin_x=20, origin_y=22, radius=5, speed=2.0))
+    world.add(npc1, HomeRange(origin_x=20, origin_y=22, radius=5, speed=2.0))
     world.add(npc1, Lod(level="low"))
 
     crate1 = world.spawn()
@@ -475,7 +475,7 @@ except Exception:
 print("\n=== Test 7: Wall avoidance in _walk_toward ===")
 
 try:
-    from logic.brains.villager import _walk_toward
+    from logic.ai.villager import _walk_toward
     from components import Position, Velocity
     from core import zone as _zone_mod
 
@@ -539,7 +539,7 @@ except Exception:
 print("\n=== Test 8: Stuck detection ===")
 
 try:
-    from logic.brains.villager import _check_stuck
+    from logic.ai.villager import _check_stuck
     from core.tuning import get as _tun
     _STUCK_CHECK_INTERVAL = _tun("ai.villager", "stuck_check_interval", 1.0)
 

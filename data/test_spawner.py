@@ -8,9 +8,9 @@ or the convenience ``spawn_test_dummy`` builder.
 from __future__ import annotations
 from core.ecs import World
 from components import (
-    Position, Velocity, Sprite, Identity, Brain, Patrol, Threat, AttackConfig,
+    Position, Velocity, Sprite, Identity, Brain, HomeRange, Threat, AttackConfig,
     Collider, Health, Inventory, Equipment, Facing,
-    Lod, Hurtbox, Combat, Faction,
+    Lod, Hurtbox, CombatStats, Faction,
 )
 
 
@@ -33,7 +33,7 @@ def spawn_test_entities(world: World, zone: str) -> list[int]:
         equip_data = desc.get("equipment", {})
         faction_data = desc.get("faction", {})
         inv_data = desc.get("inventory", {})
-        patrol_data = desc.get("patrol", brain_data)  # fallback to brain for old-style
+        patrol_data = desc.get("home_range", brain_data)  # fallback to brain for old-style
         threat_data = desc.get("threat", brain_data)
         atk_data = desc.get("attack_config", brain_data)
         spawn_x = float(pos.get("x", 5.0))
@@ -46,8 +46,8 @@ def spawn_test_entities(world: World, zone: str) -> list[int]:
             char=desc.get("sprite", {}).get("char", "D"),
             color=tuple(desc.get("sprite", {}).get("color", (180, 100, 100))),
             hp=float(desc.get("health", {}).get("maximum", 30.0)),
-            damage=float(desc.get("combat", {}).get("damage", 5.0)),
-            defense=float(desc.get("combat", {}).get("defense", 0.0)),
+            damage=float(desc.get("combat_stats", {}).get("damage", 5.0)),
+            defense=float(desc.get("combat_stats", {}).get("defense", 0.0)),
             brain_kind=brain_data.get("kind", "wander"),
             brain_active=bool(brain_data.get("active", False)),
             patrol_radius=float(patrol_data.get("patrol_radius", patrol_data.get("radius", 5.0))),
@@ -157,7 +157,7 @@ def spawn_test_dummy(
             alert_radius=faction_alert_radius,
         ))
     world.add(eid, Brain(kind=brain_kind, active=brain_active))
-    world.add(eid, Patrol(
+    world.add(eid, HomeRange(
         origin_x=x, origin_y=y,
         radius=patrol_radius,
         speed=patrol_speed,

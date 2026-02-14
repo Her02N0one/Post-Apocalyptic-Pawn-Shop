@@ -23,7 +23,7 @@ class Camera:
 
 
 @dataclass
-class Meta:
+class SpawnInfo:
     """Lightweight metadata used for abstract NPCs and spawning.
 
     - `zone`: logical zone name the NPC belongs to
@@ -64,3 +64,18 @@ class ZoneMetadata:
 class Player:
     """Marks the player entity."""
     speed: float = 80.0        # pixels per second
+
+
+# ── System-tick timers (previously module-level mutable state) ───────
+
+@dataclass
+class LodTimer:
+    """Tracks the last time the LOD system ran its sweep."""
+    last_time: float = 0.0
+
+
+@dataclass
+class RefillTimers:
+    """Per-container refill timestamps for the storehouse system."""
+    timers: dict[int, float] = field(default_factory=dict)
+

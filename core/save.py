@@ -190,7 +190,7 @@ def save_game_state(app: "App", slot: int = 0) -> Path:
     try:
         from simulation.world_sim import WorldSim
         # Grab the live WorldSim from the active scene
-        scene = app.scene_manager._stack[-1] if app.scene_manager._stack else None
+        scene = app._scenes[-1] if app._scenes else None
         if scene and hasattr(scene, "world_sim") and scene.world_sim:
             scheduler_data = scene.world_sim.scheduler.to_list()
     except Exception:

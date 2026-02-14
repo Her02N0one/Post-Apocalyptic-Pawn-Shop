@@ -1,4 +1,4 @@
-"""scenes/exhibits/combat_exhibit.py — Combat exhibit.
+"""scenes/exhibits/combat_exhibit.py — CombatStats exhibit.
 
 Two factions fight in an arena with cover blocks.
 """
@@ -12,23 +12,23 @@ from core.events import EventBus
 from core.zone import ZONE_MAPS
 from components import Position, Velocity, Facing, Health, Brain, Lod
 from components.ai import VisionCone
-from components.combat import Combat, Projectile
+from components.combat import CombatStats, Projectile
 from components.social import Faction
-from logic.systems import movement_system
-from logic.brains import run_brains
-from logic.projectiles import projectile_system
+from logic.movement import movement_system
+from logic.ai.brains import tick_ai
+from logic.combat.projectiles import projectile_system
 from logic.combat import handle_death, npc_melee_attack, npc_ranged_attack
 from scenes.exhibits.base import Exhibit
-from scenes.exhibits.helpers import spawn_combat_npc
+from scenes.exhibits.drawing import spawn_combat_npc
 
 _ARENA_W = 30
 _ARENA_H = 20
 
 
 class CombatExhibit(Exhibit):
-    """Tab 1 — Combat demo."""
+    """Tab 1 — CombatStats demo."""
 
-    name = "Combat"
+    name = "CombatStats"
 
     def __init__(self):
         self.running = False
@@ -127,7 +127,7 @@ class CombatExhibit(Exhibit):
                eids: list[int]):
         if not self.running:
             return
-        run_brains(app.world, dt)
+        tick_ai(app.world, dt)
         movement_system(app.world, dt, tiles)
         projectile_system(app.world, dt, tiles)
         bus = app.world.res(EventBus)
@@ -185,7 +185,7 @@ class CombatExhibit(Exhibit):
                 if vel and (abs(vel.x) > 0.01 or abs(vel.y) > 0.01):
                     face_angle = math.atan2(vel.y, vel.x)
                 else:
-                    from logic.brains._helpers import facing_to_angle
+                    from logic.ai.perception import facing_to_angle
                     face_angle = facing_to_angle(facing.direction)
 
             half_fov = math.radians(cone.fov_degrees / 2.0)
@@ -240,5 +240,5 @@ class CombatExhibit(Exhibit):
                   if app.world.alive(e) and app.world.has(e, Faction)
                   and app.world.get(e, Faction).group == "red_team")
         action = "pause" if self.running else "start"
-        return (f"Combat: {status}  Blue:{blue} vs Red:{red}  "
+        return (f"CombatStats: {status}  Blue:{blue} vs Red:{red}  "
                 f"Alive:{alive}/{len(eids)}  [Space] {action}")

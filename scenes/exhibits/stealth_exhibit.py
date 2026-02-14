@@ -13,13 +13,13 @@ from components import (
     Position, Velocity, Sprite, Identity, Collider, Hurtbox,
     Facing, Health, Lod, Brain,
 )
-from components.ai import Patrol, Threat, AttackConfig, VisionCone
-from components.combat import Combat
+from components.ai import HomeRange, Threat, AttackConfig, VisionCone
+from components.combat import CombatStats
 from components.social import Faction
-from logic.systems import movement_system
-from logic.brains import run_brains
+from logic.movement import movement_system
+from logic.ai.brains import tick_ai
 from scenes.exhibits.base import Exhibit
-from scenes.exhibits.helpers import draw_cone_alpha
+from scenes.exhibits.drawing import draw_cone_alpha
 
 
 class StealthExhibit(Exhibit):
@@ -51,10 +51,10 @@ class StealthExhibit(Exhibit):
         w.add(eid, Hurtbox())
         w.add(eid, Facing(direction="right"))
         w.add(eid, Health(current=100, maximum=100))
-        w.add(eid, Combat(damage=10, defense=5))
+        w.add(eid, CombatStats(damage=10, defense=5))
         w.add(eid, Lod(level="high"))
         w.add(eid, Brain(kind="wander", active=True))
-        w.add(eid, Patrol(origin_x=15.0, origin_y=10.0, radius=8.0, speed=1.8))
+        w.add(eid, HomeRange(origin_x=15.0, origin_y=10.0, radius=8.0, speed=1.8))
         w.add(eid, Faction(group="guards", disposition="neutral",
                            home_disposition="neutral"))
         w.add(eid, Threat(aggro_radius=12.0, leash_radius=20.0,
@@ -76,10 +76,10 @@ class StealthExhibit(Exhibit):
         w.add(eid2, Hurtbox())
         w.add(eid2, Facing())
         w.add(eid2, Health(current=60, maximum=60))
-        w.add(eid2, Combat(damage=5, defense=2))
+        w.add(eid2, CombatStats(damage=5, defense=2))
         w.add(eid2, Lod(level="high"))
         w.add(eid2, Brain(kind="wander", active=True))
-        w.add(eid2, Patrol(origin_x=20.0, origin_y=12.0, radius=7.0, speed=1.2))
+        w.add(eid2, HomeRange(origin_x=20.0, origin_y=12.0, radius=7.0, speed=1.2))
         w.add(eid2, Faction(group="intruders", disposition="neutral",
                            home_disposition="neutral"))
         w.zone_add(eid2, zone)
@@ -101,7 +101,7 @@ class StealthExhibit(Exhibit):
         if not self.running:
             return
         self.timer += dt
-        run_brains(app.world, dt)
+        tick_ai(app.world, dt)
         movement_system(app.world, dt, tiles)
         self._check_detection(app)
 
@@ -120,7 +120,7 @@ class StealthExhibit(Exhibit):
         cone = w.get(gid, VisionCone)
         if not gpos or not ipos or not gface or not cone:
             return
-        from logic.brains._helpers import in_vision_cone
+        from logic.ai.perception import in_vision_cone
         if in_vision_cone(gpos, gface.direction, ipos, cone):
             self.detected = True
             gfac = w.get(gid, Faction)
@@ -154,7 +154,7 @@ class StealthExhibit(Exhibit):
                 if vel and (abs(vel.x) > 0.01 or abs(vel.y) > 0.01):
                     face_angle = math.atan2(vel.y, vel.x)
                 else:
-                    from logic.brains._helpers import facing_to_angle
+                    from logic.ai.perception import facing_to_angle
                     face_angle = facing_to_angle(facing.direction)
 
                 half_fov = math.radians(cone.fov_degrees / 2.0)

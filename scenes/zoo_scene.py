@@ -28,9 +28,9 @@ from components import (
     Health, Hunger, Brain, Facing, Lod, GameClock,
     Hurtbox, Equipment, Inventory, Needs,
 )
-from components.ai import Patrol, Threat, AttackConfig, VisionCone
+from components.ai import HomeRange, Threat, AttackConfig, VisionCone
 from components.social import Faction, Dialogue
-from components.combat import Combat, Loot, LootTableRef
+from components.combat import CombatStats, Loot, LootTableRef
 from logic.entity_factory import spawn_from_descriptor
 from scenes.test_scene_base import TestScene
 
@@ -339,7 +339,7 @@ class ZooScene(TestScene):
                 hp = app.world.get(eid, Health)
                 if hp:
                     stat_parts.append(f"HP:{hp.maximum:.0f}")
-                combat = app.world.get(eid, Combat)
+                combat = app.world.get(eid, CombatStats)
                 if combat:
                     stat_parts.append(f"DMG:{combat.damage:.0f}")
                     if combat.defense > 0:
@@ -434,11 +434,11 @@ class ZooScene(TestScene):
         # Dump all known components
         component_info = [
             (Health, lambda c: f"HP: {c.current:.0f}/{c.maximum:.0f}"),
-            (Combat, lambda c: f"DMG: {c.damage:.0f}  DEF: {c.defense:.0f}"),
+            (CombatStats, lambda c: f"DMG: {c.damage:.0f}  DEF: {c.defense:.0f}"),
             (Hunger, lambda c: f"Hunger: {c.current:.0f}/{c.maximum:.0f}  rate:{c.rate}"),
             (Faction, lambda c: f"Faction: {c.group} ({c.disposition})"),
             (Brain, lambda c: f"Brain: {c.kind}  active:{c.active}"),
-            (Patrol, lambda c: f"Patrol: r={c.radius:.0f} spd={c.speed:.1f}"),
+            (HomeRange, lambda c: f"HomeRange: r={c.radius:.0f} spd={c.speed:.1f}"),
             (Threat, lambda c: f"Threat: aggro={c.aggro_radius:.0f} leash={c.leash_radius:.0f}"),
             (AttackConfig, lambda c: f"Attack: {c.attack_type} rng={c.range:.1f} cd={c.cooldown:.2f}"),
             (VisionCone, lambda c: f"Vision: fov={c.fov_degrees:.0f}\u00b0 dist={c.view_distance:.0f}"),

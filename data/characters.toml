@@ -21,14 +21,14 @@ subzone = "sett_farm"
 [old_pete.home]
 zone    = "settlement"
 subzone = "sett_farm"
-[old_pete.meta]
+[old_pete.spawn_info]
 zone = "settlement"
 abstract = false
 spawn_radius = 6
 [old_pete.brain]
 kind   = "villager"
 active = false
-[old_pete.patrol]
+[old_pete.home_range]
 radius = 6.0
 speed  = 1.8
 [old_pete.sprite]
@@ -38,7 +38,7 @@ layer = 1
 [old_pete.health]
 current = 100.0
 maximum = 100.0
-[old_pete.combat]
+[old_pete.combat_stats]
 damage  = 6.0
 defense = 1.0
 [old_pete.hunger]
@@ -72,14 +72,14 @@ subzone = "sett_farm"
 [maria.home]
 zone    = "settlement"
 subzone = "sett_residential"
-[maria.meta]
+[maria.spawn_info]
 zone = "settlement"
 abstract = false
 spawn_radius = 6
 [maria.brain]
 kind   = "villager"
 active = false
-[maria.patrol]
+[maria.home_range]
 radius = 5.0
 speed  = 2.0
 [maria.sprite]
@@ -89,7 +89,7 @@ layer = 1
 [maria.health]
 current = 90.0
 maximum = 90.0
-[maria.combat]
+[maria.combat_stats]
 damage  = 5.0
 defense = 0.0
 [maria.hunger]
@@ -131,14 +131,14 @@ subzone = "sett_gate"
 [beck.home]
 zone    = "settlement"
 subzone = "sett_gate"
-[beck.meta]
+[beck.spawn_info]
 zone = "settlement"
 abstract = false
 spawn_radius = 4
 [beck.brain]
 kind   = "villager"
 active = false
-[beck.patrol]
+[beck.home_range]
 radius = 4.0
 speed  = 2.0
 [beck.threat]
@@ -156,7 +156,7 @@ layer = 1
 [beck.health]
 current = 130.0
 maximum = 130.0
-[beck.combat]
+[beck.combat_stats]
 damage  = 15.0
 defense = 4.0
 [beck.hunger]
@@ -191,14 +191,14 @@ subzone = "sett_market"
 [nessa.home]
 zone    = "settlement"
 subzone = "sett_market"
-[nessa.meta]
+[nessa.spawn_info]
 zone = "settlement"
 abstract = false
 spawn_radius = 4
 [nessa.brain]
 kind   = "villager"
 active = false
-[nessa.patrol]
+[nessa.home_range]
 radius = 3.0
 speed  = 1.5
 [nessa.sprite]
@@ -208,7 +208,7 @@ layer = 1
 [nessa.health]
 current = 80.0
 maximum = 80.0
-[nessa.combat]
+[nessa.combat_stats]
 damage  = 4.0
 defense = 1.0
 [nessa.hunger]
@@ -256,14 +256,14 @@ subzone = "road_crossroads"
 [dex.home]
 zone    = "road"
 subzone = "road_hidden_cache"
-[dex.meta]
+[dex.spawn_info]
 zone = "road"
 abstract = false
 spawn_radius = 8
 [dex.brain]
 kind   = "wander"
 active = false
-[dex.patrol]
+[dex.home_range]
 radius = 10.0
 speed  = 2.5
 [dex.threat]
@@ -277,7 +277,7 @@ layer = 1
 [dex.health]
 current = 85.0
 maximum = 85.0
-[dex.combat]
+[dex.combat_stats]
 damage  = 10.0
 defense = 2.0
 [dex.hunger]
@@ -316,14 +316,14 @@ subzone = "ruins_raider_camp"
 [scar.home]
 zone    = "ruins"
 subzone = "ruins_raider_camp"
-[scar.meta]
+[scar.spawn_info]
 zone = "ruins"
 abstract = false
 spawn_radius = 6
 [scar.brain]
 kind   = "wander"
 active = false
-[scar.patrol]
+[scar.home_range]
 radius = 8.0
 speed  = 2.5
 [scar.threat]
@@ -341,7 +341,7 @@ layer = 1
 [scar.health]
 current = 110.0
 maximum = 110.0
-[scar.combat]
+[scar.combat_stats]
 damage  = 16.0
 defense = 3.0
 [scar.hunger]
@@ -371,14 +371,14 @@ subzone = "ruins_raider_camp"
 [mag.home]
 zone    = "ruins"
 subzone = "ruins_raider_camp"
-[mag.meta]
+[mag.spawn_info]
 zone = "ruins"
 abstract = false
 spawn_radius = 6
 [mag.brain]
 kind   = "wander"
 active = false
-[mag.patrol]
+[mag.home_range]
 radius = 8.0
 speed  = 2.2
 [mag.threat]
@@ -396,7 +396,7 @@ layer = 1
 [mag.health]
 current = 90.0
 maximum = 90.0
-[mag.combat]
+[mag.combat_stats]
 damage  = 12.0
 defense = 2.0
 [mag.hunger]
@@ -427,14 +427,14 @@ subzone = "ruins_collapsed_bldg"
 [vex.home]
 zone    = "ruins"
 subzone = "ruins_raider_camp"
-[vex.meta]
+[vex.spawn_info]
 zone = "ruins"
 abstract = false
 spawn_radius = 8
 [vex.brain]
 kind   = "wander"
 active = false
-[vex.patrol]
+[vex.home_range]
 radius = 10.0
 speed  = 2.8
 [vex.threat]
@@ -452,7 +452,7 @@ layer = 1
 [vex.health]
 current = 95.0
 maximum = 95.0
-[vex.combat]
+[vex.combat_stats]
 damage  = 14.0
 defense = 2.0
 [vex.hunger]
@@ -483,7 +483,7 @@ kind = "container"
 [storehouse_crate.subzone_pos]
 zone    = "settlement"
 subzone = "sett_storehouse"
-[storehouse_crate.meta]
+[storehouse_crate.spawn_info]
 zone = "settlement"
 abstract = true
 [storehouse_crate.sprite]
@@ -511,7 +511,7 @@ kind = "container"
 [road_cache.subzone_pos]
 zone    = "road"
 subzone = "road_hidden_cache"
-[road_cache.meta]
+[road_cache.spawn_info]
 zone = "road"
 abstract = true
 [road_cache.sprite]
@@ -532,7 +532,7 @@ kind = "container"
 [ruins_loot_1.subzone_pos]
 zone    = "ruins"
 subzone = "ruins_collapsed_bldg"
-[ruins_loot_1.meta]
+[ruins_loot_1.spawn_info]
 zone = "ruins"
 abstract = true
 [ruins_loot_1.sprite]
@@ -552,7 +552,7 @@ kind = "container"
 [pharmacy_cabinet.subzone_pos]
 zone    = "ruins"
 subzone = "ruins_pharmacy"
-[pharmacy_cabinet.meta]
+[pharmacy_cabinet.spawn_info]
 zone = "ruins"
 abstract = true
 [pharmacy_cabinet.sprite]
@@ -572,7 +572,7 @@ kind = "container"
 [raider_stash.subzone_pos]
 zone    = "ruins"
 subzone = "ruins_raider_camp"
-[raider_stash.meta]
+[raider_stash.spawn_info]
 zone = "ruins"
 abstract = true
 [raider_stash.sprite]
@@ -597,7 +597,7 @@ kind = "container"
 [communal_pantry.subzone_pos]
 zone    = "settlement"
 subzone = "sett_well"
-[communal_pantry.meta]
+[communal_pantry.spawn_info]
 zone = "settlement"
 abstract = true
 [communal_pantry.sprite]
@@ -621,7 +621,7 @@ kind = "container"
 [farm_shed.subzone_pos]
 zone    = "settlement"
 subzone = "sett_farm"
-[farm_shed.meta]
+[farm_shed.spawn_info]
 zone = "settlement"
 abstract = true
 [farm_shed.sprite]
@@ -650,14 +650,14 @@ subzone = "road_sett_end"
 [hale.home]
 zone    = "road"
 subzone = "road_sett_end"
-[hale.meta]
+[hale.spawn_info]
 zone = "road"
 abstract = false
 spawn_radius = 4
 [hale.brain]
 kind   = "villager"
 active = false
-[hale.patrol]
+[hale.home_range]
 radius = 5.0
 speed  = 2.0
 [hale.threat]
@@ -675,7 +675,7 @@ layer = 1
 [hale.health]
 current = 120.0
 maximum = 120.0
-[hale.combat]
+[hale.combat_stats]
 damage  = 14.0
 defense = 3.0
 [hale.hunger]

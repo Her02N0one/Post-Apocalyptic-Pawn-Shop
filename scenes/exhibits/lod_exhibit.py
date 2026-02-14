@@ -16,11 +16,11 @@ from components import (
     Position, Velocity, Sprite, Identity, Collider, Facing,
     Health, Brain, Lod, GameClock,
 )
-from components.ai import Patrol
+from components.ai import HomeRange
 from components.social import Faction
 from logic.tick import tick_systems
 from scenes.exhibits.base import Exhibit
-from scenes.exhibits.helpers import draw_circle_alpha
+from scenes.exhibits.drawing import draw_circle_alpha
 
 
 _ARENA_W = 30
@@ -54,7 +54,7 @@ class LODExhibit(Exhibit):
             w.add(eid, Health(current=100, maximum=100))
             w.add(eid, Lod(level="medium"))
             w.add(eid, Brain(kind="wander", active=True))
-            w.add(eid, Patrol(origin_x=x, origin_y=y, radius=6.0, speed=2.0))
+            w.add(eid, HomeRange(origin_x=x, origin_y=y, radius=6.0, speed=2.0))
             w.add(eid, Faction(group="neutral", disposition="neutral",
                                home_disposition="neutral"))
             w.zone_add(eid, zone)

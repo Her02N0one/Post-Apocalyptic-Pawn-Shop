@@ -137,7 +137,7 @@ flags).
   handles all of this from a dictionary — but only the zoo uses it.
 
 - **The `update()` method is a 50-line if/elif chain** (L893–945) where
-  most branches call `run_brains()` + `movement_system()` with slight
+  most branches call `tick_ai()` + `movement_system()` with slight
   variations.  `tick_systems()` was literally built for this — its
   `skip_lod`, `skip_needs`, `skip_brains` flags map exactly to what each
   tab needs — but it isn't used.
@@ -318,7 +318,7 @@ These are ordered to maximize payoff relative to effort, not by severity.
 ### Phase 1 — Low-hanging fruit (small changes, big wins)
 
 1. **Wire `tick_systems` into museum and gym.**  Replace every inline
-   `run_brains() / movement_system() / projectile_system() / bus.drain()`
+   `tick_ai() / movement_system() / projectile_system() / bus.drain()`
    block with a single `tick_systems(w, dt, tiles, skip_lod=True, ...)`
    call.  Deletes ~40 lines from museum alone.
 

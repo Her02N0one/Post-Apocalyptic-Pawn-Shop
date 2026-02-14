@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 
 @dataclass
-class Combat:
+class CombatStats:
     """Entity that can fight."""
     damage: float = 10.0       # base damage per hit
     defense: float = 0.0       # damage reduction

@@ -15,7 +15,7 @@ A top-down 2D survival RPG built from scratch with Python and pygame. You play a
 - [Entity-Component-System](#entity-component-system)
 - [World & Zones](#world--zones)
 - [AI & Brain System](#ai--brain-system)
-- [Combat](#combat)
+- [CombatStats](#combat)
 - [Off-Screen Simulation](#off-screen-simulation)
 - [LOD System](#lod-system)
 - [Crime & Reputation](#crime--reputation)
@@ -122,10 +122,10 @@ main.py                 ← Bootstrap: create App, load data, spawn player, run
 │   ├── spatial.py      ← Position, Velocity, Collider, Facing, Hurtbox
 │   ├── rendering.py    ← Identity, Sprite, HitFlash
 │   ├── rpg.py          ← Health, Hunger, Needs, Inventory, Equipment
-│   ├── combat.py       ← Combat, Loot, LootTableRef, Projectile
-│   ├── ai.py           ← Brain, Patrol, Threat, AttackConfig, Task, Memory, GoalSet
+│   ├── combat.py       ← CombatStats, Loot, LootTableRef, Projectile
+│   ├── ai.py           ← Brain, HomeRange, Threat, AttackConfig, Task, Memory, GoalSet
 │   ├── social.py       ← Faction, Dialogue, Ownership, CrimeRecord, Locked
-│   ├── resources.py    ← GameClock, Camera, Meta, Lod, ZoneMetadata, Player
+│   ├── resources.py    ← GameClock, Camera, SpawnInfo, Lod, ZoneMetadata, Player
 │   ├── simulation.py   ← SubzonePos, TravelPlan, Home, Stockpile, WorldMemory
 │   ├── item_registry.py ← ItemRegistry (item data lookup)
 │   └── dev_log.py      ← DevLog (ring-buffer event log)
@@ -134,7 +134,7 @@ main.py                 ← Bootstrap: create App, load data, spawn player, run
 │   ├── tick.py         ← Per-frame system orchestration
 │   ├── systems.py      ← Movement (axis-separated collision), input, item pickup
 │   ├── combat.py       ← Damage formula, death, loot drops, faction alerts
-│   ├── combat_engagement.py ← Combat FSM (idle→chase→attack→flee→return)
+│   ├── combat_engagement.py ← CombatStats FSM (idle→chase→attack→flee→return)
 │   ├── pathfinding.py  ← A* with wall-margin penalty, 8-directional
 │   ├── projectiles.py  ← Projectile physics, collision, damage falloff
 │   ├── particles.py    ← Lightweight particle effects
@@ -235,10 +235,10 @@ for eid, pos, hp in w.query(Position, Health):
 | **Spatial** | `Position`, `Velocity`, `Collider`, `Facing`, `Hurtbox` |
 | **Rendering** | `Identity`, `Sprite`, `HitFlash` |
 | **RPG** | `Health`, `Hunger`, `Needs`, `Inventory`, `Equipment` |
-| **Combat** | `Combat`, `Loot`, `LootTableRef`, `Projectile` |
-| **AI** | `Brain`, `Patrol`, `Threat`, `AttackConfig`, `Task`, `Memory`, `GoalSet` |
+| **CombatStats** | `CombatStats`, `Loot`, `LootTableRef`, `Projectile` |
+| **AI** | `Brain`, `HomeRange`, `Threat`, `AttackConfig`, `Task`, `Memory`, `GoalSet` |
 | **Social** | `Faction`, `Dialogue`, `Ownership`, `CrimeRecord`, `Locked` |
-| **Resources** | `GameClock`, `Camera`, `Meta`, `Lod`, `ZoneMetadata`, `Player` |
+| **Resources** | `GameClock`, `Camera`, `SpawnInfo`, `Lod`, `ZoneMetadata`, `Player` |
 | **Simulation** | `SubzonePos`, `TravelPlan`, `Home`, `Stockpile`, `MemoryEntry`, `WorldMemory` |
 | **Other** | `ItemRegistry`, `DevLog` |
 
@@ -291,11 +291,11 @@ NPCs are driven by a **brain registry** pattern. Each entity's `Brain.kind` stri
 |-------|----------|
 | **wander** | A*-based random walk within patrol radius |
 | **villager** | Schedule-driven daily cycle: morning work → midday eat → afternoon socialize → evening rest. Crime panic, hunger override, communal meals |
-| **hostile_melee** | Combat FSM with melee attacks |
-| **hostile_ranged** | Combat FSM with ranged attacks (projectiles) |
-| **guard** | Combat FSM with no fleeing (flee_threshold=0) |
+| **hostile_melee** | CombatStats FSM with melee attacks |
+| **hostile_ranged** | CombatStats FSM with ranged attacks (projectiles) |
+| **guard** | CombatStats FSM with no fleeing (flee_threshold=0) |
 
-### Combat FSM
+### CombatStats FSM
 
 All hostile/guard brains share a unified combat finite state machine (`logic/combat_engagement.py`):
 
@@ -338,7 +338,7 @@ A priority-based goal system (`logic/goals.py`) provides higher-level behavior:
 
 ---
 
-## Combat
+## CombatStats
 
 ### Damage Formula
 
@@ -362,7 +362,7 @@ damage = max(1, raw) × uniform(0.8, 1.2) × crit_multiplier
 | Hunting Rifle | Ranged | 35 | High damage, long range |
 | Shotgun | Ranged | 12×5 | 5 pellets, wide spread |
 
-### Ranged Combat
+### Ranged CombatStats
 
 - Projectiles are full entities with `Position`, `Velocity`, physics
 - **Damage falloff**: 100% at origin → 50% at max range
@@ -416,7 +416,7 @@ When an NPC needs to decide what to do, a 5-priority behavioral stack evaluates 
 4. **Discretionary** — 30% chance to explore an unvisited adjacent node
 5. **Default** — Return home if away; otherwise wander or idle
 
-### Stat-Based Combat Resolution
+### Stat-Based CombatStats Resolution
 
 When hostile entities share a subzone node, combat is resolved via stats:
 - **DPS model**: `effective_DPS = (base + weapon) × attack_speed`
@@ -615,7 +615,7 @@ Auto-populated entity bestiary. Reads `characters.toml` and `items.toml`, spawns
 ### Museum Scene
 Four-tab system demo:
 1. **AI Brains** — 5 NPCs with different brain types (wander, villager, guard, melee, ranged)
-2. **Combat** — Blue team vs. Red team (melee + ranged per side) with cover blocks and live status
+2. **CombatStats** — Blue team vs. Red team (melee + ranged per side) with cover blocks and live status
 3. **LOD Demo** — 15 NPCs with distance-based LOD tier visualization
 4. **Pathfinding** — Wall painting with pre-built corridors, A* path visualization with calc timing
 

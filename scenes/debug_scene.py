@@ -60,7 +60,7 @@ _MODE_COLORS: dict[str, tuple[int, int, int]] = {
 
 _COMP_COLORS: dict[str, tuple[int, int, int]] = {
     "Brain": (120, 200, 255), "Threat": (120, 200, 255),
-    "AttackConfig": (120, 200, 255), "Patrol": (120, 200, 255),
+    "AttackConfig": (120, 200, 255), "HomeRange": (120, 200, 255),
     "Task": (120, 200, 255), "Memory": (120, 200, 255),
     "GoalSet": (120, 200, 255),
     "Faction": (200, 160, 255), "Dialogue": (200, 160, 255),
@@ -339,7 +339,7 @@ class DebugScene(Scene):
 
     def _draw_ai_observer(self, surface, app, top, sw, sh):
         from components import GameClock, Threat, AttackConfig
-        from components.ai import Patrol
+        from components.ai import HomeRange
 
         npcs = self._npc_list(app)
         if npcs:
@@ -440,10 +440,10 @@ class DebugScene(Scene):
                     f"cd={atk.cooldown:.2f} last={atk.last_attack_time:.1f}",
                     px, py, (200, 160, 120), app.font_sm)
                 py += 12
-            patrol = app.world.get(eid, Patrol)
+            patrol = app.world.get(eid, HomeRange)
             if patrol:
                 app.draw_text(surface,
-                    f"Patrol: o=({patrol.origin_x:.1f},{patrol.origin_y:.1f}) "
+                    f"HomeRange: o=({patrol.origin_x:.1f},{patrol.origin_y:.1f}) "
                     f"r={patrol.radius:.1f} spd={patrol.speed:.1f}",
                     px, py, (160, 200, 160), app.font_sm)
                 py += 12

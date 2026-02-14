@@ -16,7 +16,7 @@ TEST_DUMMIES = {
         "identity": {"name": "Raider", "kind": "dummy"},
         "health": {"current": 40.0, "maximum": 40.0},
         "sprite": {"char": "R", "color": (200, 80, 80), "layer": 5},
-        "combat": {"damage": 6.0, "defense": 1.0},
+        "combat_stats": {"damage": 6.0, "defense": 1.0},
         "position": {"x": 10.0, "y": 10.0},
         "brain": {
             "kind": "hostile_melee", "active": True,
@@ -32,7 +32,7 @@ TEST_DUMMIES = {
         "identity": {"name": "Gunner", "kind": "dummy"},
         "health": {"current": 25.0, "maximum": 25.0},
         "sprite": {"char": "G", "color": (100, 150, 200), "layer": 5},
-        "combat": {"damage": 4.0, "defense": 0.0},
+        "combat_stats": {"damage": 4.0, "defense": 0.0},
         "position": {"x": 15.0, "y": 15.0},
         "brain": {
             "kind": "hostile_ranged", "active": True,
@@ -47,7 +47,7 @@ TEST_DUMMIES = {
         "identity": {"name": "Brute", "kind": "dummy"},
         "health": {"current": 100.0, "maximum": 100.0},
         "sprite": {"char": "B", "color": (160, 160, 100), "layer": 5},
-        "combat": {"damage": 10.0, "defense": 5.0},
+        "combat_stats": {"damage": 10.0, "defense": 5.0},
         "position": {"x": 12.0, "y": 8.0},
         "brain": {
             "kind": "guard", "active": True,
@@ -85,7 +85,7 @@ TEST_NPCS = {
         "identity": {"name": "Dusty", "kind": "npc"},
         "health": {"current": 80.0, "maximum": 80.0},
         "sprite": {"char": "T", "color": (100, 200, 100), "layer": 5},
-        "combat": {"damage": 3.0, "defense": 2.0},
+        "combat_stats": {"damage": 3.0, "defense": 2.0},
         "position": {"x": 5.0, "y": 5.0},
         "faction": {
             "group": "settlers", "disposition": "friendly",
@@ -103,7 +103,7 @@ TEST_NPCS = {
         "identity": {"name": "Jess", "kind": "npc"},
         "health": {"current": 50.0, "maximum": 50.0},
         "sprite": {"char": "J", "color": (150, 180, 150), "layer": 5},
-        "combat": {"damage": 5.0, "defense": 1.0},
+        "combat_stats": {"damage": 5.0, "defense": 1.0},
         "position": {"x": 7.0, "y": 5.0},
         "faction": {
             "group": "settlers", "disposition": "friendly",

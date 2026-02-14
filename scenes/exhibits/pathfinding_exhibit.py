@@ -11,7 +11,7 @@ from core.constants import TILE_SIZE, TILE_WALL, TILE_GRASS
 from core.zone import ZONE_MAPS
 from logic.pathfinding import find_path
 from scenes.exhibits.base import Exhibit
-from scenes.exhibits.helpers import draw_diamond
+from scenes.exhibits.drawing import draw_diamond
 
 _ARENA_W = 30
 _ARENA_H = 20

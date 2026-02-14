@@ -83,7 +83,7 @@ def _build_dialogue_intent(app, npc_eid: int):
         npc_name = app.world.get(npc_eid, Identity).name
 
     from logic.dialogue import DialogueManager
-    from logic.quests import QuestLog
+    from logic.dialogue import QuestLog
 
     manager = app.world.res(DialogueManager)
     tree = None

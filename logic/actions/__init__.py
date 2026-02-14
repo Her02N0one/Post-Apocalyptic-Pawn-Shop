@@ -20,7 +20,7 @@ Public API (re-exported here for backward-compatible imports)
 from __future__ import annotations
 import math
 from dataclasses import dataclass
-from components import Position
+from components import Position, Player, Inventory, Equipment, ItemRegistry
 
 
 # ── Intent objects (action functions return these; scene maps to UI) ──
@@ -136,12 +136,30 @@ def _facing_from_angle(angle: float) -> str:
 # These imports MUST come after the definitions above because the
 # submodules depend on symbols defined in this __init__.
 
-from logic.actions.combat import (          # noqa: E402, F401
+from logic.actions.player_attacks import (          # noqa: E402, F401
     player_attack, player_melee_attack, player_ranged_attack,
 )
 from logic.actions.interact import (        # noqa: E402, F401
     player_interact_nearby, player_loot_nearby, open_npc_trade,
 )
-from logic.actions.inventory import (       # noqa: E402, F401
-    player_toggle_inventory,
-)
+
+
+# ── Inventory action (small, lives here directly) ────────────────────
+
+def player_toggle_inventory(app):
+    """Player presses I — return an inventory intent or None."""
+    res = app.world.query_one(Player, Position)
+    if not res:
+        return None
+    player_eid = res[0]
+    inv = app.world.get(player_eid, Inventory)
+    if inv is None:
+        return None
+    equip = app.world.get(player_eid, Equipment)
+    registry = app.world.res(ItemRegistry)
+    return OpenInventoryIntent(
+        player_inv=inv.items,
+        equipment=equip,
+        registry=registry,
+        title="Inventory",
+    )

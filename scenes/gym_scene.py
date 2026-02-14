@@ -28,7 +28,7 @@ from components import (
     Position, Velocity, Sprite, Identity, Player, Camera, Collider,
     Hurtbox, Health, Brain, Facing, Lod, GameClock,
 )
-from components.ai import Patrol
+from components.ai import HomeRange
 from logic.pathfinding import find_path
 from logic.tick import tick_systems
 from scenes.test_scene_base import TestScene
@@ -170,7 +170,7 @@ class GymScene(TestScene):
             w.add(eid, Facing())
             w.add(eid, Lod(level="high"))
             w.add(eid, Brain(kind="wander", active=True))
-            w.add(eid, Patrol(origin_x=nx, origin_y=ny, radius=10.0, speed=2.5))
+            w.add(eid, HomeRange(origin_x=nx, origin_y=ny, radius=10.0, speed=2.5))
             w.zone_add(eid, self.zone)
             self._npc_eids.append(eid)
             self._eids.append(eid)
@@ -266,7 +266,7 @@ class GymScene(TestScene):
         if pos:
             self._prev_pos = (pos.x, pos.y)
 
-        # Unified system tick (replaces inline run_brains + movement_system)
+        # Unified system tick (replaces inline tick_ai + movement_system)
         tick_systems(w, dt, self.tiles, skip_lod=True, skip_needs=True)
         w.purge()
 

@@ -13,15 +13,15 @@ from components import (
     Position, Velocity, Sprite, Identity, Collider, Hurtbox,
     Facing, Health, Lod, Brain,
 )
-from components.ai import Patrol, Threat, AttackConfig
-from components.combat import Combat
+from components.ai import HomeRange, Threat, AttackConfig
+from components.combat import CombatStats
 from components.social import Faction
-from logic.systems import movement_system
-from logic.brains import run_brains
-from logic.projectiles import projectile_system
+from logic.movement import movement_system
+from logic.ai.brains import tick_ai
+from logic.combat.projectiles import projectile_system
 from logic.combat import handle_death, npc_melee_attack, npc_ranged_attack
 from scenes.exhibits.base import Exhibit
-from scenes.exhibits.helpers import draw_circle_alpha, spawn_combat_npc
+from scenes.exhibits.drawing import draw_circle_alpha, spawn_combat_npc
 
 
 class FactionExhibit(Exhibit):
@@ -80,10 +80,10 @@ class FactionExhibit(Exhibit):
             w.add(eid, Hurtbox())
             w.add(eid, Facing())
             w.add(eid, Health(current=80, maximum=80))
-            w.add(eid, Combat(damage=8 if not is_guard else 15, defense=5))
+            w.add(eid, CombatStats(damage=8 if not is_guard else 15, defense=5))
             w.add(eid, Lod(level="high"))
             w.add(eid, Brain(kind=bkind, active=True))
-            w.add(eid, Patrol(origin_x=x, origin_y=y, radius=3.0, speed=1.5))
+            w.add(eid, HomeRange(origin_x=x, origin_y=y, radius=3.0, speed=1.5))
             w.add(eid, Faction(group="villagers", disposition="neutral",
                                home_disposition="neutral",
                                alert_radius=6.0))
@@ -117,7 +117,7 @@ class FactionExhibit(Exhibit):
                eids: list[int]):
         if not self.running:
             return
-        run_brains(app.world, dt)
+        tick_ai(app.world, dt)
         movement_system(app.world, dt, tiles)
         projectile_system(app.world, dt, tiles)
         bus = app.world.res(EventBus)

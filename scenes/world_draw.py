@@ -382,7 +382,7 @@ def draw_hud(surface: pygame.Surface, app: App, scene):
 
 def draw_debug_overlay(surface: pygame.Surface, app: App, scene, cam: Camera):
     from components import Brain, Threat, AttackConfig, Velocity, Faction, GameClock
-    from components.ai import Patrol
+    from components.ai import HomeRange
 
     sw, sh = surface.get_size()
     ox = sw // 2 - int(cam.x * TILE_SIZE)
@@ -435,7 +435,7 @@ def draw_debug_overlay(surface: pygame.Surface, app: App, scene, cam: Camera):
         threat = app.world.get(eid, Threat)
         atk_cfg = app.world.get(eid, AttackConfig)
         lod_c = app.world.get(eid, Lod)
-        patrol = app.world.get(eid, Patrol)
+        patrol = app.world.get(eid, HomeRange)
 
         # Build compact label lines
         lines: list[tuple[str, tuple[int, int, int]]] = []

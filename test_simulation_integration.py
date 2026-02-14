@@ -51,7 +51,7 @@ def spawn_npc(world, name, zone, subzone, faction_group, faction_disp,
     """Spawn a fully equipped low-LOD NPC with all components the
     simulation pipeline touches."""
     from components import (
-        Identity, Health, Hunger, Inventory, Combat, Faction, Threat,
+        Identity, Health, Hunger, Inventory, CombatStats, Faction, Threat,
     )
     from components.simulation import SubzonePos, Home, WorldMemory
 
@@ -60,7 +60,7 @@ def spawn_npc(world, name, zone, subzone, faction_group, faction_disp,
     world.add(eid, Health(current=hp, maximum=hp))
     world.add(eid, Hunger(current=hunger, maximum=100.0, rate=1.0))
     world.add(eid, Inventory(items=dict(items or {})))
-    world.add(eid, Combat(damage=damage, defense=defense))
+    world.add(eid, CombatStats(damage=damage, defense=defense))
     world.add(eid, Faction(group=faction_group, disposition=faction_disp))
     world.add(eid, Threat(flee_threshold=flee_threshold))
     world.add(eid, SubzonePos(zone=zone, subzone=subzone))
@@ -118,7 +118,7 @@ try:
     result = resolve_encounter(world, raider, settler, "road_crossroads",
                                ws.graph, ws.scheduler, 0.0)
     combat_happened = True
-    print(f"    Combat: winner=eid{result.winner_eid}, loser fled={result.loser_fled}, "
+    print(f"    CombatStats: winner=eid{result.winner_eid}, loser fled={result.loser_fled}, "
           f"duration={result.fight_duration:.1f} min")
 
     assert combat_happened, "NPCs never encountered each other!"
@@ -480,7 +480,7 @@ try:
     result = resolve_encounter(world, brute, coward, "ruins_entrance",
                                ws.graph, ws.scheduler, 0.0)
 
-    ok(f"Combat result: winner=eid{result.winner_eid}, loser fled={result.loser_fled}, "
+    ok(f"CombatStats result: winner=eid{result.winner_eid}, loser fled={result.loser_fled}, "
        f"duration={result.fight_duration:.1f} min")
 
     if result.loser_fled:
@@ -498,7 +498,7 @@ try:
         if not world.alive(coward):
             ok("Coward died before fleeing (high damage overcame flee check window)")
         else:
-            ok("Combat resolved without flee (possible at these stats)")
+            ok("CombatStats resolved without flee (possible at these stats)")
 
     # Brute should be alive either way
     assert world.alive(brute)

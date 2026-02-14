@@ -19,7 +19,7 @@ from components import (
     Health, Inventory, HitFlash, Lod, Facing, Equipment, Projectile,
     GameClock, Faction,
 )
-from logic.systems import input_system, item_pickup_system
+from logic.tick import tick_systems, input_system, item_pickup_system
 from logic.actions import mouse_world_pos
 from logic.particles import ParticleManager
 from logic.input_manager import InputManager, InputContext
@@ -35,7 +35,7 @@ from scenes.world_draw import (
 from core.zone import ZONE_MAPS, ZONE_TELEPORTERS, ZONE_ANCHORS
 from core.save import save_game_state
 from scenes.zone_manager import load_zone, check_player_teleport
-from scenes.world_helpers import (
+from scenes.world_update import (
     update_input_context, route_ui_event, process_gameplay_intents,
     update_tooltips, tick_timers,
 )
@@ -169,7 +169,7 @@ class WorldScene(Scene):
         bus.subscribe("FactionAlert", _on_faction_alert)
         bus.subscribe("AttackIntent", _on_attack_intent)
 
-        from logic.quests import QuestLog
+        from logic.dialogue import QuestLog
         from logic.dialogue import DialogueManager, load_builtin_trees
         if not app.world.res(QuestLog):
             app.world.set_res(QuestLog())
@@ -228,13 +228,9 @@ class WorldScene(Scene):
                 if node:
                     create_settlement(app.world, "Settlement", node.zone, node.id)
 
-            # Attach container EIDs to graph nodes (set by _spawn_characters)
-            cmap = app.world.res(type(None))  # placeholder
-            # Look for _ContainerMap resource by scanning stores
-            for cls, store in app.world._stores.items():
-                if cls.__name__ == "_ContainerMap" and -1 in store:
-                    cmap = store[-1]
-                    break
+            # Attach container EIDs to graph nodes (set by spawn_characters)
+            from core.bootstrap import ContainerMap
+            cmap = app.world.res(ContainerMap)
             if cmap and hasattr(cmap, "mapping"):
                 for subzone_id, eids in cmap.mapping.items():
                     node = self.world_sim.graph.get_node(subzone_id)

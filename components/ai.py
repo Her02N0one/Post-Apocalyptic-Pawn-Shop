@@ -22,7 +22,7 @@ class Brain:
 
 
 @dataclass
-class Patrol:
+class HomeRange:
     """Wander / patrol envelope.
 
     Attached to any entity that moves on its own.

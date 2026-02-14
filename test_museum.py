@@ -21,9 +21,9 @@ from core.constants import (
 from core.events import EventBus, AttackIntent, EntityDied
 from components import (
     Position, Velocity, Sprite, Identity, Collider, Hurtbox, Facing,
-    Health, Hunger, Needs, Inventory, Combat, Lod, Brain, GameClock,
+    Health, Hunger, Needs, Inventory, CombatStats, Lod, Brain, GameClock,
 )
-from components.ai import Patrol, Threat, AttackConfig, VisionCone
+from components.ai import HomeRange, Threat, AttackConfig, VisionCone
 from components.social import Faction
 
 # ── Test harness ─────────────────────────────────────────────────────
@@ -87,10 +87,10 @@ def spawn_npc(w: World, name: str, brain_kind: str,
     w.add(eid, Hurtbox())
     w.add(eid, Facing())
     w.add(eid, Health(current=100, maximum=100))
-    w.add(eid, Combat(damage=10, defense=2))
+    w.add(eid, CombatStats(damage=10, defense=2))
     w.add(eid, Lod(level="high"))
     w.add(eid, Brain(kind=brain_kind, active=True))
-    w.add(eid, Patrol(origin_x=x, origin_y=y, radius=6.0, speed=2.0))
+    w.add(eid, HomeRange(origin_x=x, origin_y=y, radius=6.0, speed=2.0))
     w.add(eid, Faction(group=faction_group, disposition=disposition,
                        home_disposition=disposition))
     if brain_kind in ("guard", "hostile_melee"):
@@ -128,10 +128,10 @@ def spawn_combat_npc(w: World, name: str, brain_kind: str,
     w.add(eid, Hurtbox())
     w.add(eid, Facing(direction=initial_facing))
     w.add(eid, Health(current=hp, maximum=hp))
-    w.add(eid, Combat(damage=damage, defense=defense))
+    w.add(eid, CombatStats(damage=damage, defense=defense))
     w.add(eid, Lod(level="high"))
     w.add(eid, Brain(kind=brain_kind, active=True))
-    w.add(eid, Patrol(origin_x=x, origin_y=y, radius=12.0, speed=speed))
+    w.add(eid, HomeRange(origin_x=x, origin_y=y, radius=12.0, speed=speed))
     w.add(eid, Faction(group=faction_group, disposition="hostile",
                        home_disposition="hostile"))
     w.add(eid, Threat(aggro_radius=aggro, leash_radius=30.0,
@@ -170,8 +170,8 @@ def wire_combat(w: World):
 
 print("\n=== Test 1: AI Brains — NPCs move with different brain types ===")
 try:
-    from logic.brains import run_brains
-    from logic.systems import movement_system
+    from logic.ai.brains import tick_ai
+    from logic.movement import movement_system
 
     w, tiles = fresh_world()
     brain_types = [
@@ -193,7 +193,7 @@ try:
     for _ in range(200):
         clock = w.res(GameClock)
         clock.time += dt
-        run_brains(w, dt)
+        tick_ai(w, dt)
         movement_system(w, dt, tiles)
         w.purge()
 
@@ -227,14 +227,14 @@ except Exception:
 
 
 # ════════════════════════════════════════════════════════════════════════
-#  TEST 2 — Tab 1: Combat (teams fight, damage is dealt)
+#  TEST 2 — Tab 1: CombatStats (teams fight, damage is dealt)
 # ════════════════════════════════════════════════════════════════════════
 
-print("\n=== Test 2: Combat — Two teams fight, damage is dealt ===")
+print("\n=== Test 2: CombatStats — Two teams fight, damage is dealt ===")
 try:
-    from logic.brains import run_brains
-    from logic.systems import movement_system
-    from logic.projectiles import projectile_system
+    from logic.ai.brains import tick_ai
+    from logic.movement import movement_system
+    from logic.combat.projectiles import projectile_system
 
     w, tiles = fresh_world()
     wire_combat(w)
@@ -308,7 +308,7 @@ try:
     for _ in range(600):
         clock = w.res(GameClock)
         clock.time += dt
-        run_brains(w, dt)
+        tick_ai(w, dt)
         movement_system(w, dt, tiles)
         projectile_system(w, dt, tiles)
         bus = w.res(EventBus)
@@ -331,7 +331,7 @@ try:
                     damage_dealt += dmg
 
     if damage_dealt > 0:
-        ok(f"Combat dealt {damage_dealt:.0f} total damage across all fighters")
+        ok(f"CombatStats dealt {damage_dealt:.0f} total damage across all fighters")
     else:
         fail("No damage dealt after 600 frames of combat")
 
@@ -351,7 +351,7 @@ try:
         fail("EventBus processed 0 events — combat system not firing")
 
 except Exception:
-    fail("Combat test crashed", traceback.format_exc())
+    fail("CombatStats test crashed", traceback.format_exc())
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -486,9 +486,9 @@ except Exception:
 
 print("\n=== Test 5: Faction — Alert cascade when raider attacks ===")
 try:
-    from logic.brains import run_brains
-    from logic.systems import movement_system
-    from logic.projectiles import projectile_system
+    from logic.ai.brains import tick_ai
+    from logic.movement import movement_system
+    from logic.combat.projectiles import projectile_system
 
     w, tiles = fresh_world()
     wire_combat(w)
@@ -515,10 +515,10 @@ try:
         w.add(eid, Hurtbox())
         w.add(eid, Facing())
         w.add(eid, Health(current=80, maximum=80))
-        w.add(eid, Combat(damage=8 if not is_guard else 15, defense=5))
+        w.add(eid, CombatStats(damage=8 if not is_guard else 15, defense=5))
         w.add(eid, Lod(level="high"))
         w.add(eid, Brain(kind=bkind, active=True))
-        w.add(eid, Patrol(origin_x=x, origin_y=y, radius=3.0, speed=1.5))
+        w.add(eid, HomeRange(origin_x=x, origin_y=y, radius=3.0, speed=1.5))
         w.add(eid, Faction(group="villagers", disposition="neutral",
                            home_disposition="neutral", alert_radius=6.0))
         if is_guard:
@@ -560,7 +560,7 @@ try:
     for _ in range(1200):
         clock = w.res(GameClock)
         clock.time += dt
-        run_brains(w, dt)
+        tick_ai(w, dt)
         movement_system(w, dt, tiles)
         projectile_system(w, dt, tiles)
         bus = w.res(EventBus)
@@ -598,7 +598,7 @@ except Exception:
 
 print("\n=== Test 6: Stealth — Vision cone detection ===")
 try:
-    from logic.brains._helpers import in_vision_cone
+    from logic.ai.perception import in_vision_cone
 
     # Direct vision cone test — target directly in front of guard
     guard_pos = Position(x=15.0, y=10.0, zone=ZONE)
@@ -655,8 +655,8 @@ try:
 
     # Test with integrated entity spawning (like museum stealth tab)
     w, tiles = fresh_world()
-    from logic.brains import run_brains
-    from logic.systems import movement_system
+    from logic.ai.brains import tick_ai
+    from logic.movement import movement_system
 
     # Guard facing RIGHT, intruder is to the right and nearby
     g_eid = w.spawn()
@@ -770,7 +770,7 @@ except Exception:
 
 print("\n=== Test 8: Needs — Hunger drains, NPCs eat ===")
 try:
-    from logic.needs_system import hunger_system, auto_eat_system
+    from logic.needs import hunger_system, auto_eat_system
 
     w, tiles = fresh_world()
 
@@ -794,7 +794,7 @@ try:
         w.add(eid, Health(current=100, maximum=100))
         w.add(eid, Lod(level="high"))
         w.add(eid, Brain(kind="wander", active=True))
-        w.add(eid, Patrol(origin_x=x, origin_y=y, radius=3.0, speed=1.5))
+        w.add(eid, HomeRange(origin_x=x, origin_y=y, radius=3.0, speed=1.5))
         w.add(eid, Hunger(current=hunger_start, maximum=100.0,
                           rate=0.5, starve_dps=2.0))
         w.add(eid, Needs())

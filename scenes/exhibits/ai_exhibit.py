@@ -5,10 +5,10 @@ Spawns NPCs with different brain types so you can watch them act.
 
 from __future__ import annotations
 from core.app import App
-from logic.systems import movement_system
-from logic.brains import run_brains
+from logic.movement import movement_system
+from logic.ai.brains import tick_ai
 from scenes.exhibits.base import Exhibit
-from scenes.exhibits.helpers import spawn_npc
+from scenes.exhibits.drawing import spawn_npc
 
 
 class AIExhibit(Exhibit):
@@ -32,7 +32,7 @@ class AIExhibit(Exhibit):
 
     def update(self, app: App, dt: float, tiles: list[list[int]],
                eids: list[int]):
-        run_brains(app.world, dt)
+        tick_ai(app.world, dt)
         movement_system(app.world, dt, tiles)
 
     def info_text(self, app: App, eids: list[int]) -> str:

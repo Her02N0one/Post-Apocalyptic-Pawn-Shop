@@ -1,8 +1,11 @@
-"""logic/dialogue.py — Dialogue tree registry and helpers.
+"""logic/dialogue.py — Dialogue trees, quest tracking, and story infrastructure.
 
 Dialogue trees are plain dicts stored in a DialogueManager resource.
 Each tree has named nodes; each node has ``text`` (what the NPC says)
 and ``choices`` (what the player can respond with).
+
+QuestLog is a companion resource — dialogue actions set flags and
+start/complete quests through it.
 
 Node format::
 
@@ -24,6 +27,40 @@ Choice fields:
 
 from __future__ import annotations
 from dataclasses import dataclass, field
+from typing import Any
+
+
+# ── Quest tracking ───────────────────────────────────────────────────
+
+@dataclass
+class QuestLog:
+    """World resource tracking quests and global state flags."""
+    active: dict[str, dict] = field(default_factory=dict)
+    completed: set[str] = field(default_factory=set)
+    flags: dict[str, Any] = field(default_factory=dict)
+
+    def set_flag(self, key: str, value: Any = True):
+        self.flags[key] = value
+
+    def get_flag(self, key: str, default: Any = None) -> Any:
+        return self.flags.get(key, default)
+
+    def has_flag(self, key: str) -> bool:
+        return key in self.flags
+
+    def start_quest(self, quest_id: str, data: dict | None = None):
+        if quest_id not in self.active and quest_id not in self.completed:
+            self.active[quest_id] = data or {}
+            print(f"[QUEST] Started: {quest_id}")
+
+    def complete_quest(self, quest_id: str):
+        if quest_id in self.active:
+            del self.active[quest_id]
+            self.completed.add(quest_id)
+            print(f"[QUEST] Completed: {quest_id}")
+
+
+# ── Dialogue manager ────────────────────────────────────────────────
 
 
 @dataclass
