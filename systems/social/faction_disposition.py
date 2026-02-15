@@ -1,4 +1,4 @@
-"""systems/faction_disposition.py — Canonical faction mutation helpers.
+"""systems/social/faction_disposition.py — Canonical faction mutation helpers.
 
 Every call-site that needs to flip an NPC to hostile or trigger a
 panic-flee should come through here.  This eliminates the 5+ places

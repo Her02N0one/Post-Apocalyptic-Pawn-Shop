@@ -270,7 +270,7 @@ def _update_fsm(world, eid, pos, threat, atk_cfg, c, target,
                                     dist, threat.aggro_radius):
             c.mode = "chase"
             # Flip faction to hostile so chase persists
-            from systems.faction_disposition import make_hostile
+            from systems.social.faction_disposition import make_hostile
             make_hostile(world, eid, reason="spotted target",
                          game_time=game_time)
             _log(world, eid, "combat",

@@ -18,12 +18,12 @@ import random
 from typing import Any
 
 from components import (
-    Health, Hunger, Inventory, Identity, Faction,
+    Health, Hunger, Inventory, Faction,
 )
 from components.offscreen import (
     SubzonePos, WorldMemory, Home, Stockpile, TravelPlan,
 )
-from systems.faction_disposition import entity_display_name
+from systems.social.faction_disposition import entity_display_name
 from core.subzone import SubzoneGraph
 
 
@@ -108,7 +108,7 @@ def _check_survival(world, eid, current_node, graph, scheduler,
         return "rest"
 
     # Find nearest shelter
-    from systems.simulation.travel import find_nearest_with, plan_route, begin_travel
+    from systems.offscreen.travel import find_nearest_with, plan_route, begin_travel
     shelter = find_nearest_with(graph, current_node,
                                 predicate=lambda n: n.shelter)
     if shelter:
@@ -143,9 +143,9 @@ def _check_critical_needs(world, eid, current_node, graph, scheduler,
         return None
 
     # Try to eat from any source (inventory → stockpile → container)
-    from systems.inventory_consume import npc_try_eat_any
+    from systems.items.inventory_consume import npc_try_eat_any
     if npc_try_eat_any(world, eid):
-        from systems.simulation.handlers import _schedule_hunger_event
+        from systems.offscreen.handlers import _schedule_hunger_event
         _schedule_hunger_event(world, eid, scheduler, game_time)
         _log_decision(world, eid, "eating")
         scheduler.post(game_time + 2.0, eid, "DECISION_CYCLE",
@@ -241,7 +241,7 @@ def _check_role_duties(world, eid, current_node, graph, scheduler,
                                   "from": current_node},
                         )
                     else:
-                        from systems.simulation.travel import (
+                        from systems.offscreen.travel import (
                             plan_route, begin_travel,
                         )
                         plan = plan_route(graph, current_node,
@@ -279,7 +279,7 @@ def _check_role_duties(world, eid, current_node, graph, scheduler,
                 if entry.data.get("containers", 0) > 0:
                     target = entry.key.replace("location:", "")
                     if target != current_node:
-                        from systems.simulation.travel import plan_route, begin_travel
+                        from systems.offscreen.travel import plan_route, begin_travel
                         plan = plan_route(graph, current_node, target,
                                           wmem, game_time)
                         if plan:
@@ -397,14 +397,14 @@ def _go_scavenge(world, eid, current_node, graph, scheduler,
 
     # Fallback: find nearest node with containers
     if not target:
-        from systems.simulation.travel import find_nearest_with
+        from systems.offscreen.travel import find_nearest_with
         target = find_nearest_with(
             graph, current_node,
             predicate=lambda n: len(n.container_eids) > 0,
         )
 
     if target:
-        from systems.simulation.travel import plan_route, begin_travel
+        from systems.offscreen.travel import plan_route, begin_travel
         plan = plan_route(graph, current_node, target, wmem, game_time)
         if plan:
             begin_travel(world, eid, plan, graph, scheduler, game_time)
@@ -416,7 +416,7 @@ def _go_scavenge(world, eid, current_node, graph, scheduler,
     node = graph.get_node(current_node)
     if node and node.connections:
         target = random.choice(list(node.connections.keys()))
-        from systems.simulation.travel import plan_route, begin_travel
+        from systems.offscreen.travel import plan_route, begin_travel
         plan = plan_route(graph, current_node, target)
         if plan:
             begin_travel(world, eid, plan, graph, scheduler, game_time)
@@ -436,7 +436,7 @@ def _go_home(world, eid, current_node, graph, scheduler,
     if current_node == home.subzone:
         return None
 
-    from systems.simulation.travel import plan_route, begin_travel
+    from systems.offscreen.travel import plan_route, begin_travel
     wmem = world.get(eid, WorldMemory)
     plan = plan_route(graph, current_node, home.subzone, wmem, game_time)
     if plan:

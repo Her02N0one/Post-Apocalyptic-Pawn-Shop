@@ -34,7 +34,7 @@ from systems.ai.perception import find_player
 from systems.ai.steering import move_away, move_toward_pathfind
 from systems.ai.brains import register_brain
 from systems.ai.villager_state import get_villager_state
-from systems.inventory_consume import npc_try_eat_any
+from systems.items.inventory_consume import npc_try_eat_any
 from core.tuning import get as _tun
 
 

@@ -92,8 +92,8 @@ try:
     )
     from components.offscreen import SubzonePos
     from core.subzone import SubzoneGraph
-    from systems.simulation.lod import promote_entity
-    from systems.simulation.scheduler import WorldScheduler
+    from systems.offscreen.lod import promote_entity
+    from systems.offscreen.scheduler import WorldScheduler
 
     world = World()
     graph = SubzoneGraph.from_toml("data/subzones.toml")
@@ -167,8 +167,8 @@ try:
     )
     from components.offscreen import SubzonePos, TravelPlan
     from core.subzone import SubzoneGraph
-    from systems.simulation.lod import promote_entity
-    from systems.simulation.scheduler import WorldScheduler
+    from systems.offscreen.lod import promote_entity
+    from systems.offscreen.scheduler import WorldScheduler
     from core.zone import load_portals, ZONE_PORTALS
 
     # Ensure portals are loaded
@@ -367,8 +367,8 @@ try:
     )
     from components.offscreen import SubzonePos
     from core.subzone import SubzoneGraph
-    from systems.simulation.lod import promote_entity, demote_entity
-    from systems.simulation.scheduler import WorldScheduler
+    from systems.offscreen.lod import promote_entity, demote_entity
+    from systems.offscreen.scheduler import WorldScheduler
 
     world = World()
     graph = SubzoneGraph.from_toml("data/subzones.toml")
@@ -419,8 +419,8 @@ try:
     )
     from components.offscreen import SubzonePos
     from core.subzone import SubzoneGraph
-    from systems.simulation.lod import on_player_enter_zone
-    from systems.simulation.scheduler import WorldScheduler
+    from systems.offscreen.lod import on_player_enter_zone
+    from systems.offscreen.scheduler import WorldScheduler
 
     world = World()
     graph = SubzoneGraph.from_toml("data/subzones.toml")

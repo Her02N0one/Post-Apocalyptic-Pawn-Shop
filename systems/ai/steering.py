@@ -11,7 +11,7 @@ import math
 from core.ecs import World
 from components import Position, Velocity, Facing, HomeRange
 from core.zone import is_passable
-from systems.pathfinding import find_path, path_next_waypoint
+from systems.movement.pathfinding import find_path, path_next_waypoint
 from core.tuning import get as _tun
 
 # Angular offsets for reactive steering fallback (radians).

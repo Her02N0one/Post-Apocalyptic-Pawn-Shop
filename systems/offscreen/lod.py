@@ -21,9 +21,9 @@ from components.offscreen import SubzonePos, TravelPlan
 from components import GameClock, LodTimer
 from core.subzone import SubzoneGraph
 from core.tuning import get as _tun
-from systems.faction_disposition import entity_display_name
-from systems.entity_factory import ensure_combat_components
-from systems.simulation.scheduler import WorldScheduler
+from systems.social.faction_disposition import entity_display_name
+from systems.engine.entity_factory import ensure_combat_components
+from systems.offscreen.scheduler import WorldScheduler
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -334,7 +334,7 @@ def _schedule_initial_events(world: Any, eid: int, node_id: str,
     their current state / activity.
     """
     # Schedule hunger prediction
-    from systems.simulation.handlers import _schedule_hunger_event
+    from systems.offscreen.handlers import _schedule_hunger_event
     _schedule_hunger_event(world, eid, scheduler, game_time)
 
     # Schedule a decision cycle
@@ -415,7 +415,7 @@ def sync_lod_by_distance(world: Any, graph: SubzoneGraph,
 def lod_system(world: Any) -> None:
     """Evaluate entity LOD levels based on zone + screen proximity.
 
-    Called once per frame from ``systems.tick.tick_systems``.  Throttled
+    Called once per frame from ``systems.engine.tick.tick_systems``.  Throttled
     by ``lod.lod_interval`` so it doesn't sweep every frame.
 
     If a ``SubzoneGraph`` + ``WorldScheduler`` exist as world resources,

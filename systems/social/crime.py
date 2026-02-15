@@ -1,4 +1,4 @@
-"""systems/crime.py — Witness-based crime detection and reputation.
+"""systems/social/crime.py — Witness-based crime detection and reputation.
 
 Stealing is allowed, but if a friendly NPC sees you do it, they
 remember.  Guards react with force; civilians spread the word.
@@ -28,7 +28,7 @@ from components import (
 )
 from components.offscreen import WorldMemory
 from core.tuning import get as _tun
-from systems.faction_disposition import (
+from systems.social.faction_disposition import (
     is_guard, make_hostile, make_flee, entity_display_name,
 )
 

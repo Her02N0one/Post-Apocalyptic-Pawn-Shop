@@ -1,4 +1,4 @@
-"""systems/economy.py — Village economic loop.
+"""systems/social/settlement.py — Village economic loop.
 
 Farmers work farm plots (FINISH_WORK adds food to Stockpile).
 Villagers eat from Stockpile (HUNGER_CRITICAL draws from shared resource).
@@ -12,7 +12,7 @@ from typing import Any
 from components import Identity, Inventory
 from components.offscreen import SubzonePos, Home, Stockpile
 from core.subzone import SubzoneGraph
-from systems.faction_disposition import entity_display_name
+from systems.social.faction_disposition import entity_display_name
 
 
 def create_settlement(world: Any, name: str, zone: str,

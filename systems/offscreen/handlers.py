@@ -12,9 +12,9 @@ from typing import Any
 from components import Health, Hunger, Inventory, Identity, ItemRegistry, Faction
 from components.offscreen import SubzonePos, TravelPlan, WorldMemory, Home
 from core.subzone import SubzoneGraph
-from systems.faction_disposition import entity_display_name
-from systems.inventory_consume import consume_best_food, eat_from_stockpile, npc_try_eat_any
-from systems.economy import add_to_stockpile
+from systems.social.faction_disposition import entity_display_name
+from systems.items.inventory_consume import consume_best_food, eat_from_stockpile, npc_try_eat_any
+from systems.social.settlement import add_to_stockpile
 
 
 def register_all_handlers(scheduler: Any, graph: SubzoneGraph) -> None:
@@ -68,7 +68,7 @@ def handle_arrive_node(world: Any, eid: int, event_type: str,
 
     # Run checkpoint evaluation
     if graph:
-        from systems.simulation.checkpoint import run_checkpoint
+        from systems.offscreen.checkpoint import run_checkpoint
         outcome = run_checkpoint(world, eid, node_id, graph,
                                  scheduler, game_time)
 
@@ -213,7 +213,7 @@ def handle_finish_eat(world: Any, eid: int, event_type: str,
         # Continue travel
         graph = world.res(SubzoneGraph)
         if graph:
-            from systems.simulation.travel import continue_travel
+            from systems.offscreen.travel import continue_travel
             szp = world.get(eid, SubzonePos)
             if szp:
                 continue_travel(world, eid, szp.subzone, graph,
@@ -335,10 +335,10 @@ _schedule_hunger_event = schedule_hunger_event
 
 
 # ═════════════════════════════════════════════════════════════════════
-#  COMMUNAL MEALTIME SYSTEM  (extracted → systems/communal_meals.py)
+#  COMMUNAL MEALTIME SYSTEM  (extracted → systems/scheduling/communal_meals.py)
 # ═════════════════════════════════════════════════════════════════════
 
-from systems.communal_meals import (          # noqa: F401 — re-export
+from systems.scheduling.communal_meals import (          # noqa: F401 — re-export
     handle_communal_meal,
     schedule_meal_events,
     DAY_LENGTH,

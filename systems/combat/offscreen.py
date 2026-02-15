@@ -15,7 +15,7 @@ from components import (
     Identity, Loot,
 )
 from components.offscreen import SubzonePos, TravelPlan, WorldMemory, Home
-from systems.faction_disposition import entity_display_name
+from systems.social.faction_disposition import entity_display_name
 
 
 # ── Result dataclass ─────────────────────────────────────────────────
@@ -267,7 +267,7 @@ def _handle_death(world: Any, dead_eid: int, node_id: str,
     from components import LootTableRef
     loot_ref = world.get(dead_eid, LootTableRef)
     if loot_ref and loot_ref.table_name:
-        from systems.loot_tables import LootTableManager
+        from systems.items.loot_tables import LootTableManager
         loot_mgr = world.res(LootTableManager)
         if loot_mgr:
             items = loot_mgr.roll(loot_ref.table_name)
@@ -304,14 +304,14 @@ def _handle_flee(world: Any, flee_eid: int, from_node: str,
         flee_target = home.subzone
     else:
         # Find nearest shelter
-        from systems.simulation.travel import find_nearest_with
+        from systems.offscreen.travel import find_nearest_with
         flee_target = find_nearest_with(
             graph, from_node,
             predicate=lambda n: n.shelter,
         )
 
     if flee_target and flee_target != from_node:
-        from systems.simulation.travel import plan_route, begin_travel
+        from systems.offscreen.travel import plan_route, begin_travel
         plan = plan_route(graph, from_node, flee_target)
         if plan:
             begin_travel(world, flee_eid, plan, graph, scheduler,

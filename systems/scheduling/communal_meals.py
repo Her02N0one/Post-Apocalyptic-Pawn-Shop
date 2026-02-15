@@ -1,8 +1,8 @@
-"""systems/communal_meals.py — Communal mealtime activity definition.
+"""systems/scheduling/communal_meals.py — Communal mealtime activity definition.
 
 Configures the communal meal as a ``ScheduledActivity`` — the generic
 scheduling, travel, and return-to-duties logic lives in
-``systems/scheduled_activities.py``.
+``systems/scheduling/scheduled_activities.py``.
 
 Twice per game-day (morning + evening), settlers gather at the communal
 area (``sett_well``) to eat together.  Guards eat later — they stay on
@@ -18,7 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 from components import Hunger
-from systems.scheduled_activities import ScheduledActivity
+from systems.scheduling.scheduled_activities import ScheduledActivity
 
 
 # ── Constants (kept public for backward compat) ──────────────────────
@@ -33,15 +33,15 @@ COMMUNAL_NODE = "sett_well"
 # ── Meal-specific callbacks ──────────────────────────────────────────
 
 def _is_guard(world: Any, eid: int) -> bool:
-    from systems.faction_disposition import is_guard
+    from systems.social.faction_disposition import is_guard
     return is_guard(world, eid)
 
 
 def _on_meal_arrive(world: Any, eid: int, scheduler: Any,
                     game_time: float, current_node: str) -> None:
     """Eat from personal inventory, then stockpile, then containers."""
-    from systems.inventory_consume import npc_try_eat_any
-    from systems.simulation.handlers import schedule_hunger_event
+    from systems.items.inventory_consume import npc_try_eat_any
+    from systems.offscreen.handlers import schedule_hunger_event
 
     hunger = world.get(eid, Hunger)
     if hunger is None:
@@ -54,8 +54,8 @@ def _on_meal_arrive(world: Any, eid: int, scheduler: Any,
 def _on_meal_fallback(world: Any, eid: int, scheduler: Any,
                       game_time: float, current_node: str) -> None:
     """Can't reach communal area — eat from inventory instead."""
-    from systems.inventory_consume import consume_best_food
-    from systems.simulation.handlers import schedule_hunger_event
+    from systems.items.inventory_consume import consume_best_food
+    from systems.offscreen.handlers import schedule_hunger_event
 
     consume_best_food(world, eid)
     schedule_hunger_event(world, eid, scheduler, game_time)
@@ -84,7 +84,7 @@ def handle_communal_meal(world: Any, eid: int, event_type: str,
                          data: dict, scheduler: Any, game_time: float,
                          graph=None) -> None:
     """Handler for COMMUNAL_MEAL events — delegates to generic system."""
-    from systems.scheduled_activities import handle_activity
+    from systems.scheduling.scheduled_activities import handle_activity
     handle_activity(COMMUNAL_MEAL_ACTIVITY, world, eid, event_type,
                     data, scheduler, game_time, graph=graph)
 
@@ -92,6 +92,6 @@ def handle_communal_meal(world: Any, eid: int, event_type: str,
 def schedule_meal_events(world: Any, scheduler: Any,
                          game_time: float) -> int:
     """Bootstrap: schedule first round of communal meal events."""
-    from systems.scheduled_activities import schedule_activities
+    from systems.scheduling.scheduled_activities import schedule_activities
     return schedule_activities(COMMUNAL_MEAL_ACTIVITY, world,
                                scheduler, game_time)

@@ -11,9 +11,9 @@ from components import (
     Loot, LootTableRef, ItemRegistry, Faction, Dialogue, Ownership,
     Locked, GameClock,
 )
-from systems.loot_tables import LootTableManager
+from systems.items.loot_tables import LootTableManager
 from systems.actions import OpenDialogueIntent, OpenTransferIntent
-from systems.crime import make_theft_callback, make_lockpick_callback
+from systems.social.crime import make_theft_callback, make_lockpick_callback
 
 
 # ── Generalized interact ───────────────────────────────────────────
@@ -79,8 +79,8 @@ def _build_dialogue_intent(app, npc_eid: int):
     if app.world.has(npc_eid, Identity):
         npc_name = app.world.get(npc_eid, Identity).name
 
-    from systems.dialogue import DialogueManager
-    from systems.dialogue import QuestLog
+    from systems.social.dialogue import DialogueManager
+    from systems.social.dialogue import QuestLog
 
     manager = app.world.res(DialogueManager)
     tree = None

@@ -15,9 +15,9 @@ from components import (
     Health, Position, Velocity, HitFlash, Identity,
     CombatStats, Player, Loot,
 )
-from systems.particles import ParticleManager
+from systems.engine.particles import ParticleManager
 from core.tuning import get as _tun, section as _tun_sec
-from systems.faction_disposition import entity_display_name
+from systems.social.faction_disposition import entity_display_name
 
 
 def apply_damage(

@@ -22,7 +22,7 @@ def spawn_test_entities(world: World, zone: str) -> list[int]:
     (for containers and NPCs).
     """
     from data.test_entities import TEST_DUMMIES, TEST_CONTAINERS, TEST_NPCS
-    from systems.entity_factory import spawn_from_descriptor
+    from systems.engine.entity_factory import spawn_from_descriptor
 
     eids: list[int] = []
 

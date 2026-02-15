@@ -1,4 +1,4 @@
-"""systems.simulation — Off-screen event-driven scheduling infrastructure.
+"""systems.offscreen — Off-screen event-driven scheduling infrastructure.
 
 Provides the event queue, handlers, LOD bridge, and travel system that
 keep entities alive when the player isn't looking.
@@ -13,8 +13,8 @@ travel       Route planning through the subzone graph
 checkpoint   Subzone arrival evaluation
 """
 
-from systems.simulation.manager import WorldSim
-from systems.simulation.scheduler import WorldScheduler
-from systems.simulation.lod import lod_system
+from systems.offscreen.manager import WorldSim
+from systems.offscreen.scheduler import WorldScheduler
+from systems.offscreen.lod import lod_system
 
 __all__ = ["WorldSim", "WorldScheduler", "lod_system"]

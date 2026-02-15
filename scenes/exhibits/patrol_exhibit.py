@@ -22,7 +22,7 @@ from components import (
 from components.ai import HomeRange, VisionCone
 from components.combat import CombatStats
 from components.social import Faction
-from systems.physics import movement_system
+from systems.movement.physics import movement_system
 from systems.ai.brains import tick_ai
 from scenes.exhibits.base import Exhibit
 from scenes.exhibits.drawing import (

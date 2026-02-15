@@ -28,7 +28,7 @@ from components import (
 from components.ai import HomeRange
 from components.social import Faction
 from components.offscreen import SubzonePos, Home, Stockpile
-from systems.economy import (
+from systems.social.settlement import (
     deposit_to_stockpile,
     withdraw_from_stockpile,
 )

@@ -16,10 +16,10 @@ from components import (
     HitFlash, Identity, CombatStats, Faction,
 )
 from systems.combat.damage import apply_damage
-from systems.particles import ParticleManager
+from systems.engine.particles import ParticleManager
 from core.tuning import get as _tun, section as _tun_sec
 from core.events import EventBus, EntityDied, FactionAlert
-from systems.faction_disposition import entity_display_name
+from systems.social.faction_disposition import entity_display_name
 
 
 def projectile_system(world, dt: float, tiles: list[list[int]]):

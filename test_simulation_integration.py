@@ -37,7 +37,7 @@ def fail(label: str, detail: str = ""):
 def make_world_and_sim():
     """Build a fresh ECS world + WorldSim with the subzone graph loaded."""
     from core.ecs import World
-    from systems.simulation.manager import WorldSim
+    from systems.offscreen.manager import WorldSim
 
     world = World()
     ws = WorldSim(world)
@@ -97,7 +97,7 @@ try:
     ok(f"Spawned settler eid={settler} at road_crossroads")
 
     # Verify routes exist across the full graph
-    from systems.simulation.travel import plan_route, begin_travel
+    from systems.offscreen.travel import plan_route, begin_travel
 
     raider_plan = plan_route(ws.graph, "ruins_deep", "sett_market")
     assert raider_plan is not None, "No route from ruins_deep to sett_market"
@@ -215,7 +215,7 @@ try:
     # Both head to sett_farm (where Alice already is — Bob will arrive)
     ws.bootstrap(world, 0.0)
 
-    from systems.simulation.travel import plan_route, begin_travel
+    from systems.offscreen.travel import plan_route, begin_travel
     bob_plan = plan_route(ws.graph, "sett_well", "sett_farm")
     assert bob_plan is not None
     begin_travel(world, bob, bob_plan, ws.graph, ws.scheduler, 0.0)
@@ -296,7 +296,7 @@ try:
     ws.bootstrap(world, 0.0)
 
     # Send guard to market
-    from systems.simulation.travel import plan_route, begin_travel
+    from systems.offscreen.travel import plan_route, begin_travel
     plan = plan_route(ws.graph, "sett_gate", "sett_market")
     assert plan is not None
     begin_travel(world, guard, plan, ws.graph, ws.scheduler, 0.0)

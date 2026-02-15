@@ -22,7 +22,7 @@ from typing import Any
 from components import Health, Hunger, Inventory, Faction, Identity
 from components.offscreen import SubzonePos, TravelPlan, WorldMemory
 from core.subzone import SubzoneGraph, SubzoneNode
-from systems.faction_disposition import entity_display_name
+from systems.social.faction_disposition import entity_display_name
 
 
 def run_checkpoint(world: Any, eid: int, node_id: str,
@@ -56,7 +56,7 @@ def run_checkpoint(world: Any, eid: int, node_id: str,
         return "divert"
 
     # 4. Continue travel or arrive
-    from systems.simulation.travel import continue_travel
+    from systems.offscreen.travel import continue_travel
     plan = world.get(eid, TravelPlan)
     if plan and not plan.complete:
         continued = continue_travel(world, eid, node_id, graph,
@@ -360,7 +360,7 @@ def _check_guard_crime_reaction(world: Any, eid: int,
 
     Guard = has AttackConfig component (combat-capable) + friendly faction.
     """
-    from systems.faction_disposition import is_guard
+    from systems.social.faction_disposition import is_guard
     if not is_guard(world, eid):
         return
 
@@ -370,7 +370,7 @@ def _check_guard_crime_reaction(world: Any, eid: int,
 
     crimes = wmem.query_prefix("crime:", game_time, stale_ok=False)
     if crimes:
-        from systems.faction_disposition import make_hostile
+        from systems.social.faction_disposition import make_hostile
         make_hostile(world, eid, reason="learned crimes via word-of-mouth",
                      game_time=game_time)
 

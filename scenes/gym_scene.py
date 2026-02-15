@@ -29,8 +29,8 @@ from components import (
     Hurtbox, Health, Brain, Facing, Lod, GameClock,
 )
 from components.ai import HomeRange
-from systems.pathfinding import find_path
-from systems.tick import tick_systems
+from systems.movement.pathfinding import find_path
+from systems.engine.tick import tick_systems
 from scenes.test_scene_base import TestScene
 
 

@@ -31,7 +31,7 @@ from components import (
 from components.ai import HomeRange, Threat, AttackConfig, VisionCone
 from components.social import Faction, Dialogue
 from components.combat import CombatStats, Loot, LootTableRef
-from systems.entity_factory import spawn_from_descriptor
+from systems.engine.entity_factory import spawn_from_descriptor
 from scenes.test_scene_base import TestScene
 
 try:
@@ -293,7 +293,7 @@ class ZooScene(TestScene):
 
         # Animate NPCs if toggled on
         if self._animate:
-            from systems.tick import tick_systems
+            from systems.engine.tick import tick_systems
             tick_systems(app.world, dt, self.tiles,
                          skip_lod=True, skip_needs=True)
             app.world.purge()

@@ -11,7 +11,7 @@ from components import (
     Player, Position, Identity, Inventory, Equipment,
     ItemRegistry, Health, HitFlash, Lod, Velocity, Sprite,
 )
-from systems.input_manager import InputContext
+from systems.engine.input_manager import InputContext
 from ui import CloseModal, HealPlayer, OpenTrade, SetFlag
 from ui import DialogueModal, TransferModal, InventoryModal
 
@@ -50,7 +50,7 @@ def route_ui_event(scene, event: pygame.event.Event, app):
             if intent:
                 _apply_intent(scene, intent)
         elif isinstance(cmd, SetFlag):
-            from systems.dialogue import QuestLog
+            from systems.social.dialogue import QuestLog
             ql = app.world.res(QuestLog)
             if ql:
                 ql.set_flag(cmd.flag, cmd.value)
@@ -145,7 +145,7 @@ def process_gameplay_intents(scene, app):
     from systems.actions import (
         player_attack, player_interact_nearby, player_toggle_inventory,
     )
-    from systems.entity_factory import spawn_test_entities
+    from systems.engine.entity_factory import spawn_test_entities
     from core.save import save_game_state
     from core.zone import ZONE_MAPS
 

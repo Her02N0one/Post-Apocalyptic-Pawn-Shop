@@ -29,7 +29,7 @@ from components import (
 from components.ai import HomeRange, Threat, AttackConfig, VisionCone
 from components.social import Faction, CrimeRecord
 from components.offscreen import WorldMemory
-from systems.crime import find_witnesses, report_theft
+from systems.social.crime import find_witnesses, report_theft
 
 _WITNESS_RADIUS = 30.0  # m  (close enough to identify actions as criminal)
 

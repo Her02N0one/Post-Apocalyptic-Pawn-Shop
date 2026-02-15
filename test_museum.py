@@ -174,7 +174,7 @@ def wire_combat(w: World):
 print("\n=== Test 1: Patrol — NPCs stay within patrol radius ===")
 try:
     from systems.ai.brains import tick_ai
-    from systems.physics import movement_system
+    from systems.movement.physics import movement_system
 
     w, tiles = fresh_world()
 
@@ -270,7 +270,7 @@ except Exception:
 print("\n=== Test 2: CombatStats — Two teams fight, damage is dealt ===")
 try:
     from systems.ai.brains import tick_ai
-    from systems.physics import movement_system
+    from systems.movement.physics import movement_system
     from systems.combat.projectiles import projectile_system
 
     w, tiles = fresh_world()
@@ -398,7 +398,7 @@ except Exception:
 print("\n=== Test 3: Hearing — gunshot triggers searching then chase ===")
 try:
     from systems.ai.brains import tick_ai
-    from systems.physics import movement_system
+    from systems.movement.physics import movement_system
     from systems.combat.projectiles import projectile_system
     from systems.combat.attacks import emit_combat_sound
 
@@ -532,7 +532,7 @@ except Exception:
 
 print("\n=== Test 4: Pathfinding — A* finds paths, avoids walls ===")
 try:
-    from systems.pathfinding import find_path
+    from systems.movement.pathfinding import find_path
 
     tiles = make_arena()
 
@@ -599,7 +599,7 @@ except Exception:
 print("\n=== Test 5: Faction — Alert cascade when raider attacks ===")
 try:
     from systems.ai.brains import tick_ai
-    from systems.physics import movement_system
+    from systems.movement.physics import movement_system
     from systems.combat.projectiles import projectile_system
 
     w, tiles = fresh_world()
@@ -861,7 +861,7 @@ except Exception:
 
 print("\n=== Test 7: Particles — Emit, tick, and decay ===")
 try:
-    from systems.particles import ParticleManager
+    from systems.engine.particles import ParticleManager
 
     pm = ParticleManager(max_particles=512)
 
@@ -936,7 +936,7 @@ except Exception:
 
 print("\n=== Test 8: Needs — Hunger drains, NPCs eat ===")
 try:
-    from systems.needs import hunger_system, auto_eat_system
+    from systems.scheduling.needs import hunger_system, auto_eat_system
 
     w, tiles = fresh_world()
 
@@ -1070,7 +1070,7 @@ except Exception:
 
 print("\n=== Test 9: tick_systems — Full system orchestration ===")
 try:
-    from systems.tick import tick_systems
+    from systems.engine.tick import tick_systems
 
     w, tiles = fresh_world()
     wire_combat(w)
@@ -1085,7 +1085,7 @@ try:
         initial_facing="left")
 
     # Add particle manager
-    from systems.particles import ParticleManager
+    from systems.engine.particles import ParticleManager
     w.set_res(ParticleManager())
 
     # Tick 100 frames via tick_systems (not calling individual systems)
@@ -1178,8 +1178,8 @@ print("\n=== Test 11: LOD — Promote / demote lifecycle ===")
 try:
     from components.offscreen import SubzonePos, Home
     from core.subzone import SubzoneGraph, SubzoneNode
-    from systems.simulation.scheduler import WorldScheduler
-    from systems.simulation.lod import promote_entity, demote_entity
+    from systems.offscreen.scheduler import WorldScheduler
+    from systems.offscreen.lod import promote_entity, demote_entity
 
     w, tiles = fresh_world()
 
@@ -1409,7 +1409,7 @@ try:
     w.add(farmer, _Home(zone=ZONE, subzone="haven_centre"))
 
     # Deposit food
-    from systems.economy import deposit_to_stockpile, withdraw_from_stockpile
+    from systems.social.settlement import deposit_to_stockpile, withdraw_from_stockpile
 
     deposited = deposit_to_stockpile(w, farmer, "raw_food", 3)
     if deposited == 3:
@@ -1485,7 +1485,7 @@ print("\n=== Test 14: Crime — witness detection + guard reaction ===")
 try:
     from components.offscreen import WorldMemory as _WM
     from components.social import CrimeRecord as _CR
-    from systems.crime import find_witnesses, report_theft
+    from systems.social.crime import find_witnesses, report_theft
 
     w, tiles = fresh_world()
 

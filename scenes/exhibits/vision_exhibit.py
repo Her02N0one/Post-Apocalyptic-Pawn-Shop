@@ -24,7 +24,7 @@ from components import (
 from components.ai import HomeRange, Threat, AttackConfig, VisionCone
 from components.combat import CombatStats
 from components.social import Faction
-from systems.physics import movement_system
+from systems.movement.physics import movement_system
 from systems.ai.brains import tick_ai
 from systems.combat.projectiles import projectile_system
 from systems.combat import handle_death, npc_melee_attack, npc_ranged_attack

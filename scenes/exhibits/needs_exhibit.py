@@ -13,7 +13,7 @@ from components import (
     Health, Hunger, Lod, Brain, Needs, Inventory,
 )
 from components.ai import HomeRange
-from systems.physics import movement_system
+from systems.movement.physics import movement_system
 from systems.ai.brains import tick_ai
 from scenes.exhibits.base import Exhibit
 
@@ -94,7 +94,7 @@ class NeedsExhibit(Exhibit):
                eids: list[int]):
         if not self.running:
             return
-        from systems.needs import hunger_system
+        from systems.scheduling.needs import hunger_system
         hunger_system(app.world, dt * self._time_scale)
         tick_ai(app.world, dt)
         movement_system(app.world, dt, tiles)

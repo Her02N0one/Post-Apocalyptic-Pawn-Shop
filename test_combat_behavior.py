@@ -967,7 +967,7 @@ try:
     brain_speed = math.hypot(vel.x, vel.y)
 
     # Now run movement system
-    from systems.physics import movement_system
+    from systems.movement.physics import movement_system
     tiles = ZONE_MAPS[ZONE]
     movement_system(w, 0.016, tiles)
 

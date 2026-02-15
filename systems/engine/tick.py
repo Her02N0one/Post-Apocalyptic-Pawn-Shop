@@ -1,11 +1,11 @@
-"""systems/tick.py — System tick orchestration.
+"""systems/engine/tick.py — System tick orchestration.
 
 Houses the core per-frame system pipeline plus tiny single-purpose
 systems (input, pickup) that don't warrant their own files.
 
 Usage::
 
-    from systems.tick import tick_systems, input_system, item_pickup_system
+    from systems.engine.tick import tick_systems, input_system, item_pickup_system
 """
 
 from __future__ import annotations
@@ -15,13 +15,13 @@ from components import (
     GameClock, Player, Velocity, Facing,
     Position, Inventory, Identity,
 )
-from systems.physics import movement_system
+from systems.movement.physics import movement_system
 from systems.ai.brains import tick_ai
-from systems.simulation.lod import lod_system
-from systems.needs import hunger_system, auto_eat_system
-from systems.economy import settlement_food_production
+from systems.offscreen.lod import lod_system
+from systems.scheduling.needs import hunger_system, auto_eat_system
+from systems.social.settlement import settlement_food_production
 from systems.combat.projectiles import projectile_system
-from systems.particles import ParticleManager
+from systems.engine.particles import ParticleManager
 from core.events import EventBus
 
 if TYPE_CHECKING:

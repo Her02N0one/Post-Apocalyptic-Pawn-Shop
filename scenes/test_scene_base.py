@@ -137,7 +137,7 @@ class TestScene(Scene):
 
     def _draw_particles(self, surface: pygame.Surface, app: App):
         """Draw particles using the shared renderer."""
-        from systems.particles import ParticleManager
+        from systems.engine.particles import ParticleManager
         from scenes.world.draw import draw_particles
         pm = app.world.res(ParticleManager)
         if pm:

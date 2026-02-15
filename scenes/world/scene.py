@@ -19,12 +19,12 @@ from components import (
     Health, Inventory, HitFlash, Lod, Facing, Equipment, Projectile,
     GameClock, Faction,
 )
-from systems.tick import tick_systems, input_system, item_pickup_system
+from systems.engine.tick import tick_systems, input_system, item_pickup_system
 from systems.actions import mouse_world_pos
-from systems.particles import ParticleManager
-from systems.input_manager import InputManager, InputContext
-from systems.entity_factory import spawn_zone_entities, spawn_test_entities
-from systems.tick import tick_systems
+from systems.engine.particles import ParticleManager
+from systems.engine.input_manager import InputManager, InputContext
+from systems.engine.entity_factory import spawn_zone_entities, spawn_test_entities
+from systems.engine.tick import tick_systems
 from ui import ModalStack
 from scenes.world.editor import EditorController
 from scenes.world.draw import (
@@ -39,7 +39,7 @@ from scenes.world.update import (
     update_input_context, route_ui_event, process_gameplay_intents,
     update_tooltips, tick_timers,
 )
-from systems.simulation.manager import WorldSim
+from systems.offscreen.manager import WorldSim
 from core.events import EventBus
 from core import tuning as tuning_mod
 
@@ -169,8 +169,8 @@ class WorldScene(Scene):
         bus.subscribe("FactionAlert", _on_faction_alert)
         bus.subscribe("AttackIntent", _on_attack_intent)
 
-        from systems.dialogue import QuestLog
-        from systems.dialogue import DialogueManager, load_builtin_trees
+        from systems.social.dialogue import QuestLog
+        from systems.social.dialogue import DialogueManager, load_builtin_trees
         if not app.world.res(QuestLog):
             app.world.set_res(QuestLog())
         if not app.world.res(DialogueManager):
@@ -206,7 +206,7 @@ class WorldScene(Scene):
         """Initialise the world simulation if a subzone graph exists."""
         from pathlib import Path
         from components.offscreen import Stockpile
-        from systems.economy import create_settlement
+        from systems.social.settlement import create_settlement
         graph_path = Path("data/subzones.toml")
         if not graph_path.exists():
             return

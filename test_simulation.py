@@ -40,7 +40,7 @@ print("\n=== Test 1: WorldSim initialization ===")
 
 try:
     from core.ecs import World
-    from systems.simulation.manager import WorldSim
+    from systems.offscreen.manager import WorldSim
     from core.subzone import SubzoneGraph
 
     world = World()
@@ -90,8 +90,8 @@ try:
     from core.ecs import World
     from components import Identity, Hunger, Inventory
     from components.offscreen import SubzonePos, WorldMemory
-    from systems.simulation.manager import WorldSim
-    from systems.simulation.scheduler import WorldScheduler
+    from systems.offscreen.manager import WorldSim
+    from systems.offscreen.scheduler import WorldScheduler
 
     world = World()
     ws = WorldSim(world)
@@ -163,8 +163,8 @@ try:
         Identity, Hunger, Inventory, Health, Player, Position
     )
     from components.offscreen import SubzonePos, WorldMemory
-    from systems.simulation.manager import WorldSim
-    from systems.simulation.scheduler import WorldScheduler
+    from systems.offscreen.manager import WorldSim
+    from systems.offscreen.scheduler import WorldScheduler
 
     # Build a minimal world with player + low-LOD NPC
     world = World()
@@ -309,7 +309,7 @@ except Exception:
 print("\n=== Test 4: Scheduler queue serialization ===")
 
 try:
-    from systems.simulation.scheduler import WorldScheduler
+    from systems.offscreen.scheduler import WorldScheduler
 
     sched = WorldScheduler()
     sched.post(10.0, 1, "HUNGER_CRITICAL", {"severity": "high"})
@@ -351,7 +351,7 @@ try:
     from core.ecs import World
     from components import Identity, Hunger, Inventory, Health
     from components.offscreen import SubzonePos, Home, WorldMemory
-    from systems.simulation.manager import WorldSim
+    from systems.offscreen.manager import WorldSim
 
     world = World()
     ws = WorldSim(world)

@@ -17,11 +17,11 @@ from components import (
     HitFlash, Loot, Hurtbox, Equipment, ItemRegistry, Projectile,
     Facing, Brain, Faction, AttackConfig, Threat, GameClock,
 )
-from systems.particles import ParticleManager
+from systems.engine.particles import ParticleManager
 from systems.combat.damage import apply_damage as _apply_damage
 from systems.combat.damage import handle_death  # re-exported for backward compat
 from core.tuning import get as _tun, section as _tun_sec
-from systems.faction_disposition import entity_display_name
+from systems.social.faction_disposition import entity_display_name
 
 # ── Re-exports so existing ``from systems.combat.attacks import …``
 #    keeps working after moving alerts to alerts.py. ──────────────────

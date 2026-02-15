@@ -56,7 +56,7 @@ def try_heal(world: World, eid: int, brain: Brain, s: dict,
     if hp > _tun("ai.helpers", "heal_hp_threshold", 0.4):
         return False
 
-    from systems.inventory_consume import consume_best_heal
+    from systems.items.inventory_consume import consume_best_heal
     if not consume_best_heal(world, eid):
         return False
 

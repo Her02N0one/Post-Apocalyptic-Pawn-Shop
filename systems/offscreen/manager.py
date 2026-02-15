@@ -19,9 +19,9 @@ from pathlib import Path
 from typing import Any
 
 from core.subzone import SubzoneGraph
-from systems.simulation.scheduler import WorldScheduler
-from systems.simulation.handlers import register_all_handlers, schedule_hunger_events
-from systems.simulation.lod import is_high_lod
+from systems.offscreen.scheduler import WorldScheduler
+from systems.offscreen.handlers import register_all_handlers, schedule_hunger_events
+from systems.offscreen.lod import is_high_lod
 
 
 class WorldSim:
@@ -62,7 +62,7 @@ class WorldSim:
         count = schedule_hunger_events(world, self.scheduler, game_time)
 
         # Schedule communal mealtime events for settlers
-        from systems.simulation.handlers import schedule_meal_events
+        from systems.offscreen.handlers import schedule_meal_events
         meal_count = schedule_meal_events(world, self.scheduler, game_time)
 
         print(f"[SIM] Bootstrapped: {count} hunger events scheduled, "
@@ -99,7 +99,7 @@ class WorldSim:
         Promotes entities in the new zone, demotes entities elsewhere.
         Returns (promoted, demoted).
         """
-        from systems.simulation.lod import on_player_enter_zone
+        from systems.offscreen.lod import on_player_enter_zone
         return on_player_enter_zone(world, new_zone, self.graph,
                                     self.scheduler, game_time)
 

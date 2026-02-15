@@ -26,9 +26,9 @@ from components import (
 from core.data import DataLoader
 from core import zone as core_zone
 from core.save import load_game_state
-from systems.entity_factory import spawn_from_descriptor
-from systems.loot_tables import LootTableManager
-from systems.particles import ParticleManager
+from systems.engine.entity_factory import spawn_from_descriptor
+from systems.items.loot_tables import LootTableManager
+from systems.engine.particles import ParticleManager
 
 if TYPE_CHECKING:
     from core.app import App

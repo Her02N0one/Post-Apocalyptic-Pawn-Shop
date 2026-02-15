@@ -1,4 +1,4 @@
-"""systems/needs.py — Hunger drain, starvation, and need evaluation.
+"""systems/scheduling/needs.py — Hunger drain, starvation, and need evaluation.
 
 Runs once per frame on every entity that has a ``Hunger`` component.
 Drains hunger over time, applies starvation damage when empty,
@@ -17,8 +17,8 @@ they run out of personal food — the village takes care of its own.
 from __future__ import annotations
 from core.ecs import World
 from components import (
-    Hunger, Health, Needs, Inventory, ItemRegistry, Identity,
-    Brain, GameClock, Faction, Position, SubzonePos,
+    Hunger, Health, Needs, Inventory,
+    Brain, GameClock, SubzonePos,
 )
 from core.tuning import get as _tun
 
@@ -99,7 +99,7 @@ def auto_eat_system(world: World) -> None:
             if game_time - last_eat < eat_cd:
                 continue
         # Try to eat
-        from systems.inventory_consume import npc_try_eat_any
+        from systems.items.inventory_consume import npc_try_eat_any
         if npc_try_eat_any(world, eid):
             if brain is not None:
                 brain.state["_auto_eat_at"] = game_time

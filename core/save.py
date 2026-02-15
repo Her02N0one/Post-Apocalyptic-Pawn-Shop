@@ -188,7 +188,7 @@ def save_game_state(app: "App", slot: int = 0) -> Path:
     # Scheduler event queue
     scheduler_data: list[dict] = []
     try:
-        from systems.simulation.manager import WorldSim
+        from systems.offscreen.manager import WorldSim
         # Grab the live WorldSim from the active scene
         scene = app._scenes[-1] if app._scenes else None
         if scene and hasattr(scene, "world_sim") and scene.world_sim:

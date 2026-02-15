@@ -20,7 +20,7 @@ from components import (
     AttackConfig, Threat, GameClock,
 )
 from core.tuning import get as _tun
-from systems.faction_disposition import (
+from systems.social.faction_disposition import (
     make_hostile, make_flee, activate_hostile_or_flee,
     entity_display_name,
 )

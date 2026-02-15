@@ -162,7 +162,7 @@ def player_ranged_attack(app, scene) -> AttackResult | None:
     )
 
     # Muzzle flash particles
-    from systems.particles import ParticleManager
+    from systems.engine.particles import ParticleManager
     pm = app.world.res(ParticleManager)
     if pm:
         muzzle_x = cx + dx_norm * 0.5

@@ -17,7 +17,7 @@ from core.ecs import World
 from components import Brain, HomeRange, Position, Velocity
 from core.zone import is_passable, ZONE_MAPS
 from systems.ai.brains import register_brain
-from systems.pathfinding import find_path, path_next_waypoint
+from systems.movement.pathfinding import find_path, path_next_waypoint
 from core.tuning import get as _tun
 
 

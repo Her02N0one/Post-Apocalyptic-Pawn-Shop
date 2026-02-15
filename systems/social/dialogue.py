@@ -1,4 +1,4 @@
-"""systems/dialogue.py — Dialogue trees, quest tracking, and story infrastructure.
+"""systems/social/dialogue.py — Dialogue trees, quest tracking, and story infrastructure.
 
 Dialogue trees are plain dicts stored in a DialogueManager resource.
 Each tree has named nodes; each node has ``text`` (what the NPC says)

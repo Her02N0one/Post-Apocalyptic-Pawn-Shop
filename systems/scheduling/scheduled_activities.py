@@ -1,4 +1,4 @@
-"""systems/scheduled_activities.py — Data-driven recurring activities.
+"""systems/scheduling/scheduled_activities.py — Data-driven recurring activities.
 
 A ``ScheduledActivity`` defines a recurring communal event:
 
@@ -30,7 +30,7 @@ from typing import Any, Callable
 from components import Health, Hunger, Inventory, Identity, ItemRegistry, Faction
 from components.offscreen import SubzonePos
 from core.subzone import SubzoneGraph
-from systems.faction_disposition import entity_display_name
+from systems.social.faction_disposition import entity_display_name
 
 
 # ── Activity definition ──────────────────────────────────────────────
@@ -117,7 +117,7 @@ def handle_activity(activity: ScheduledActivity, world: Any, eid: int,
 
     # Navigate to gathering point
     if graph:
-        from systems.simulation.travel import plan_route, begin_travel
+        from systems.offscreen.travel import plan_route, begin_travel
 
         route = plan_route(graph, current_node, activity.gathering_node)
         if route:

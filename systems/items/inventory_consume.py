@@ -1,4 +1,4 @@
-"""systems/inventory_consume.py — Canonical inventory item operations.
+"""systems/economy/inventory_consume.py — Canonical inventory item operations.
 
 Centralises the "find best consumable → consume → apply effect"
 pattern that was previously copy-pasted across 5+ locations.
@@ -92,7 +92,7 @@ def consume_best_food(world: Any, eid: int) -> bool:
     This is the canonical "eat from own inventory" used by all systems.
     """
     from components import Hunger, Health, Inventory, ItemRegistry, Identity
-    from systems.faction_disposition import entity_display_name
+    from systems.social.faction_disposition import entity_display_name
 
     hunger = world.get(eid, Hunger)
     inv = world.get(eid, Inventory)
