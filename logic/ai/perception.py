@@ -78,6 +78,9 @@ def find_nearest_enemy(world: World, eid: int, max_range: float = 999.0,
     component, only targets inside the cone (or within peripheral
     range) are considered.
 
+    Uses ``world.query_zone()`` for O(1) zone lookup instead of full
+    table scan.
+
     Returns (None, None) if no enemy is within *max_range* tiles.
     """
     pos = world.get(eid, Position)
@@ -99,14 +102,11 @@ def find_nearest_enemy(world: World, eid: int, max_range: float = 999.0,
     best_pos = None
     best_dist = max_range + 1
 
-    for other_eid, other_pos in world.all_of(Position):
+    for other_eid, other_pos, other_hp in world.query_zone(
+        pos.zone, Position, Health,
+    ):
         if other_eid == eid:
             continue
-        if other_pos.zone != pos.zone:
-            continue
-        if not world.has(other_eid, Health):
-            continue
-        other_hp = world.get(other_eid, Health)
         if other_hp.current <= 0:
             continue
         other_fac = world.get(other_eid, Faction)

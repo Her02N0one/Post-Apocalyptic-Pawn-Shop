@@ -109,71 +109,10 @@ def auto_eat_system(world, dt: float) -> None:
 def npc_eat_from_inventory(world, eid: int) -> bool:
     """Canonical "eat best food from inventory" — used by all systems.
 
-    Checks the entity's ``Inventory`` for the consumable with the
-    highest ``food_value``, restores hunger (and heal if applicable),
-    and removes the item.  Returns True if the NPC ate something.
-
-    If no ``ItemRegistry`` is available, falls back to eating any
-    item whose id contains "food", "stew", or "ration".
+    Delegates to ``logic.inventory_ops.consume_best_food``.
     """
-    hunger = world.get(eid, Hunger)
-    inv = world.get(eid, Inventory)
-    if hunger is None or inv is None:
-        return False
-
-    registry = world.res(ItemRegistry)
-
-    if registry is None:
-        # Fallback: eat any item marked as food-like by name
-        for item_id, qty in list(inv.items.items()):
-            if qty <= 0:
-                continue
-            low = item_id.lower()
-            if "food" in low or "stew" in low or "ration" in low:
-                hunger.current = min(hunger.maximum, hunger.current + 25.0)
-                inv.items[item_id] -= 1
-                if inv.items[item_id] <= 0:
-                    del inv.items[item_id]
-                return True
-        return False
-
-    best_id = None
-    best_food = 0.0
-    for item_id, qty in inv.items.items():
-        if qty <= 0:
-            continue
-        if registry.item_type(item_id) != "consumable":
-            continue
-        food = registry.get_field(item_id, "food_value", 0.0)
-        if food > best_food:
-            best_food = food
-            best_id = item_id
-
-    if best_id is None:
-        return False
-
-    # Restore hunger
-    hunger.current = min(hunger.maximum, hunger.current + best_food)
-
-    # Also heal a little if the item has a heal value
-    heal = registry.get_field(best_id, "heal", 0.0)
-    if heal > 0:
-        health = world.get(eid, Health)
-        if health:
-            health.current = min(health.maximum, health.current + heal)
-
-    # Consume the item
-    inv.items[best_id] -= 1
-    if inv.items[best_id] <= 0:
-        del inv.items[best_id]
-
-    name = "?"
-    ident = world.get(eid, Identity)
-    if ident:
-        name = ident.name
-    food_name = registry.display_name(best_id)
-    print(f"[NEEDS] {name} ate {food_name} (+{best_food:.0f} hunger)")
-    return True
+    from logic.inventory_ops import consume_best_food
+    return consume_best_food(world, eid)
 
 
 # ── Communal meal — settlement storehouse ────────────────────────────
@@ -182,10 +121,13 @@ def _npc_eat_communal(world, eid: int) -> bool:
     """Settlement NPC eats from the nearest communal storehouse.
 
     Only settlers (faction.group == 'settlers') can use this — the
-    village feeds its own.  Finds a nearby container with food items
-    in the same zone and consumes one communal item (stew > ration >
-    any food).  Returns True if the NPC ate.
+    village feeds its own.  Uses ``world.query_zone()`` to find
+    containers and ``inventory_ops.consume_from_container`` for the
+    actual eating.
     """
+    from logic.inventory_ops import consume_from_container
+    from logic.faction_ops import entity_display_name
+
     faction = world.get(eid, Faction)
     if not faction or faction.group != "settlers":
         return False
@@ -200,61 +142,22 @@ def _npc_eat_communal(world, eid: int) -> bool:
         return False
 
     registry = world.res(ItemRegistry)
+    ent_zone = pos.zone if pos else szp.zone
+    health = world.get(eid, Health)
 
-    # Find settlement containers in the same zone
-    for ceid, cident in world.all_of(Identity):
+    # Find settlement containers in the same zone (zone-indexed)
+    for ceid, cpos, cident in world.query_zone(ent_zone, Position, Identity):
         if cident.kind != "container":
-            continue
-        cpos = world.get(ceid, Position)
-        cszp = world.get(ceid, SubzonePos)
-        ent_zone = pos.zone if pos else szp.zone
-        cont_zone = cpos.zone if cpos else (cszp.zone if cszp else None)
-        if not cont_zone or cont_zone != ent_zone:
             continue
         cinv = world.get(ceid, Inventory)
         if not cinv or not cinv.items:
             continue
 
-        # Take the best communal food from the container
-        best_id = None
-        best_food = 0.0
-        for item_id, qty in cinv.items.items():
-            if qty <= 0:
-                continue
-            if registry:
-                if registry.item_type(item_id) != "consumable":
-                    continue
-                food = registry.get_field(item_id, "food_value", 0.0)
-            else:
-                food = _tun("needs", "fallback_food_value", 25.0) if "food" in item_id or "stew" in item_id or "ration" in item_id else 0.0
-            if food > best_food:
-                best_food = food
-                best_id = item_id
-
-        if best_id is None:
-            continue
-
-        # Eat from the communal supply
-        hunger.current = min(hunger.maximum, hunger.current + best_food)
-
-        if registry:
-            heal = registry.get_field(best_id, "heal", 0.0)
-            if heal > 0:
-                health = world.get(eid, Health)
-                if health:
-                    health.current = min(health.maximum, health.current + heal)
-
-        cinv.items[best_id] -= 1
-        if cinv.items[best_id] <= 0:
-            del cinv.items[best_id]
-
-        name = "?"
-        ident = world.get(eid, Identity)
-        if ident:
-            name = ident.name
-        food_name = registry.display_name(best_id) if registry else best_id
-        print(f"[NEEDS] {name} ate communal {food_name} (+{best_food:.0f} hunger)")
-        return True
+        if consume_from_container(cinv, hunger, registry,
+                                   heal_health=health):
+            name = entity_display_name(world, eid)
+            print(f"[NEEDS] {name} ate communal food")
+            return True
 
     return False
 

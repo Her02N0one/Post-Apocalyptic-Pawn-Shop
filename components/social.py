@@ -18,7 +18,7 @@ class Faction:
     group: str = "neutral"
     disposition: str = "neutral"        # friendly | neutral | hostile
     home_disposition: str = "neutral"   # what to revert to when calm
-    alert_radius: float = 12.0         # tiles — allies within this go hostile
+    alert_radius: float = 150.0       # m — shouting distance for alerts
 
 
 @dataclass

@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 @dataclass
 class CombatStats:
     """Entity that can fight."""
-    damage: float = 10.0       # base damage per hit
-    defense: float = 0.0       # damage reduction
+    damage: float = 10.0       # HP per hit
+    defense: float = 0.0       # HP absorbed per hit
 
 
 @dataclass
@@ -33,12 +33,12 @@ class Projectile:
     ``damage`` is the *total* damage this projectile deals on contact.
     """
     owner_eid: int = -1
-    damage: float = 10.0
-    speed: float = 12.0       # tiles / sec
-    dx: float = 0.0           # normalised direction
+    damage: float = 10.0       # HP
+    speed: float = 12.0        # m/s
+    dx: float = 0.0            # normalised direction (unitless)
     dy: float = 0.0
-    max_range: float = 10.0   # tiles before despawn
-    traveled: float = 0.0     # tiles traveled so far
+    max_range: float = 10.0    # m  (despawn distance)
+    traveled: float = 0.0      # m  (distance flown so far)
     char: str = "."
     color: tuple = (255, 255, 150)
-    radius: float = 0.15      # collision radius (tiles)
+    radius: float = 0.15       # m  (collision radius)

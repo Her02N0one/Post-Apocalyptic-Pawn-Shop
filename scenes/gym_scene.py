@@ -250,7 +250,7 @@ class GymScene(TestScene):
             dx /= length
             dy /= length
 
-        sprint = 2.0 if (keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]) else 1.0
+        sprint = 1.5 if (keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]) else 1.0
 
         vel = w.get(self._player_eid, Velocity)
         player = w.get(self._player_eid, Player)
@@ -335,7 +335,7 @@ class GymScene(TestScene):
         bar.fill((0, 0, 0, 180))
         surface.blit(bar, (0, 0))
 
-        hdr = f"GYM: {self.preset_name}  ({self.map_w}\u00d7{self.map_h})  NPCs: {len(self._npc_eids)}"
+        hdr = f"GYM: {self.preset_name}  ({self.map_w}\u00d7{self.map_h} m)  NPCs: {len(self._npc_eids)}"
         app.draw_text(surface, hdr, 8, 7, (0, 255, 200), app.font_sm)
 
         tags = []
@@ -374,14 +374,14 @@ class GymScene(TestScene):
             pos = app.world.get(self._player_eid, Position)
             vel = app.world.get(self._player_eid, Velocity)
             speed = math.hypot(vel.x, vel.y) if vel else 0.0
-            app.draw_text(surface, f"Pos: ({pos.x:.1f}, {pos.y:.1f})" if pos else "Pos: ?",
+            app.draw_text(surface, f"Pos: ({pos.x:.1f}, {pos.y:.1f}) m" if pos else "Pos: ?",
                           bx + 6, y, (200, 200, 200), app.font_sm)
             y += 14
-            app.draw_text(surface, f"Speed: {speed:.1f} t/s",
+            app.draw_text(surface, f"Speed: {speed:.1f} m/s",
                           bx + 6, y, (200, 200, 200), app.font_sm)
             y += 14
             avg_speed = self._move_dist / max(0.001, self._elapsed)
-            app.draw_text(surface, f"Avg: {avg_speed:.1f} t/s  Dist: {self._move_dist:.0f}",
+            app.draw_text(surface, f"Avg: {avg_speed:.1f} m/s  Dist: {self._move_dist:.0f} m",
                           bx + 6, y, (200, 200, 200), app.font_sm)
             y += 14
             app.draw_text(surface, f"FPS: {int(app.clock.get_fps())}",

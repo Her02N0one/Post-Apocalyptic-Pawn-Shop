@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 
 @dataclass
 class Health:
-    current: float = 100.0
-    maximum: float = 100.0
+    current: float = 100.0     # HP
+    maximum: float = 100.0     # HP
 
 
 @dataclass
@@ -15,15 +15,15 @@ class Hunger:
     """Hunger gauge — drains over time, restored by eating food.
 
     ``current`` runs from 0 (starving) to ``maximum`` (full).
-    ``rate`` is hunger drained per second.
+    ``rate`` is hunger drained per second (hunger/s).
     ``starve_dps`` is HP damage per second when ``current <= 0``.
 
-    Default rate 0.03 ≈ 55 minutes from full to starving.
+    Default rate 0.03/s ≈ 55 minutes from full to starving.
     """
     current: float = 80.0
     maximum: float = 100.0
-    rate: float = 0.03         # hunger / second  (~55 min full→starve)
-    starve_dps: float = 0.3    # HP lost / second when starving
+    rate: float = 0.03         # hunger/s  (~55 min full→starve)
+    starve_dps: float = 0.3    # HP/s  when starving
 
 
 @dataclass

@@ -27,12 +27,14 @@ import math
 from core.ecs import World
 from components import (
     Brain, HomeRange, Position, Velocity, Needs, Hunger, Inventory,
-    Identity, Faction,
+    Identity, Faction, ItemRegistry,
 )
 from core.zone import is_passable, ZONE_PORTALS, ZONE_MAPS
 from logic.ai.perception import find_player
 from logic.ai.steering import move_away, move_toward_pathfind
 from logic.ai.brains import register_brain
+from logic.pathfinding import find_path, path_next_waypoint
+from logic.needs import npc_eat_from_inventory
 from core.tuning import get as _tun
 
 
@@ -148,6 +150,13 @@ def _walk_toward(pos, vel, tx: float, ty: float, speed: float,
     )
 
 
+# ── Food consumption ─────────────────────────────────────────────────
+
+# Canonical eat logic lives in ``logic.needs.npc_eat_from_inventory``.
+# Previously this file had its own _consume_food — removed to avoid
+# 4-way duplication of the same eat-from-inventory algorithm.
+
+
 def _pick_target_for_period(world: World, period: str, zone: str,
                             home_subzone: str):
     """Choose a target subzone for the current schedule period."""
@@ -176,20 +185,22 @@ def _pick_target_for_period(world: World, period: str, zone: str,
 
 
 def _nearby_npc(world: World, eid: int, pos, radius: float):
-    """Find the nearest other friendly NPC with a position."""
+    """Find the nearest other friendly NPC with a position.
+
+    Uses ``world.nearby()`` for O(1) zone-filtered spatial query.
+    """
     best_eid = None
-    best_dist = radius
-    for oid, opos in world.all_of(Position):
-        if oid == eid or opos.zone != pos.zone:
-            continue
-        if not world.has(oid, Brain):
+    best_dist_sq = radius * radius
+    for oid, opos, _brain, dsq in world.nearby(
+        pos.zone, pos.x, pos.y, radius, Position, Brain,
+    ):
+        if oid == eid:
             continue
         fac = world.get(oid, Faction)
         if fac and fac.disposition == "hostile":
             continue
-        d = math.hypot(opos.x - pos.x, opos.y - pos.y)
-        if d < best_dist:
-            best_dist = d
+        if dsq < best_dist_sq:
+            best_dist_sq = dsq
             best_eid = oid
     return best_eid
 
@@ -284,13 +295,21 @@ def _villager_brain(world: World, eid: int, brain: Brain, dt: float,
     if mode == "eat":
         vel.x, vel.y = 0.0, 0.0
         if v.get("eat_until", 0.0) <= game_time:
+            # Consume one food item via canonical eat helper
+            npc_eat_from_inventory(world, eid)
             v["mode"] = "idle"
         return
 
     # ── Forage ───────────────────────────────────────────────────────
     if mode == "forage":
         if v.get("forage_until", 0.0) <= game_time:
-            v["mode"] = "return"
+            # Forage complete — add a food item to inventory
+            if inv is not None:
+                forage_item = _tun("ai.villager", "forage_item", "ration")
+                inv.items[forage_item] = inv.items.get(forage_item, 0) + 1
+            v["mode"] = "eat"
+            eat_pause = _tun("ai.villager", "eat_pause", 2.0)
+            v["eat_until"] = game_time + eat_pause
             return
         forage_spd = _tun("ai.villager", "forage_speed_mult", 1.3)
         _wander_step(patrol, pos, vel, v, dt, speed_mult=forage_spd, game_time=game_time)

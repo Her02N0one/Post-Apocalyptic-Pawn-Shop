@@ -6,6 +6,9 @@ Crime reputation travels NPC-to-NPC through word-of-mouth via the
 WorldMemory system — a witness tells others when they meet at
 subzone checkpoints.
 
+Uses ``world.nearby()`` for O(1) zone-filtered spatial queries and
+``logic.faction_ops`` for all faction mutations.
+
 Public API
 ----------
 ``find_witnesses``       — scan for NPCs who can see the theft
@@ -25,6 +28,10 @@ from components import (
 from components.ai import Threat, AttackConfig, Brain
 from components.simulation import WorldMemory
 from core.tuning import get as _tun
+from core.events import EventBus, CrimeWitnessed
+from logic.faction_ops import (
+    make_hostile, make_flee, entity_display_name,
+)
 
 
 # ── Constants (read from tuning.toml at call-time) ────────────────────
@@ -39,33 +46,23 @@ def find_witnesses(world: Any, zone: str, thief_x: float,
 
     Returns list of witness entity IDs.  Hostile NPCs don't report
     crimes — they'd steal too.  Dead NPCs don't see anything.
+    Uses ``world.nearby()`` for O(1) zone-filtered spatial queries.
     """
-    witnesses: list[int] = []
     if radius is None:
-        radius = _tun("crime", "witness_radius", 8.0)
+        radius = _tun("crime", "witness_radius", 30.0)
 
-    for eid, pos in world.all_of(Position):
-        if pos.zone != zone:
-            continue
+    witnesses: list[int] = []
+    for eid, pos, dsq in world.nearby(zone, thief_x, thief_y, radius,
+                                       Position):
         if world.has(eid, Player):
             continue
-
-        # Must be alive
         health = world.get(eid, Health)
         if health and health.current <= 0:
             continue
-
-        # Must be non-hostile (hostile mobs don't report theft)
         faction = world.get(eid, Faction)
         if faction and faction.disposition == "hostile":
             continue
-
-        # Distance check
-        dx = pos.x - thief_x
-        dy = pos.y - thief_y
-        dist = (dx * dx + dy * dy) ** 0.5
-        if dist <= radius:
-            witnesses.append(eid)
+        witnesses.append(eid)
 
     return witnesses
 
@@ -104,9 +101,11 @@ def report_theft(world: Any, witnesses: list[int], item_id: str,
     armed_saw = False
     witness_names: list[str] = []
 
+    # Track player position for EventBus emission
+    player_pos = world.get(player_eid, Position) if player_eid else None
+
     for weid in witnesses:
-        ident = world.get(weid, Identity)
-        wname = ident.name if ident else "someone"
+        wname = entity_display_name(world, weid)
         witness_names.append(wname)
 
         # Store crime memory on the witness
@@ -125,21 +124,30 @@ def report_theft(world: Any, witnesses: list[int], item_id: str,
             ttl=_tun("crime", "crime_memory_ttl", 1200.0),
         )
 
+        # Emit CrimeWitnessed event for any bus subscribers
+        bus = world.res(EventBus)
+        if bus and player_pos:
+            bus.emit(CrimeWitnessed(
+                criminal_eid=player_eid or 0,
+                witness_eid=weid,
+                crime_type="theft",
+                x=player_pos.x, y=player_pos.y,
+                zone=player_pos.zone,
+            ))
+
         # Is this witness a guard (has AttackConfig + friendly faction)?
         faction = world.get(weid, Faction)
         has_combat = world.has(weid, AttackConfig)
         if has_combat and faction and faction.disposition == "friendly":
             armed_saw = True
-            # Armed witness turns hostile immediately
-            faction.disposition = "hostile"
-            print(f"[CRIME] Armed witness {wname} saw the theft — turning hostile!")
+            make_hostile(world, weid, reason="witnessed theft",
+                         threat_eid=player_eid, game_time=game_time)
             if player_eid is not None:
                 from logic.combat import alert_nearby_faction
                 alert_nearby_faction(world, weid, player_eid)
         else:
-            brain = world.get(weid, Brain)
-            if brain is not None:
-                brain.state["crime_flee_until"] = game_time + _tun("crime", "crime_flee_duration", 20.0)
+            make_flee(world, weid, game_time,
+                      duration=_tun("crime", "crime_flee_duration", 20.0))
 
     if armed_saw:
         return "An armed witness saw you steal! They won't let that slide."

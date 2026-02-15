@@ -1,145 +1,276 @@
-"""scenes/exhibits/lod_exhibit.py — LOD Demo exhibit.
+"""scenes/exhibits/lod_exhibit.py — LOD Transition exhibit.
 
-Scatter NPCs around the arena and visualise LOD tier transitions.
-Click to move the LOD centre.  Entities near the centre are "high",
-further away are "medium".  (Low only happens cross-zone, so it
-can't be shown in a single-arena demo.)
+Demonstrates the full LOD lifecycle: entities start in high-LOD with
+real Position + Brain, get *demoted* to low-LOD (SubzonePos, Brain
+deactivated, events scheduled), then *promoted* back (Position restored,
+Brain reactivated, grace period set).
+
+Two zones are simulated: ``__museum__`` (player zone) and
+``__offscreen__`` (unloaded zone).  A mini SubzoneGraph connects them.
+
+Layout
+------
+Left side  — "Player Zone" with 3 NPCs (high-LOD, coloured green)
+Right side — status panel showing LOD state, SubzonePos, scheduled events
+
+Controls:
+    Space — cycle: setup → demote all → promote all → reset
 """
 
 from __future__ import annotations
-import math
-import random
-import pygame
-from core.app import App
+from typing import TYPE_CHECKING
+
+from scenes.exhibits.base import Exhibit
 from core.constants import TILE_SIZE
 from components import (
-    Position, Velocity, Sprite, Identity, Collider, Facing,
-    Health, Brain, Lod, GameClock,
+    Position, Velocity, Sprite, Identity, Collider, Hurtbox,
+    Facing, Health, CombatStats, Lod, Brain, GameClock,
 )
 from components.ai import HomeRange
 from components.social import Faction
-from logic.tick import tick_systems
-from scenes.exhibits.base import Exhibit
-from scenes.exhibits.drawing import draw_circle_alpha
+from components.simulation import SubzonePos, Home
+from simulation.subzone import SubzoneGraph, SubzoneNode
+from simulation.scheduler import WorldScheduler
+from simulation.lod_transition import promote_entity, demote_entity
 
+if TYPE_CHECKING:
+    import pygame
+    from core.app import App
 
-_ARENA_W = 30
-_ARENA_H = 20
+_ZONE_PLAYER = "__museum__"
+_ZONE_OFFSCREEN = "__offscreen__"
 
 
 class LODExhibit(Exhibit):
-    """LOD tier visualisation demo."""
+    """LOD Transition — promote / demote lifecycle."""
 
-    name = "LOD Demo"
+    name = "LOD"
+    category = "Simulation"
+    description = (
+        "LOD Transition Lifecycle\n"
+        "\n"
+        "Demonstrates the Level-of-Detail system:\n"
+        "\n"
+        " HIGH LOD  — real Position + active Brain (green)\n"
+        " LOW  LOD  — SubzonePos only, Brain off (red)\n"
+        "             scheduled events replace simulation\n"
+        "\n"
+        "A tiny SubzoneGraph (plaza -> market -> ruins_east)\n"
+        "connects two zones.  Press Space to cycle through\n"
+        "the full promote / demote lifecycle:\n"
+        "\n"
+        " 1. All NPCs spawn in HIGH LOD (green, active)\n"
+        " 2. DEMOTE: Position removed, SubzonePos assigned,\n"
+        "    Brain.active = False, scheduler events queued\n"
+        " 3. PROMOTE: Position restored, Brain reactivated,\n"
+        "    grace period of 0.5 s before next demotion\n"
+        "\n"
+        "Systems:  promote_entity  demote_entity  WorldScheduler\n"
+        "Controls: [Space] cycle phases / reset"
+    )
+    default_debug = {"positions": True, "brain": True}
 
     def __init__(self):
-        self._lod_radius = 8.0
-        self._lod_center: tuple[float, float] = (_ARENA_W / 2.0, _ARENA_H / 2.0)
+        self._graph: SubzoneGraph | None = None
+        self._scheduler: WorldScheduler | None = None
+        self._phase = "high"   # high → demoted → promoted
+        self._log: list[str] = []
 
-    # ── Lifecycle ────────────────────────────────────────────────────
+    # ── setup ────────────────────────────────────────────────────────
 
-    def setup(self, app: App, zone: str, tiles: list[list[int]]) -> list[int]:
+    def setup(self, app, zone, tiles):
         eids: list[int] = []
-        w = app.world
-        for i in range(15):
-            x = random.uniform(3, _ARENA_W - 3)
-            y = random.uniform(3, _ARENA_H - 3)
-            eid = w.spawn()
-            w.add(eid, Position(x=x, y=y, zone=zone))
-            w.add(eid, Velocity())
-            w.add(eid, Sprite(char="N", color=(150, 200, 180)))
-            w.add(eid, Identity(name=f"NPC-{i+1}", kind="npc"))
-            w.add(eid, Collider())
-            w.add(eid, Facing())
-            w.add(eid, Health(current=100, maximum=100))
-            w.add(eid, Lod(level="medium"))
-            w.add(eid, Brain(kind="wander", active=True))
-            w.add(eid, HomeRange(origin_x=x, origin_y=y, radius=6.0, speed=2.0))
-            w.add(eid, Faction(group="neutral", disposition="neutral",
-                               home_disposition="neutral"))
-            w.zone_add(eid, zone)
+        self._phase = "high"
+        self._log = ["All NPCs spawned in HIGH LOD"]
+
+        # Build a tiny subzone graph
+        graph = SubzoneGraph()
+        graph.add_node(SubzoneNode(
+            id="plaza", zone=_ZONE_PLAYER,
+            anchor=(8, 8), shelter=True,
+        ))
+        graph.add_node(SubzoneNode(
+            id="market", zone=_ZONE_PLAYER,
+            anchor=(20, 10), shelter=False,
+        ))
+        graph.add_node(SubzoneNode(
+            id="ruins_east", zone=_ZONE_OFFSCREEN,
+            anchor=(10, 10), shelter=False, threat_level=0.5,
+        ))
+        graph.add_edge("plaza", "market", 3.0)
+        graph.add_edge("market", "ruins_east", 8.0)
+        self._graph = graph
+        app.world.set_res(graph)
+
+        sched = WorldScheduler()
+        self._scheduler = sched
+        app.world.set_res(sched)
+
+        for name, x, y, kind in [
+            ("Guard",      8.0,  8.0, "guard"),
+            ("Trader",    14.0, 10.0, "villager"),
+            ("Scavenger", 20.0, 10.0, "wander"),
+        ]:
+            eid = self._spawn_npc(app, zone, name, x, y, kind)
             eids.append(eid)
-        self._lod_center = (_ARENA_W / 2.0, _ARENA_H / 2.0)
+
         return eids
 
-    # ── Per-frame ────────────────────────────────────────────────────
-
-    def update(self, app: App, dt: float, tiles: list[list[int]],
-               eids: list[int]):
-        cx, cy = self._lod_center
+    def _spawn_npc(self, app, zone, name, x, y, kind):
         w = app.world
+        eid = w.spawn()
+        w.add(eid, Position(x=x, y=y, zone=zone))
+        w.add(eid, Velocity())
+        w.add(eid, Sprite(char=name[0], color=(100, 220, 100)))
+        w.add(eid, Identity(name=name, kind="npc"))
+        w.add(eid, Collider())
+        w.add(eid, Hurtbox())
+        w.add(eid, Facing())
+        w.add(eid, Health(current=80, maximum=100))
+        w.add(eid, CombatStats(damage=8, defense=3))
+        w.add(eid, Lod(level="high"))
+        w.add(eid, Brain(kind=kind, active=True))
+        w.add(eid, HomeRange(origin_x=x, origin_y=y, radius=6.0, speed=2.0))
+        w.add(eid, Faction(group="settlers", disposition="neutral",
+                           home_disposition="neutral"))
+        w.add(eid, Home(zone=zone, subzone="plaza"))
+        w.zone_add(eid, zone)
+        return eid
+
+    # ── controls ─────────────────────────────────────────────────────
+
+    def on_space(self, app):
+        if self._phase == "high":
+            self._do_demote(app)
+            return None
+        elif self._phase == "demoted":
+            self._do_promote(app)
+            return None
+        else:
+            return "reset"
+
+    def _do_demote(self, app):
+        w = app.world
+        clock = w.res(GameClock)
+        gt = clock.time if clock else 0.0
+        demoted = 0
+        for eid, _pos in list(w.all_of(Position)):
+            if w.get(eid, Identity) and w.get(eid, Brain):
+                if demote_entity(w, eid, self._graph, self._scheduler, gt):
+                    demoted += 1
+        self._phase = "demoted"
+        pending = self._scheduler.pending_count()
+        self._log.append(f"Demoted {demoted} NPCs → low LOD")
+        self._log.append(f"  Brain.active = False")
+        self._log.append(f"  Position → SubzonePos")
+        self._log.append(f"  {pending} scheduler events queued")
+
+    def _do_promote(self, app):
+        w = app.world
+        clock = w.res(GameClock)
+        gt = clock.time if clock else 0.0
+        promoted = 0
+        for eid, szp in list(w.all_of(SubzonePos)):
+            ident = w.get(eid, Identity)
+            if ident and ident.kind == "npc":
+                if promote_entity(w, eid, self._graph, self._scheduler, gt):
+                    promoted += 1
+        self._phase = "promoted"
+        self._log.append(f"Promoted {promoted} NPCs → high LOD")
+        self._log.append(f"  Brain.active = True")
+        self._log.append(f"  SubzonePos → Position")
+        self._log.append(f"  Grace period: 0.5 s")
+
+    # ── update ───────────────────────────────────────────────────────
+
+    def update(self, app, dt, tiles, eids):
+        if self._phase == "demoted" and self._scheduler:
+            clock = app.world.res(GameClock)
+            if clock:
+                self._scheduler.tick(app.world, clock.time)
+
+    # ── draw ─────────────────────────────────────────────────────────
+
+    def draw(self, surface, ox, oy, app, eids, tile_px=TILE_SIZE, flags=None):
+        import pygame
+
+        app.draw_text(surface, "PLAYER ZONE", ox + 4 * tile_px, oy + 1 * tile_px,
+                      (0, 200, 160), app.font_sm)
+
+        if self._graph:
+            for node in self._graph.nodes.values():
+                if node.zone != _ZONE_PLAYER:
+                    continue
+                ax, ay = node.anchor
+                cx = ox + ax * tile_px + tile_px // 2
+                cy = oy + ay * tile_px + tile_px // 2
+                pygame.draw.circle(surface, (60, 120, 100), (cx, cy), 12, 1)
+                app.draw_text(surface, node.id, cx - 14, cy + 14,
+                              (80, 160, 130), app.font_sm)
+
+        # Status panel
+        w = app.world
+        panel_x = ox + 22 * tile_px
+        py = oy + 2 * tile_px
+
+        app.draw_text(surface, f"Phase: {self._phase.upper()}", panel_x, py,
+                      (255, 255, 255), app.font_sm)
+        py += 16
+
         for eid in eids:
             if not w.alive(eid):
                 continue
-            pos = w.get(eid, Position)
+            ident = w.get(eid, Identity)
+            name = ident.name if ident else "?"
             lod = w.get(eid, Lod)
             brain = w.get(eid, Brain)
-            if not pos or not lod:
-                continue
-            d = math.hypot(pos.x - cx, pos.y - cy)
-            lod.level = "high" if d <= self._lod_radius else "medium"
-            if brain and not brain.active:
-                brain.active = True
+            pos = w.get(eid, Position)
+            szp = w.get(eid, SubzonePos)
 
-        tick_systems(w, dt, tiles, skip_lod=True, skip_needs=True)
+            level = lod.level if lod else "?"
+            active = brain.active if brain else False
+            loc = (f"({pos.x:.0f},{pos.y:.0f}) m" if pos
+                   else f"sz:{szp.subzone}" if szp else "?")
 
-    def handle_event(self, event: pygame.event.Event, app: App,
-                     mouse_to_tile) -> bool:
-        if event.type == pygame.MOUSEBUTTONDOWN:
-            rc = mouse_to_tile()
-            if rc:
-                row, col = rc
-                self._lod_center = (col + 0.5, row + 0.5)
-                return True
-        return False
+            color = ((100, 220, 100) if level == "high"
+                     else (220, 180, 60) if level == "medium"
+                     else (220, 80, 80))
 
-    def on_space(self, app: App) -> str | None:
-        return "reset"
+            py += 4
+            app.draw_text(surface, name, panel_x, py, color, app.font_sm)
+            py += 14
+            app.draw_text(surface, f"  LOD:{level} brain:{'ON' if active else 'OFF'}",
+                          panel_x, py, (160, 160, 160), app.font_sm)
+            py += 14
+            app.draw_text(surface, f"  loc:{loc}", panel_x, py,
+                          (130, 130, 130), app.font_sm)
+            py += 14
 
-    # ── Drawing ──────────────────────────────────────────────────────
+        if self._scheduler:
+            py += 8
+            pending = self._scheduler.pending_count()
+            app.draw_text(surface, f"Scheduler: {pending} events",
+                          panel_x, py, (180, 180, 100), app.font_sm)
+            py += 14
 
-    def draw(self, surface: pygame.Surface, ox: int, oy: int,
-             app: App, eids: list[int]):
-        self._draw_lod_rings(surface, ox, oy)
+        py += 8
+        app.draw_text(surface, "--- Log ---", panel_x, py,
+                      (120, 120, 120), app.font_sm)
+        py += 14
+        for line in self._log[-8:]:
+            app.draw_text(surface, line, panel_x, py,
+                          (160, 160, 160), app.font_sm)
+            py += 13
 
-    def _draw_lod_rings(self, surface: pygame.Surface, ox: int, oy: int):
-        cx, cy = self._lod_center
-        sx = ox + int(cx * TILE_SIZE)
-        sy = oy + int(cy * TILE_SIZE)
-
-        # High-LOD ring (green)
-        r_high = int(self._lod_radius * TILE_SIZE)
-        draw_circle_alpha(surface, (0, 255, 100, 25), sx, sy, r_high)
-        pygame.draw.circle(surface, (0, 255, 100), (sx, sy), r_high, 1)
-
-        # Medium-LOD ring (yellow)
-        r_med = int(self._lod_radius * 2 * TILE_SIZE)
-        draw_circle_alpha(surface, (255, 200, 50, 15), sx, sy, r_med)
-        pygame.draw.circle(surface, (255, 200, 50), (sx, sy), r_med, 1)
-
-        # Center marker
-        pygame.draw.circle(surface, (255, 255, 255), (sx, sy), 4)
-
-    def draw_entity_overlay(self, surface: pygame.Surface,
-                            sx: int, sy: int, eid: int,
-                            app: App) -> tuple[int, int, int] | None:
-        """Override sprite colour with LOD-tier colouring."""
+    def draw_entity_overlay(self, surface, sx, sy, eid, app):
         lod = app.world.get(eid, Lod)
         if not lod:
             return None
-        lod_color = {
-            "high":   (0, 255, 100),
-            "medium": (255, 200, 50),
-            "low":    (255, 80, 80),
-        }.get(lod.level, (180, 180, 180))
-        # Tier letter next to sprite
-        app.draw_text(surface, f"{lod.level[0].upper()}", sx + 22, sy - 2,
-                      color=lod_color, font=app.font_sm)
-        return lod_color
+        if lod.level == "high":
+            return (100, 220, 100)
+        elif lod.level == "medium":
+            return (220, 180, 60)
+        return (220, 80, 80)
 
-    def info_text(self, app: App, eids: list[int]) -> str:
-        return (f"LOD Demo: Click to move LOD center. "
-                f"Radius: {self._lod_radius:.0f}  [Space] reset")
-
-
-
+    def info_text(self, app, eids):
+        return f"[Space] {self._phase} -> next  |  LOD lifecycle: high -> demote -> promote"

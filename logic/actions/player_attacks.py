@@ -7,6 +7,7 @@ from components import (
     Player, Position, CombatStats, Equipment, Facing, Projectile, ItemRegistry,
 )
 from logic.combat import attack_entity, get_hitbox_targets
+from logic.combat.attacks import get_entity_weapon_stats
 from logic.actions import (
     AttackResult, FIST_REACH, PLAYER_SIZE,
     weapon_rect_for, mouse_world_pos, _facing_from_angle,
@@ -16,15 +17,16 @@ from logic.actions import (
 # ── Weapon stats ────────────────────────────────────────────────────
 
 def _get_weapon_stats(app, player_eid: int) -> tuple[float, float, str]:
-    """Return (bonus_damage, reach, style) from equipped weapon."""
-    equip = app.world.get(player_eid, Equipment)
-    registry = app.world.res(ItemRegistry)
-    if equip and equip.weapon and registry:
-        dmg = registry.get_field(equip.weapon, "damage", 0.0)
-        rch = registry.get_field(equip.weapon, "reach", 1.5)
-        style = registry.get_field(equip.weapon, "style", "melee")
-        return dmg, rch, style
-    return 0.0, FIST_REACH, "melee"
+    """Return (bonus_damage, reach, style) from equipped weapon.
+
+    Delegates to ``get_entity_weapon_stats`` — the canonical source.
+    The only difference is the fist-reach fallback for players.
+    """
+    dmg, rch, style = get_entity_weapon_stats(app.world, player_eid)
+    if dmg == 0.0 and rch == 1.0 and style == "melee":
+        # No weapon equipped — use player-specific fist reach
+        return 0.0, FIST_REACH, "melee"
+    return dmg, rch, style
 
 
 # ── Attack dispatcher (called on left-click or X key) ──────────────

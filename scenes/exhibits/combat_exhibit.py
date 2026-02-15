@@ -21,14 +21,35 @@ from logic.combat import handle_death, npc_melee_attack, npc_ranged_attack
 from scenes.exhibits.base import Exhibit
 from scenes.exhibits.drawing import spawn_combat_npc
 
-_ARENA_W = 30
-_ARENA_H = 20
-
 
 class CombatExhibit(Exhibit):
     """Tab 1 — CombatStats demo."""
 
-    name = "CombatStats"
+    name = "Combat"
+    category = "Combat"
+    description = (
+        "Team Combat Arena\n"
+        "\n"
+        "Two factions (Blue vs Red, 5 per side) battle across\n"
+        "an 80 × 50 m arena with scattered cover blocks.\n"
+        "All units have realistic 5 km vision — in this open\n"
+        "arena everyone sees everyone instantly.  Ranged units\n"
+        "open fire immediately while melee close the ~50 m gap.\n"
+        "\n"
+        "What to observe:\n"
+        " - Ranged units detect and fire before melee engages\n"
+        " - Melee units advance through cover toward the enemy\n"
+        " - Staggered speeds create a natural battle front\n"
+        " - NPCs flee when HP drops below their flee threshold\n"
+        " - Vision cones (F5) and LOS lines show targeting\n"
+        "\n"
+        "Systems:  tick_ai  movement  projectiles  VisionCone\n"
+        "          CombatStats  Threat  AttackConfig  EventBus\n"
+        "Controls: [Space] start / pause / reset"
+    )
+    arena_w = 80
+    arena_h = 50
+    default_debug = {"brain": True, "vision": True}
 
     def __init__(self):
         self.running = False
@@ -54,66 +75,91 @@ class CombatExhibit(Exhibit):
         bus.subscribe("EntityDied", _on_entity_died)
         bus.subscribe("AttackIntent", _on_attack_intent)
 
-        # Cover blocks
+        # Cover blocks — scattered across the battlefield
         cover_positions = [
-            (6, 14), (6, 15),
-            (9, 12), (9, 13), (9, 16), (9, 17),
-            (13, 14), (13, 15),
+            # Left approach (cols 22-30)
+            (15, 24), (16, 24),
+            (24, 27), (25, 27), (26, 27),
+            (34, 24), (35, 24),
+            # Mid-left (cols 32-38)
+            (10, 35), (11, 35),
+            (20, 33), (20, 34), (21, 33), (21, 34),
+            (30, 33), (30, 34), (31, 33), (31, 34),
+            (40, 35), (41, 35),
+            # Mid-right (cols 42-48)
+            (10, 45), (11, 45),
+            (20, 46), (20, 47), (21, 46), (21, 47),
+            (30, 46), (30, 47), (31, 46), (31, 47),
+            (40, 45), (41, 45),
+            # Right approach (cols 52-58)
+            (15, 55), (16, 55),
+            (24, 53), (25, 53), (26, 53),
+            (34, 55), (35, 55),
         ]
         for r, c in cover_positions:
-            if 0 < r < _ARENA_H - 1 and 0 < c < _ARENA_W - 1:
+            if 0 < r < len(tiles) - 1 and 0 < c < len(tiles[0]) - 1:
                 tiles[r][c] = TILE_WALL
         ZONE_MAPS[zone] = tiles
 
         eids: list[int] = []
 
-        # Blue team
-        for name, x, y, hp, defense in [
-            ("Blue Tank",    4.0,  5.0, 150, 40),
-            ("Blue Fighter", 4.0, 14.0, 100, 20),
+        # ── Blue team (left side) ────────────────────────────────────
+        for name, x, y, hp, defense, speed in [
+            ("Blue Vanguard",  15.0, 12.0, 120, 20, 3.2),
+            ("Blue Tank",      12.0, 25.0, 180, 40, 2.5),
+            ("Blue Skirmisher", 15.0, 38.0, 100, 15, 3.0),
         ]:
             eid = spawn_combat_npc(
                 app, zone, name, "hostile_melee", x, y, (80, 140, 255),
                 "blue_team", hp=hp, defense=defense,
-                damage=15, aggro=24.0, atk_range=1.2, cooldown=0.6,
-                flee_threshold=0.15, speed=2.5,
-                fov_degrees=120.0, view_distance=22.0, peripheral_range=5.0,
+                damage=15, aggro=5000.0, atk_range=1.2, cooldown=0.6,
+                flee_threshold=0.15, speed=speed,
+                fov_degrees=120.0, view_distance=5000.0, peripheral_range=10.0,
                 initial_facing="right")
             eids.append(eid)
 
-        eid = spawn_combat_npc(
-            app, zone, "Blue Sniper", "hostile_ranged", 3.0, 10.0,
-            (100, 160, 255), "blue_team", hp=70, defense=5,
-            damage=20, aggro=28.0, atk_range=10.0, cooldown=0.8,
-            attack_type="ranged", flee_threshold=0.3, speed=2.0,
-            accuracy=0.95, proj_speed=18.0,
-            fov_degrees=90.0, view_distance=26.0, peripheral_range=5.0,
-            initial_facing="right")
-        eids.append(eid)
+        for name, x, y, hp, defense, speed, acc, pspd in [
+            ("Blue Sniper", 8.0, 18.0, 70, 5, 2.0, 0.90, 18.0),
+            ("Blue Gunner", 8.0, 32.0, 80, 8, 2.2, 0.80, 16.0),
+        ]:
+            eid = spawn_combat_npc(
+                app, zone, name, "hostile_ranged", x, y,
+                (100, 160, 255), "blue_team", hp=hp, defense=defense,
+                damage=20, aggro=5000.0, atk_range=12.0, cooldown=0.8,
+                attack_type="ranged", flee_threshold=0.3, speed=speed,
+                accuracy=acc, proj_speed=pspd,
+                fov_degrees=90.0, view_distance=5000.0, peripheral_range=10.0,
+                initial_facing="right")
+            eids.append(eid)
 
-        # Red team
-        for name, x, y, hp, defense in [
-            ("Red Brute",   25.0,  5.0, 130, 30),
-            ("Red Brawler", 25.0, 14.0, 100, 25),
+        # ── Red team (right side) ────────────────────────────────────
+        for name, x, y, hp, defense, speed in [
+            ("Red Berserker", 65.0, 12.0, 110, 15, 3.3),
+            ("Red Brute",     68.0, 25.0, 160, 35, 2.6),
+            ("Red Brawler",   65.0, 38.0, 100, 20, 3.0),
         ]:
             eid = spawn_combat_npc(
                 app, zone, name, "hostile_melee", x, y, (255, 80, 80),
                 "red_team", hp=hp, defense=defense,
-                damage=18, aggro=24.0, atk_range=1.2, cooldown=0.5,
-                flee_threshold=0.15, speed=2.8,
-                fov_degrees=120.0, view_distance=22.0, peripheral_range=5.0,
+                damage=18, aggro=5000.0, atk_range=1.2, cooldown=0.5,
+                flee_threshold=0.15, speed=speed,
+                fov_degrees=120.0, view_distance=5000.0, peripheral_range=10.0,
                 initial_facing="left")
             eids.append(eid)
 
-        eid = spawn_combat_npc(
-            app, zone, "Red Archer", "hostile_ranged", 26.0, 10.0,
-            (255, 120, 100), "red_team", hp=60, defense=5,
-            damage=15, aggro=28.0, atk_range=9.0, cooldown=0.7,
-            attack_type="ranged", flee_threshold=0.35, speed=2.2,
-            accuracy=0.88, proj_speed=14.0,
-            fov_degrees=90.0, view_distance=26.0, peripheral_range=5.0,
-            initial_facing="left")
-        eids.append(eid)
+        for name, x, y, hp, defense, speed, acc, pspd in [
+            ("Red Archer",   72.0, 18.0, 60, 5, 2.2, 0.85, 14.0),
+            ("Red Marksman", 72.0, 32.0, 75, 8, 2.0, 0.88, 16.0),
+        ]:
+            eid = spawn_combat_npc(
+                app, zone, name, "hostile_ranged", x, y,
+                (255, 120, 100), "red_team", hp=hp, defense=defense,
+                damage=15, aggro=5000.0, atk_range=11.0, cooldown=0.7,
+                attack_type="ranged", flee_threshold=0.35, speed=speed,
+                accuracy=acc, proj_speed=pspd,
+                fov_degrees=90.0, view_distance=5000.0, peripheral_range=10.0,
+                initial_facing="left")
+            eids.append(eid)
 
         return eids
 
@@ -137,22 +183,25 @@ class CombatExhibit(Exhibit):
     # ── Drawing ──────────────────────────────────────────────────────
 
     def draw(self, surface: pygame.Surface, ox: int, oy: int,
-             app: App, eids: list[int]):
-        self._draw_vision_cones(surface, ox, oy, app, eids)
-        self._draw_projectiles(surface, ox, oy, app)
+             app: App, eids: list[int],
+             tile_px: int = TILE_SIZE, flags=None):
+        if not flags or flags.vision:
+            self._draw_vision_cones(surface, ox, oy, app, eids, tile_px)
+        self._draw_projectiles(surface, ox, oy, app, tile_px)
 
     def _draw_projectiles(self, surface: pygame.Surface, ox: int, oy: int,
-                          app: App):
+                          app: App, tile_px: int = TILE_SIZE):
         for _p_eid, p_pos, proj in app.world.query(Position, Projectile):
             if p_pos.zone != self._zone:
                 continue
-            px = ox + int(p_pos.x * TILE_SIZE)
-            py = oy + int(p_pos.y * TILE_SIZE)
+            px = ox + int(p_pos.x * tile_px)
+            py = oy + int(p_pos.y * tile_px)
             app.draw_text(surface, proj.char, px - 2, py - 4,
                           color=proj.color, font=app.font_lg)
 
     def _draw_vision_cones(self, surface: pygame.Surface, ox: int, oy: int,
-                           app: App, eids: list[int]):
+                           app: App, eids: list[int],
+                           tile_px: int = TILE_SIZE):
         for eid in eids:
             if not app.world.alive(eid):
                 continue
@@ -162,8 +211,8 @@ class CombatExhibit(Exhibit):
             if not pos or not facing or not cone:
                 continue
 
-            cx = ox + int(pos.x * TILE_SIZE) + TILE_SIZE // 2
-            cy = oy + int(pos.y * TILE_SIZE) + TILE_SIZE // 2
+            cx = ox + int(pos.x * tile_px) + tile_px // 2
+            cy = oy + int(pos.y * tile_px) + tile_px // 2
 
             fac = app.world.get(eid, Faction)
             if fac and fac.group == "blue_team":
@@ -189,7 +238,7 @@ class CombatExhibit(Exhibit):
                     face_angle = facing_to_angle(facing.direction)
 
             half_fov = math.radians(cone.fov_degrees / 2.0)
-            ind_len = TILE_SIZE + 6
+            ind_len = tile_px + 6
 
             # FOV edge lines
             for sign in (-1, 1):
@@ -213,8 +262,8 @@ class CombatExhibit(Exhibit):
             ty = cy + int(math.sin(face_angle) * tip_len)
             pygame.draw.line(surface, (255, 255, 255), (cx, cy), (tx, ty), 2)
 
-            # Peripheral ring
-            periph_px = int(cone.peripheral_range * TILE_SIZE)
+            # Peripheral ring (10 m = 320 px — fine as an outline)
+            periph_px = min(int(cone.peripheral_range * tile_px), 500)
             if periph_px > 2:
                 pygame.draw.circle(surface, line_color, (cx, cy), periph_px, 1)
 
@@ -223,8 +272,8 @@ class CombatExhibit(Exhibit):
                 cs2 = brain.state.get("combat", {})
                 tp2 = cs2.get("p_pos")
                 if tp2 and cs2.get("mode") in ("chase", "attack"):
-                    tpx = ox + int(tp2[0] * TILE_SIZE) + TILE_SIZE // 2
-                    tpy = oy + int(tp2[1] * TILE_SIZE) + TILE_SIZE // 2
+                    tpx = ox + int(tp2[0] * tile_px) + tile_px // 2
+                    tpy = oy + int(tp2[1] * tile_px) + tile_px // 2
                     blocked = cs2.get("_los_blocked", False)
                     los_color = (255, 60, 60) if blocked else (60, 255, 60)
                     pygame.draw.line(surface, los_color, (cx, cy), (tpx, tpy), 1)
@@ -240,5 +289,5 @@ class CombatExhibit(Exhibit):
                   if app.world.alive(e) and app.world.has(e, Faction)
                   and app.world.get(e, Faction).group == "red_team")
         action = "pause" if self.running else "start"
-        return (f"CombatStats: {status}  Blue:{blue} vs Red:{red}  "
+        return (f"Combat: {status}  Blue:{blue} vs Red:{red}  "
                 f"Alive:{alive}/{len(eids)}  [Space] {action}")

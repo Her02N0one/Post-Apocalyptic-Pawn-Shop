@@ -45,6 +45,47 @@ class World:
         """Return the set of living entity IDs in *zone* (fast O(1) lookup)."""
         return self._zone_index.get(zone, set()) - self._dead
 
+    # -- Spatial queries (use zone index for O(1) zone lookup) --
+
+    def query_zone(self, zone: str, *types: type) -> Iterator[tuple]:
+        """Yield ``(eid, comp1, comp2, ...)`` for zone-filtered entities.
+
+        Like ``query()`` but only examines entities registered in *zone*,
+        avoiding the full table scan.
+        """
+        eids = self.zone_entities(zone)
+        if not eids or not types:
+            return
+        # Ensure every eid has all required component types
+        stores = [(t, self._stores.get(t, {})) for t in types]
+        for eid in eids:
+            if all(eid in s for _, s in stores):
+                yield (eid, *(s[eid] for _, s in stores))
+
+    def nearby(self, zone: str, x: float, y: float, radius: float,
+               *types: type) -> Iterator[tuple]:
+        """Yield ``(eid, comp1, comp2, ..., dist_sq)`` within *radius*.
+
+        Zone-filtered, distance-filtered.  The last element of each
+        tuple is the squared distance so callers can sort/compare
+        without an extra sqrt.
+
+        Usage::
+
+            for eid, pos, health, dsq in world.nearby("town", 5, 3, 10, Position, Health):
+                ...
+
+        """
+        r_sq = radius * radius
+        for result in self.query_zone(zone, *types):
+            eid = result[0]
+            pos = result[1]  # first type should be Position
+            dx = pos.x - x
+            dy = pos.y - y
+            dsq = dx * dx + dy * dy
+            if dsq <= r_sq:
+                yield (*result, dsq)
+
     # -- Entities --
 
     def spawn(self) -> int:

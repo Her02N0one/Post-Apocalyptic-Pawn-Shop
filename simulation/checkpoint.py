@@ -372,11 +372,9 @@ def _check_guard_crime_reaction(world: Any, eid: int,
 
     crimes = wmem.query_prefix("crime:", game_time, stale_ok=False)
     if crimes:
-        faction.disposition = "hostile"
-        ident = world.get(eid, Identity)
-        name = ident.name if ident else f"guard_{eid}"
-        print(f"[CRIME] {name} learned of player crimes via word-of-mouth"
-              f" — turning hostile!")
+        from logic.faction_ops import make_hostile
+        make_hostile(world, eid, reason="learned crimes via word-of-mouth",
+                     game_time=game_time)
 
 
 def _log_awareness(world: Any, eid: int, other_eid: int,

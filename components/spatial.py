@@ -1,4 +1,7 @@
-"""components.spatial — Position, movement, and collision shapes."""
+"""components.spatial — Position, movement, and collision shapes.
+
+All coordinates and dimensions are in metres (1 tile = 1 m).
+"""
 
 from __future__ import annotations
 from dataclasses import dataclass
@@ -6,21 +9,21 @@ from dataclasses import dataclass
 
 @dataclass
 class Position:
-    x: float = 0.0
-    y: float = 0.0
+    x: float = 0.0        # m
+    y: float = 0.0        # m
     zone: str = "overworld"
 
 
 @dataclass
 class Velocity:
-    x: float = 0.0
-    y: float = 0.0
+    x: float = 0.0        # m/s
+    y: float = 0.0        # m/s
 
 
 @dataclass
 class Collider:
-    width: float = 0.8
-    height: float = 0.8
+    width: float = 0.8    # m
+    height: float = 0.8   # m
     solid: bool = True
 
 
@@ -39,9 +42,9 @@ class Hurtbox:
     """Axis-aligned box that can receive damage, offset from Position.
 
     The final world-space rect is:
-        (pos.x + ox, pos.y + oy, w, h)   — in tile units
+        (pos.x + ox, pos.y + oy, w, h)   — in metres
     """
-    ox: float = 0.0
-    oy: float = 0.0
-    w: float = 0.8
-    h: float = 0.8
+    ox: float = 0.0    # m
+    oy: float = 0.0    # m
+    w: float = 0.8     # m
+    h: float = 0.8     # m

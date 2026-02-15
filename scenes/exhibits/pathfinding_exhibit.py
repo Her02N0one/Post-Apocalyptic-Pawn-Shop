@@ -13,14 +13,33 @@ from logic.pathfinding import find_path
 from scenes.exhibits.base import Exhibit
 from scenes.exhibits.drawing import draw_diamond
 
-_ARENA_W = 30
-_ARENA_H = 20
-
 
 class PathfindingExhibit(Exhibit):
     """Tab 3 — Pathfinding demo."""
 
     name = "Pathfinding"
+    category = "Navigation"
+    description = (
+        "A* Pathfinding Sandbox\n"
+        "\n"
+        "Click to paint walls, set start/goal markers, and\n"
+        "watch the A* pathfinder work in real time.  The path\n"
+        "is recalculated whenever walls change.\n"
+        "\n"
+        "Pre-built walls create corridors and chokepoints to\n"
+        "demonstrate how pathfinding navigates complex layouts.\n"
+        "\n"
+        "What to observe:\n"
+        " - Path (cyan line) avoids walls and finds shortest route\n"
+        " - Calculation time shown in ms (bottom bar)\n"
+        " - Node count shows path complexity\n"
+        "\n"
+        "Controls:\n"
+        " LMB          — paint / erase walls\n"
+        " Shift+LMB    — set start point\n"
+        " RMB          — set goal point\n"
+        " [Space]      — clear and reset"
+    )
 
     def __init__(self):
         self._pf_start: tuple[float, float] | None = None
@@ -102,18 +121,19 @@ class PathfindingExhibit(Exhibit):
         return False
 
     def draw(self, surface: pygame.Surface, ox: int, oy: int,
-             app: App, eids: list[int]):
+             app: App, eids: list[int],
+             tile_px: int = TILE_SIZE, flags=None):
         # Start marker
         if self._pf_start:
-            sx = ox + int(self._pf_start[0] * TILE_SIZE)
-            sy = oy + int(self._pf_start[1] * TILE_SIZE)
+            sx = ox + int(self._pf_start[0] * tile_px)
+            sy = oy + int(self._pf_start[1] * tile_px)
             pygame.draw.circle(surface, (0, 255, 100), (sx, sy), 5)
             app.draw_text(surface, "S", sx - 3, sy - 12, (0, 255, 100), app.font_sm)
 
         # Goal marker
         if self._pf_goal:
-            gx = ox + int(self._pf_goal[0] * TILE_SIZE)
-            gy = oy + int(self._pf_goal[1] * TILE_SIZE)
+            gx = ox + int(self._pf_goal[0] * tile_px)
+            gy = oy + int(self._pf_goal[1] * tile_px)
             draw_diamond(surface, (255, 50, 50), gx, gy, 5)
             app.draw_text(surface, "G", gx - 3, gy - 12, (255, 50, 50), app.font_sm)
 
@@ -121,11 +141,11 @@ class PathfindingExhibit(Exhibit):
         if self._pf_path:
             prev = None
             if self._pf_start:
-                prev = (ox + int(self._pf_start[0] * TILE_SIZE),
-                        oy + int(self._pf_start[1] * TILE_SIZE))
+                prev = (ox + int(self._pf_start[0] * tile_px),
+                        oy + int(self._pf_start[1] * tile_px))
             for wx, wy in self._pf_path:
-                wpx = ox + int(wx * TILE_SIZE)
-                wpy = oy + int(wy * TILE_SIZE)
+                wpx = ox + int(wx * tile_px)
+                wpy = oy + int(wy * tile_px)
                 if prev:
                     pygame.draw.line(surface, (0, 200, 255), prev, (wpx, wpy), 2)
                 pygame.draw.circle(surface, (0, 200, 255), (wpx, wpy), 3)

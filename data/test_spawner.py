@@ -133,7 +133,7 @@ def spawn_test_dummy(
     world.zone_add(eid, zone)
     world.add(eid, Sprite(char=char, color=color, layer=5))
     world.add(eid, Health(current=hp, maximum=hp))
-    world.add(eid, Combat(damage=damage, defense=defense))
+    world.add(eid, CombatStats(damage=damage, defense=defense))
     world.add(eid, Collider())
     world.add(eid, Hurtbox())
     world.add(eid, Velocity())

@@ -34,10 +34,10 @@ def player_interact_nearby(app):
 
     # Find nearest interactable entity within 2.5 tiles
     best = None
-    best_dist = 2.5
-    for eid, pos in app.world.all_of(Position):
-        if pos.zone != player_pos.zone:
-            continue
+    best_dist_sq = 2.5 * 2.5
+    for eid, pos, dsq in app.world.nearby(
+        player_pos.zone, player_pos.x, player_pos.y, 2.5, Position,
+    ):
         if app.world.has(eid, Player):
             continue
         # Must be interactable: Dialogue, Loot, LootTableRef, or container Inventory
@@ -49,12 +49,9 @@ def player_interact_nearby(app):
         )
         if not (has_dialogue or has_loot or is_container):
             continue
-        dx = pos.x - player_pos.x
-        dy = pos.y - player_pos.y
-        d = (dx * dx + dy * dy) ** 0.5
-        if d < best_dist:
+        if dsq < best_dist_sq:
             best = eid
-            best_dist = d
+            best_dist_sq = dsq
 
     if best is None:
         print("[INTERACT] Nothing nearby")
@@ -194,20 +191,17 @@ def player_loot_nearby(app):
     player_eid, _, player_pos = res
 
     best = None
-    best_dist = 999.0
-    for eid, pos in app.world.all_of(Position):
-        if pos.zone != player_pos.zone:
-            continue
+    best_dist_sq = 2.0 * 2.0
+    for eid, pos, dsq in app.world.nearby(
+        player_pos.zone, player_pos.x, player_pos.y, 2.0, Position,
+    ):
         if not (app.world.has(eid, Loot) or app.world.has(eid, LootTableRef)
                 or (app.world.has(eid, Inventory) and app.world.has(eid, Identity)
                     and app.world.get(eid, Identity).kind in ("container", "object"))):
             continue
-        dx = pos.x - player_pos.x
-        dy = pos.y - player_pos.y
-        d = (dx * dx + dy * dy) ** 0.5
-        if d <= 2.0 and d < best_dist:
+        if dsq < best_dist_sq:
             best = eid
-            best_dist = d
+            best_dist_sq = dsq
 
     if best is None:
         print("[LOOT] Nothing to loot nearby")

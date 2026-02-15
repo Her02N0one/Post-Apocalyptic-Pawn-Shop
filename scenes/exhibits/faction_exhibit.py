@@ -13,7 +13,7 @@ from components import (
     Position, Velocity, Sprite, Identity, Collider, Hurtbox,
     Facing, Health, Lod, Brain,
 )
-from components.ai import HomeRange, Threat, AttackConfig
+from components.ai import HomeRange, Threat, AttackConfig, VisionCone
 from components.combat import CombatStats
 from components.social import Faction
 from logic.movement import movement_system
@@ -21,13 +21,40 @@ from logic.ai.brains import tick_ai
 from logic.combat.projectiles import projectile_system
 from logic.combat import handle_death, npc_melee_attack, npc_ranged_attack
 from scenes.exhibits.base import Exhibit
-from scenes.exhibits.drawing import draw_circle_alpha, spawn_combat_npc
+from scenes.exhibits.drawing import (
+    draw_circle_alpha, draw_entity_vision_cones, spawn_combat_npc,
+)
 
 
 class FactionExhibit(Exhibit):
     """Tab 4 — Faction alert cascade demo."""
 
     name = "Faction"
+    category = "Social"
+    description = (
+        "Faction Alert Cascade\n"
+        "\n"
+        "Villagers stand in a cluster.  A raider approaches\n"
+        "from the left and attacks.  Watch alert propagation\n"
+        "flip villager dispositions from neutral to hostile,\n"
+        "one by one, as each NPC's alert_radius (150 m) detects\n"
+        "the threat.  In this 60 m arena every villager is\n"
+        "within shout range — realistic for a small settlement.\n"
+        "\n"
+        "What to observe:\n"
+        " - Rings change from yellow (neutral) to red (hostile)\n"
+        " - Alert cascade log tracks the order of reactions\n"
+        " - The guard reacts first and engages the raider\n"
+        " - Villagers near the fight alert alongside the guard\n"
+        " - Raider has 5 km vision — sees the cluster from afar\n"
+        " - Guard has 5 km vision — intercepts the raider\n"
+        "\n"
+        "Systems:  tick_ai  Faction.alert_radius  VisionCone\n"
+        "Controls: [Space] start / pause / reset"
+    )
+    arena_w = 60
+    arena_h = 40
+    default_debug = {"faction": True, "ranges": True, "brain": True}
 
     def __init__(self):
         self.running = False
@@ -59,12 +86,12 @@ class FactionExhibit(Exhibit):
 
         # Villager cluster
         villager_positions = [
-            ("Villager A", 15.0, 8.0),
-            ("Villager B", 17.0, 9.0),
-            ("Villager C", 14.0, 11.0),
-            ("Villager D", 16.0, 12.0),
-            ("Villager E", 18.0, 10.0),
-            ("Guard",      13.0, 10.0),
+            ("Villager A", 30.0, 16.0),
+            ("Villager B", 34.0, 18.0),
+            ("Villager C", 28.0, 22.0),
+            ("Villager D", 32.0, 24.0),
+            ("Villager E", 36.0, 20.0),
+            ("Guard",      25.0, 20.0),
         ]
         w = app.world
         for name, x, y in villager_positions:
@@ -86,22 +113,24 @@ class FactionExhibit(Exhibit):
             w.add(eid, HomeRange(origin_x=x, origin_y=y, radius=3.0, speed=1.5))
             w.add(eid, Faction(group="villagers", disposition="neutral",
                                home_disposition="neutral",
-                               alert_radius=6.0))
+                               alert_radius=150.0))
             if is_guard:
-                w.add(eid, Threat(aggro_radius=10.0, leash_radius=18.0,
+                w.add(eid, Threat(aggro_radius=5000.0, leash_radius=200.0,
                                   flee_threshold=0.0))
                 w.add(eid, AttackConfig(attack_type="melee", range=1.2,
                                         cooldown=0.5))
+                w.add(eid, VisionCone(fov_degrees=120.0, view_distance=5000.0,
+                                      peripheral_range=10.0))
             w.zone_add(eid, zone)
             eids.append(eid)
 
         # Hostile raider
         eid = spawn_combat_npc(
-            app, zone, "Raider", "hostile_melee", 3.0, 10.0, (255, 60, 60),
+            app, zone, "Raider", "hostile_melee", 5.0, 20.0, (255, 60, 60),
             "raiders", hp=120, defense=10, damage=12,
-            aggro=20.0, atk_range=1.2, cooldown=0.6,
+            aggro=5000.0, atk_range=1.2, cooldown=0.6,
             flee_threshold=0.1, speed=2.5,
-            fov_degrees=120.0, view_distance=20.0, peripheral_range=5.0,
+            fov_degrees=120.0, view_distance=5000.0, peripheral_range=10.0,
             initial_facing="right")
         eids.append(eid)
 
@@ -137,7 +166,8 @@ class FactionExhibit(Exhibit):
                     self._alert_log.append(tag)
 
     def draw(self, surface: pygame.Surface, ox: int, oy: int,
-             app: App, eids: list[int]):
+             app: App, eids: list[int],
+             tile_px: int = TILE_SIZE, flags=None):
         for eid in eids:
             if not app.world.alive(eid):
                 continue
@@ -145,8 +175,8 @@ class FactionExhibit(Exhibit):
             fac = app.world.get(eid, Faction)
             if not pos or not fac:
                 continue
-            cx = ox + int(pos.x * TILE_SIZE) + TILE_SIZE // 2
-            cy = oy + int(pos.y * TILE_SIZE) + TILE_SIZE // 2
+            cx = ox + int(pos.x * tile_px) + tile_px // 2
+            cy = oy + int(pos.y * tile_px) + tile_px // 2
 
             if fac.disposition == "hostile":
                 ring_color = (255, 60, 60)
@@ -155,22 +185,28 @@ class FactionExhibit(Exhibit):
             else:
                 ring_color = (100, 255, 100)
             pygame.draw.circle(surface, ring_color, (cx, cy),
-                               TILE_SIZE // 2 + 2, 2)
+                               tile_px // 2 + 2, 2)
 
-            if fac.group == "villagers":
-                ar = int(fac.alert_radius * TILE_SIZE)
-                draw_circle_alpha(surface, (*ring_color, 15), cx, cy, ar)
-                pygame.draw.circle(surface, ring_color, (cx, cy), ar, 1)
+            if (not flags or flags.ranges) and fac.group == "villagers":
+                ar = int(fac.alert_radius * tile_px)
+                # Outline only — alert radius is large (150 m)
+                pygame.draw.circle(surface, ring_color, (cx, cy), min(ar, 4000), 1)
+
+        # Vision cones for entities with VisionCone
+        if not flags or flags.vision:
+            draw_entity_vision_cones(surface, ox, oy, app, eids, tile_px)
 
         # Alert cascade log
         if self._alert_log:
+            sw = surface.get_width()
+            log_x = sw - 160
             sy = 60
-            app.draw_text(surface, "Alert Cascade:", 700, sy,
+            app.draw_text(surface, "Alert Cascade:", log_x, sy,
                           (255, 200, 50), app.font_sm)
             for i, entry in enumerate(self._alert_log):
                 name = entry.replace("_hostile", "")
                 app.draw_text(surface, f"  ! {name} \u2192 hostile",
-                              700, sy + 14 + i * 14,
+                              log_x, sy + 14 + i * 14,
                               (255, 80, 80), app.font_sm)
 
     def info_text(self, app: App, eids: list[int]) -> str:

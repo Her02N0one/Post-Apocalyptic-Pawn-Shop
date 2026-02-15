@@ -18,6 +18,24 @@ class ParticleExhibit(Exhibit):
     """Tab 6 — Particle sandbox."""
 
     name = "Particles"
+    category = "Visual Effects"
+    description = (
+        "Particle Sandbox\n"
+        "\n"
+        "Click anywhere in the arena to spawn particle bursts.\n"
+        "Right-click cycles through effect types.  All presets\n"
+        "read from data/tuning.toml so they match in-game FX.\n"
+        "\n"
+        "Effect types:\n"
+        " hit     — small red burst (normal hit feedback)\n"
+        " crit    — larger gold burst (critical hit)\n"
+        " death   — heavy red spray with gravity\n"
+        " muzzle  — brief yellow flash (gunfire)\n"
+        " custom  — random colour, speed, gravity, size\n"
+        "\n"
+        "Systems:  ParticleManager.emit_burst  ParticleManager.update\n"
+        "Controls: LMB=spawn  RMB=cycle type  [Space] reset"
+    )
 
     def __init__(self):
         self._mode = 0
@@ -53,13 +71,14 @@ class ParticleExhibit(Exhibit):
             pm.update(dt)
 
     def draw(self, surface: pygame.Surface, ox: int, oy: int,
-             app: App, eids: list[int]):
+             app: App, eids: list[int],
+             tile_px: int = TILE_SIZE, flags=None):
         pm = app.world.res(ParticleManager)
         if not pm:
             return
         for p in pm.particles:
-            sx = ox + int(p.x * TILE_SIZE)
-            sy = oy + int(p.y * TILE_SIZE)
+            sx = ox + int(p.x * tile_px)
+            sy = oy + int(p.y * tile_px)
             alpha = p.life / max(p.max_life, 0.01) if p.fade else 1.0
             r, g, b = p.color
             c = (int(r * alpha), int(g * alpha), int(b * alpha))

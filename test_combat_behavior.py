@@ -1119,13 +1119,13 @@ except Exception:
     fail("I5: ally_in_line_of_fire returns False for off-axis ally",
          traceback.format_exc())
 
-# I6: is_detected_idle with VisionCone — target behind NPC is NOT detected
+# I6: Idle detection uses vision cone — target BEHIND NPC is NOT detected
 try:
     random.seed(85)
     _make_arena(30, 30)
     w = _make_world()
     npc = _spawn_npc(w, 15.0, 15.0, aggro=20.0)
-    # Add narrow vision cone facing right
+    # Narrow vision cone, facing right
     w.add(npc, VisionCone(fov_degrees=60, view_distance=12.0,
                           peripheral_range=2.0))
     w.get(npc, Facing).direction = "right"
@@ -1140,12 +1140,189 @@ try:
     detected = is_detected_idle(w, npc, npc_pos, 5.0, 15.0,
                                 dist, 20.0)
     if detected is False:
-        ok("I6: VisionCone blocks detection of target behind NPC")
+        ok("I6: Idle detection uses vision cone (behind = not detected)")
     else:
-        fail("I6: VisionCone blocks detection of target behind NPC",
-             f"detected={detected}, dist={dist}")
+        fail("I6: Idle detection uses vision cone (behind = not detected)",
+             f"detected={detected}")
 except Exception:
-    fail("I6: VisionCone blocks detection of target behind NPC",
+    fail("I6: Idle detection uses vision cone (behind = not detected)",
+         traceback.format_exc())
+
+# I7: Idle detection DOES detect target in front (within vision cone)
+try:
+    random.seed(86)
+    _make_arena(30, 30)
+    w = _make_world()
+    npc = _spawn_npc(w, 15.0, 15.0, aggro=20.0)
+    w.add(npc, VisionCone(fov_degrees=120, view_distance=15.0,
+                          peripheral_range=2.0))
+    w.get(npc, Facing).direction = "right"
+
+    # Target to the RIGHT (in front)
+    tgt = _spawn_target(w, 20.0, 15.0)
+
+    npc_pos = w.get(npc, Position)
+    dist = math.hypot(15.0 - 20.0, 0)
+    detected = is_detected_idle(w, npc, npc_pos, 20.0, 15.0,
+                                dist, 20.0)
+    if detected is True:
+        ok("I7: Idle detection sees target in front of vision cone")
+    else:
+        fail("I7: Idle detection sees target in front of vision cone",
+             f"detected={detected}")
+except Exception:
+    fail("I7: Idle detection sees target in front of vision cone",
+         traceback.format_exc())
+
+# I8: emit_combat_sound sets searching mode (not chase)
+try:
+    random.seed(87)
+    _make_arena(30, 30)
+    w = _make_world()
+    # Attacker (different faction)
+    attacker = _spawn_npc(w, 5.0, 5.0, aggro=10.0,
+                          faction_group="raiders", name="Raider")
+    # Guard (will hear the sound) — neutral, different faction
+    guard = _spawn_npc(w, 10.0, 10.0, aggro=15.0,
+                       faction_group="settlers", name="Guard")
+    w.get(guard, Faction).disposition = "neutral"
+    w.get(guard, Faction).home_disposition = "neutral"
+
+    from logic.combat.attacks import emit_combat_sound
+    att_pos = w.get(attacker, Position)
+    emit_combat_sound(w, attacker, att_pos, "gunshot")
+
+    g_brain = w.get(guard, Brain)
+    g_combat = g_brain.state.get("combat", {})
+    mode = g_combat.get("mode")
+    if mode == "searching":
+        ok("I8: emit_combat_sound triggers searching mode")
+    else:
+        fail("I8: emit_combat_sound triggers searching mode",
+             f"mode={mode}")
+except Exception:
+    fail("I8: emit_combat_sound triggers searching mode",
+         traceback.format_exc())
+
+# I9: Searching NPC spots target in vision cone → transitions to chase
+try:
+    random.seed(88)
+    _make_arena(30, 30)
+    w = _make_world()
+    npc = _spawn_npc(w, 15.0, 15.0, aggro=20.0)
+    w.add(npc, VisionCone(fov_degrees=120, view_distance=15.0,
+                          peripheral_range=2.0))
+    w.get(npc, Facing).direction = "right"
+
+    brain = w.get(npc, Brain)
+    c = brain.state.setdefault("combat", {})
+    c["mode"] = "searching"
+    c["search_source"] = (20.0, 15.0)
+    c["search_until"] = 100.0
+    c["_search_start"] = 0.0
+
+    # Target to the right — in vision cone
+    tgt = _spawn_target(w, 20.0, 15.0)
+
+    _tick(w, npc)
+    new_mode = brain.state["combat"]["mode"]
+    if new_mode == "chase":
+        ok("I9: Searching NPC → chase when target in vision cone")
+    else:
+        fail("I9: Searching NPC → chase when target in vision cone",
+             f"mode={new_mode}")
+except Exception:
+    fail("I9: Searching NPC → chase when target in vision cone",
+         traceback.format_exc())
+
+# I10: Searching NPC does NOT see target behind → stays searching
+try:
+    random.seed(89)
+    _make_arena(30, 30)
+    w = _make_world()
+    npc = _spawn_npc(w, 15.0, 15.0, aggro=20.0)
+    w.add(npc, VisionCone(fov_degrees=60, view_distance=12.0,
+                          peripheral_range=2.0))
+    w.get(npc, Facing).direction = "right"
+
+    brain = w.get(npc, Brain)
+    c = brain.state.setdefault("combat", {})
+    c["mode"] = "searching"
+    c["search_source"] = (20.0, 15.0)
+    c["search_until"] = 100.0
+    c["_search_start"] = 0.0
+
+    # Target to the LEFT — behind the NPC
+    tgt = _spawn_target(w, 5.0, 15.0)
+
+    _tick(w, npc)
+    new_mode = brain.state["combat"]["mode"]
+    if new_mode == "searching":
+        ok("I10: Searching NPC stays searching (target behind)")
+    else:
+        fail("I10: Searching NPC stays searching (target behind)",
+             f"mode={new_mode}")
+except Exception:
+    fail("I10: Searching NPC stays searching (target behind)",
+         traceback.format_exc())
+
+# I11: Searching NPC times out → returns to idle
+try:
+    random.seed(90)
+    _make_arena(30, 30)
+    w = _make_world()
+    npc = _spawn_npc(w, 15.0, 15.0, aggro=20.0)
+    w.add(npc, VisionCone(fov_degrees=60, view_distance=12.0,
+                          peripheral_range=2.0))
+    w.get(npc, Facing).direction = "right"
+
+    brain = w.get(npc, Brain)
+    c = brain.state.setdefault("combat", {})
+    c["mode"] = "searching"
+    c["search_source"] = (20.0, 15.0)
+    c["search_until"] = 0.5  # already expired
+    c["_search_start"] = 0.0
+
+    # Target behind — won't be detected
+    tgt = _spawn_target(w, 5.0, 15.0)
+
+    _tick(w, npc)
+    new_mode = brain.state["combat"]["mode"]
+    if new_mode == "idle":
+        ok("I11: Searching NPC → idle when search timer expired")
+    else:
+        fail("I11: Searching NPC → idle when search timer expired",
+             f"mode={new_mode}")
+except Exception:
+    fail("I11: Searching NPC → idle when search timer expired",
+         traceback.format_exc())
+
+# I12: ally alert (alert_nearby_faction) still goes straight to chase
+try:
+    random.seed(91)
+    _make_arena(30, 30)
+    w = _make_world()
+    # Defender gets attacked — same faction ally nearby
+    defender = _spawn_npc(w, 10.0, 10.0, name="Defender",
+                          faction_group="guards")
+    ally = _spawn_npc(w, 12.0, 10.0, name="Ally",
+                      faction_group="guards")
+    w.get(ally, Faction).disposition = "neutral"
+    attacker = _spawn_target(w, 8.0, 10.0, as_player=True)
+
+    from logic.combat.attacks import alert_nearby_faction
+    alert_nearby_faction(w, defender, attacker)
+
+    ally_brain = w.get(ally, Brain)
+    ally_mode = ally_brain.state.get("combat", {}).get("mode")
+    ally_disp = w.get(ally, Faction).disposition
+    if ally_mode == "chase" and ally_disp == "hostile":
+        ok("I12: alert_nearby_faction → chase (direct ally callout)")
+    else:
+        fail("I12: alert_nearby_faction → chase (direct ally callout)",
+             f"mode={ally_mode}, disposition={ally_disp}")
+except Exception:
+    fail("I12: alert_nearby_faction → chase (direct ally callout)",
          traceback.format_exc())
 
 
@@ -1302,4 +1479,4 @@ if failed:
     print(f" {failed} FAILED")
 print(f"{'='*50}")
 
-sys.exit(0 if failed == 0 else 1)
+sys.exit(0 if failed == 0 else 1) if __name__ == "__main__" else None

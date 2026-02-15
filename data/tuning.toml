@@ -3,39 +3,57 @@
 #  All gameplay numbers live here. Systems read via core.tuning.get().
 #  Hot-reloadable: press F4 in-game to reload without restarting.
 #
-#  UNIT SYSTEM:  1 tile = 1 metre.  Speeds are m/s, distances are m.
-#  Rendering: TILE_SIZE (32 px) converts tile-units → screen pixels.
+#  UNIT SYSTEM — all values use real-world SI-based units:
+#    Distance / position:   m    (metres,  1 tile = 1 m)
+#    Speed:                 m/s
+#    Time (real):           s    (seconds)
+#    Time (game):           min  (game-minutes)
+#    Health / damage:       HP   (hit points)
+#    Angles:                °    (degrees)
+#    Rendering:             px   (pixels,  TILE_SIZE = 32 px/m)
+#
+#  Detection hierarchy (small → large, open-field maximums):
+#    10 m   peripheral vision      (reflex zone, omnidirectional)
+#    30 m   witness radius         (identify actions as criminal)
+#    40 m   melee hearing          (swords clashing, grunting)
+#   150 m   faction alert / shout  (loud vocal alarm)
+#   200 m   leash radius           (max chase before giving up)
+#   200 m   LOD high-detail zone   (full tick simulation)
+#  1600 m   gunshot hearing        (~1 mile, loud report)
+#  5000 m   forward vision / aggro (~3 miles, clear sightline)
+#
+#  Walls and terrain block sight and sound in practice.
 # ═══════════════════════════════════════════════════════════════════════
 
 
-# ─── COMBAT: MELEE ───────────────────────────────────────────────────
+# ─── COMBAT: MELEE (distances in m, times in s, damage in HP) ─────
 
 [combat.melee]
-default_knockback           = 3.0
+default_knockback           = 3.0      # m/s impulse
 default_crit_chance          = 0.1
 default_crit_mult            = 1.5
 damage_variance_min          = 0.8
 damage_variance_max          = 1.2
-min_base_damage              = 1.0
-default_weapon_reach         = 1.5
-no_weapon_reach              = 1.0
-hit_flash_duration           = 0.1
-fallback_hurtbox_w           = 0.8
-fallback_hurtbox_h           = 0.8
+min_base_damage              = 1.0      # HP floor
+default_weapon_reach         = 1.5      # m
+no_weapon_reach              = 1.0      # m
+hit_flash_duration           = 0.1      # s
+fallback_hurtbox_w           = 0.8      # m
+fallback_hurtbox_h           = 0.8      # m
 
 
-# ─── COMBAT: RANGED / PROJECTILE ────────────────────────────────────
+# ─── COMBAT: RANGED / PROJECTILE (speed in m/s, range in m) ──────
 
 [combat.ranged]
 default_accuracy             = 0.7
-default_proj_speed           = 12.0
-default_max_range            = 10.0
-accuracy_spread_factor       = 0.4
-projectile_spawn_offset      = 0.5
-projectile_falloff_min       = 0.5
+default_proj_speed           = 12.0     # m/s
+default_max_range            = 10.0     # m
+accuracy_spread_factor       = 0.4      # radians multiplier
+projectile_spawn_offset      = 0.5      # m from entity centre
+projectile_falloff_min       = 0.5      # damage multiplier at max range
 
 
-# ─── COMBAT: ENGAGEMENT FSM ─────────────────────────────────────────
+# ─── COMBAT: ENGAGEMENT FSM (distances in m, times in s) ─────────
 
 [combat.engagement]
 chase_mult_ranged            = 1.2
@@ -71,40 +89,50 @@ strafe_speed_los_mult        = 1.3
 strafe_speed_normal_mult     = 0.8
 
 flee_recovery_mult           = 2.5
-return_arrive_dist           = 1.0
+return_arrive_dist           = 1.0      # m
 return_reaggro_factor        = 0.6
 chase_give_up_mult           = 2.0
 
 ally_near_target_factor      = 0.8
-line_of_fire_clearance       = 0.6
+line_of_fire_clearance       = 0.6      # m
 
-fallback_patrol_speed        = 2.0
+fallback_patrol_speed        = 2.0      # m/s
 
 
-# ─── AI: HELPERS (DODGE / HEAL / IDLE) ───────────────────────────────
+# ─── COMBAT: HEARING (radius in m, duration in s) ─────────────
+
+[combat.hearing]
+gunshot_radius               = 1600.0   # m  (~1 mile, loud report)
+melee_radius                 = 40.0     # m  (swords clashing, grunting)
+shout_radius                 = 150.0    # m  (loud yell / alert)
+search_duration              = 5.0      # s  (time spent investigating)
+civilian_flee_duration       = 10.0     # s  (unarmed NPC flee time)
+
+
+# ─── AI: HELPERS (DODGE / HEAL / IDLE) (distances in m, times in s) ─
 
 [ai.helpers]
-path_recompute_interval      = 0.8
-path_target_drift_threshold  = 1.5
-waypoint_reach               = 0.55
+path_recompute_interval      = 0.8      # s
+path_target_drift_threshold  = 1.5      # m
+waypoint_reach               = 0.55     # m
 
 dodge_speed_mult             = 3.0
-dodge_duration               = 1.5
+dodge_duration               = 1.5      # s
 heal_hp_threshold            = 0.4
-heal_cooldown                = 5.0
+heal_cooldown                = 5.0      # s
 
 idle_wander_speed_min        = 0.2
 idle_wander_speed_max        = 0.5
-idle_timer_min               = 1.5
-idle_timer_max               = 4.0
+idle_timer_min               = 1.5      # s
+idle_timer_max               = 4.0      # s
 idle_return_speed_mult       = 0.3
 idle_blocked_timer           = 0.1
 
 
-# ─── AI: VILLAGER BRAIN ─────────────────────────────────────────────
+# ─── AI: VILLAGER BRAIN (distances in m, times in s) ─────────────
 
 [ai.villager]
-day_length                   = 300.0
+day_length                   = 300.0    # s  (real seconds per game-day)
 
 morning_start                = 0.00
 morning_end                  = 0.30
@@ -115,21 +143,21 @@ afternoon_end                = 0.75
 evening_start                = 0.75
 evening_end                  = 1.00
 
-eat_pause                    = 2.0
+eat_pause                    = 2.0      # s
 eat_threshold                = 0.4
-arrive_dist                  = 2.5
-social_dist                  = 4.0
+arrive_dist                  = 2.5      # m
+social_dist                  = 4.0      # m
 
-waypoint_reach               = 0.55
-stuck_check_interval         = 1.0
-stuck_move_threshold         = 0.3
+waypoint_reach               = 0.55     # m
+stuck_check_interval         = 1.0      # s
+stuck_move_threshold         = 0.3      # m
 stuck_strikes                = 3
 
-path_recompute_interval      = 1.5
+path_recompute_interval      = 1.5      # s
 crime_flee_speed_mult        = 1.6
 
-forage_duration_min          = 8.0
-forage_duration_max          = 15.0
+forage_duration_min          = 8.0      # s
+forage_duration_max          = 15.0     # s
 forage_speed_mult            = 1.3
 
 greet_cooldown_min           = 3.0
@@ -137,44 +165,44 @@ greet_cooldown_max           = 8.0
 social_wander_speed_mult     = 0.4
 morning_wander_speed_mult    = 0.5
 
-wander_pick_min              = 2.0
-wander_pick_max              = 4.5
+wander_pick_min              = 2.0      # s  (timer between picks)
+wander_pick_max              = 4.5      # s
 
 
-# ─── AI: WANDER BRAIN ───────────────────────────────────────────────
+# ─── AI: WANDER BRAIN (distances in m, times in s) ───────────────
 
 [ai.wander]
-pick_interval_min            = 2.0
-pick_interval_max            = 5.0
+pick_interval_min            = 2.0      # s
+pick_interval_max            = 5.0      # s
 max_dest_attempts            = 8
-min_dest_radius              = 2.0
-waypoint_reach               = 0.55
+min_dest_radius              = 2.0      # m
+waypoint_reach               = 0.55     # m
 path_speed_min_mult          = 0.5
 fallback_timer_min           = 1.0
 fallback_timer_max           = 3.0
 
 
-# ─── LOD SYSTEM ──────────────────────────────────────────────────────
+# ─── LOD SYSTEM (distance in m, times in s) ──────────────────────
 # high_radius: entities within this distance of the player = high LOD
 # Entities further away but in the same zone = medium LOD (still active)
 # Entities in a different zone = low LOD (event-driven only)
 
 [lod]
-high_radius                  = 20.0
-grace_period                 = 0.5
-lod_interval                 = 0.25
+high_radius                  = 200.0    # m
+grace_period                 = 0.5      # s
+lod_interval                 = 0.25     # s
 
 
-# ─── NEEDS SYSTEM ────────────────────────────────────────────────────
+# ─── NEEDS SYSTEM (times in s) ─────────────────────────────────────
 
 [needs]
 well_fed_ratio               = 0.5
 hungry_ratio                 = 0.25
-eat_cooldown                 = 30.0
-fallback_food_value          = 25.0
+eat_cooldown                 = 30.0     # s
+fallback_food_value          = 25.0     # hunger points (0–100 scale)
 
 [needs.storehouse_refill]
-refill_interval              = 300.0
+refill_interval              = 300.0    # s  (~5 real minutes)
 refill_default_cap           = 20
 
 [needs.storehouse_refill.items]
@@ -188,21 +216,21 @@ canned_beans                 = 15
 dried_meat                   = 15
 
 
-# ─── CRIME ───────────────────────────────────────────────────────────
+# ─── CRIME (distance in m, times in s) ─────────────────────────────
 
 [crime]
-witness_radius               = 8.0
-crime_memory_ttl             = 1200.0
-crime_flee_duration          = 20.0
+witness_radius               = 30.0     # m  (close enough to identify actions)
+crime_memory_ttl             = 1200.0   # s  (~20 min real time)
+crime_flee_duration          = 20.0     # s
 
 
-# ─── PATHFINDING ─────────────────────────────────────────────────────
+# ─── PATHFINDING (distances in m) ─────────────────────────────────
 
 [pathfinding]
-max_dist_default             = 32
-waypoint_reach               = 0.5
-wall_margin_penalty          = 4.0
-agent_size                   = 0.8
+max_dist_default             = 32       # m  (A* search radius)
+waypoint_reach               = 0.5      # m
+wall_margin_penalty          = 4.0      # cost addend (unitless)
+agent_size                   = 0.8      # m  (entity collision radius)
 
 [pathfinding.penalties]
 void                         = -1
@@ -215,7 +243,7 @@ wall                         = -1
 teleporter                   =  0
 
 
-# ─── PARTICLES ───────────────────────────────────────────────────────
+# ─── PARTICLES (speeds in m/s, life in s, size in px) ────────────
 
 [particles]
 max_particles                = 512
@@ -250,32 +278,32 @@ life                         = 0.1
 size                         = 1.0
 
 
-# ─── COMPONENT DEFAULTS ─────────────────────────────────────────────
+# ─── COMPONENT DEFAULTS (units noted per field) ───────────────────
 
 [defaults.health]
-current                      = 100.0
-maximum                      = 100.0
+current                      = 100.0    # HP
+maximum                      = 100.0    # HP
 
 [defaults.hunger]
-current                      = 80.0
+current                      = 80.0     # hunger (0–100)
 maximum                      = 100.0
-rate                         = 0.03
-starve_dps                   = 0.3
+rate                         = 0.03     # hunger/s
+starve_dps                   = 0.3      # HP/s
 
 [defaults.home_range]
-radius                       = 5.0
-speed                        = 2.0
+radius                       = 6.0      # m
+speed                        = 2.0      # m/s
 
 [defaults.threat]
-aggro_radius                 = 8.0
-leash_radius                 = 15.0
-flee_threshold               = 0.2
-sensor_interval              = 0.1
+aggro_radius                 = 5000.0   # m  (~3 miles, human eyesight)
+leash_radius                 = 200.0    # m  (give up chase)
+flee_threshold               = 0.2      # HP fraction
+sensor_interval              = 0.1      # s
 
 [defaults.attack_config]
 attack_type                  = "melee"
-range                        = 1.2
-cooldown                     = 0.5
+range                        = 1.2      # m
+cooldown                     = 0.5      # s
 
 [defaults.faction]
-alert_radius                 = 12.0
+alert_radius                 = 150.0    # m  (shouting distance)

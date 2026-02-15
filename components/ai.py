@@ -27,13 +27,13 @@ class HomeRange:
 
     Attached to any entity that moves on its own.
     ``origin_x/y`` are set to spawn position on first tick if zero.
-    ``radius`` is the leash around origin.
-    ``speed`` is tiles/sec while patrolling.
+    ``radius`` — patrol leash distance (m).
+    ``speed``  — patrol movement speed (m/s).
     """
-    origin_x: float = 0.0
-    origin_y: float = 0.0
-    radius: float = 5.0
-    speed: float = 2.0
+    origin_x: float = 0.0      # m
+    origin_y: float = 0.0      # m
+    radius: float = 6.0        # m  (default patrol leash)
+    speed: float = 2.0         # m/s  (~brisk walk)
 
 
 @dataclass
@@ -41,17 +41,17 @@ class Threat:
     """Perception and engagement parameters.
 
     Attached to entities that detect and react to hostiles.
-    ``aggro_radius`` — detection range (tiles).
-    ``leash_radius`` — max chase distance from spawn.
-    ``flee_threshold`` — HP ratio below which entity flees (0 = never flee).
-    ``sensor_interval`` — seconds between expensive sensor sweeps.
-    ``last_sensor_time`` — absolute GameClock.time of last sensor run.
+    ``aggro_radius``    — detection range (m).
+    ``leash_radius``    — max chase distance from spawn (m).
+    ``flee_threshold``  — HP fraction below which entity flees (0 = never).
+    ``sensor_interval`` — seconds between sensor sweeps (s).
+    ``last_sensor_time`` — absolute GameClock.time of last sensor run (s).
     """
-    aggro_radius: float = 8.0
-    leash_radius: float = 15.0
-    flee_threshold: float = 0.2
-    sensor_interval: float = 0.1
-    last_sensor_time: float = 0.0
+    aggro_radius: float = 5000.0   # m   (human eyesight, ~3 miles)
+    leash_radius: float = 200.0    # m   (max chase distance)
+    flee_threshold: float = 0.2    # HP fraction (0–1)
+    sensor_interval: float = 0.1   # s
+    last_sensor_time: float = 0.0  # s
 
 
 @dataclass
@@ -59,28 +59,27 @@ class AttackConfig:
     """How an entity fights.
 
     ``attack_type`` — "melee" or "ranged".
-    ``range`` — melee reach or ranged standoff distance (tiles).
-    ``cooldown`` — seconds between attacks.
-    ``last_attack_time`` — absolute GameClock.time of last attack.
-    ``accuracy`` — 0.0–1.0 projectile accuracy (1 = perfect).  Used by
-                   ``npc_ranged_attack`` when no Equipment/ItemRegistry.
-    ``proj_speed`` — projectile speed (tiles/sec) when no weapon item.
+    ``range``       — melee reach or ranged standoff distance (m).
+    ``cooldown``    — time between attacks (s).
+    ``last_attack_time`` — absolute GameClock.time of last attack (s).
+    ``accuracy``    — 0.0–1.0 projectile accuracy (unitless).
+    ``proj_speed``  — projectile speed (m/s) when no weapon item.
     """
     attack_type: str = "melee"
-    range: float = 1.2
-    cooldown: float = 0.5
-    last_attack_time: float = 0.0
-    accuracy: float = 0.85
-    proj_speed: float = 14.0
+    range: float = 1.2           # m
+    cooldown: float = 0.5        # s
+    last_attack_time: float = 0.0  # s
+    accuracy: float = 0.85       # 0–1
+    proj_speed: float = 14.0     # m/s
 
 
 @dataclass
 class VisionCone:
     """Directional perception for high-LOD AI entities.
 
-    ``fov_degrees``      — total field-of-view angle (e.g. 120 = ±60° from facing).
-    ``view_distance``    — forward detection range (tiles).
-    ``peripheral_range`` — omnidirectional close-range awareness (tiles).
+    ``fov_degrees``      — total field-of-view angle (°, e.g. 120 = ±60°).
+    ``view_distance``    — forward detection range (m).
+    ``peripheral_range`` — omnidirectional close-range awareness (m).
                            Enemies inside this radius are always detected
                            regardless of facing direction.
 
@@ -88,9 +87,9 @@ class VisionCone:
     for idle→chase transitions instead of the simple radius check.
     ``Threat.aggro_radius`` still serves as the absolute max range cap.
     """
-    fov_degrees: float = 120.0
-    view_distance: float = 12.0
-    peripheral_range: float = 4.0
+    fov_degrees: float = 120.0       # °
+    view_distance: float = 5000.0    # m  (forward sight range, ~3 miles)
+    peripheral_range: float = 10.0   # m  (omnidirectional reflex zone)
 
 
 @dataclass

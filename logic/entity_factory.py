@@ -87,7 +87,7 @@ _COMPONENT_TABLE: list[tuple[str, type, dict[str, tuple[str, Callable, Any]]]] =
         "group":            ("group",            _str, "neutral"),
         "disposition":      ("disposition",      _str, "neutral"),
         "home_disposition": ("home_disposition", lambda v, d: _str(v, d), "__inherit__"),
-        "alert_radius":     ("alert_radius",     _float, 12.0),
+        "alert_radius":     ("alert_radius",     _float, 150.0),
     }),
     ("dialogue", Dialogue, {
         "tree_id":   ("tree_id",   _str, ""),
@@ -283,15 +283,15 @@ def _apply_brain_split(world: World, eid: int, desc: dict) -> None:
     if "threat" in desc and isinstance(desc["threat"], dict):
         t = desc["threat"]
         world.add(eid, Threat(
-            aggro_radius=_float(t.get("aggro_radius"), 8.0),
-            leash_radius=_float(t.get("leash_radius"), 15.0),
+            aggro_radius=_float(t.get("aggro_radius"), 5000.0),
+            leash_radius=_float(t.get("leash_radius"), 200.0),
             flee_threshold=_float(t.get("flee_threshold"), 0.2),
             sensor_interval=_float(t.get("sensor_interval"), 0.1),
         ))
     elif kind in ("hostile_melee", "hostile_ranged", "guard"):
         world.add(eid, Threat(
-            aggro_radius=_float(b.get("aggro_radius"), 8.0),
-            leash_radius=_float(b.get("leash_radius"), 15.0),
+            aggro_radius=_float(b.get("aggro_radius"), 5000.0),
+            leash_radius=_float(b.get("leash_radius"), 200.0),
             flee_threshold=_float(b.get("flee_threshold"), 0.2),
         ))
 

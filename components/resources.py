@@ -63,7 +63,7 @@ class ZoneMetadata:
 @dataclass
 class Player:
     """Marks the player entity."""
-    speed: float = 80.0        # pixels per second
+    speed: float = 5.0         # m/s  (brisk walk; overridden per scene)
 
 
 # ── System-tick timers (previously module-level mutable state) ───────

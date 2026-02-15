@@ -22,6 +22,27 @@ class NeedsExhibit(Exhibit):
     """Tab 7 — Needs / Hunger demo."""
 
     name = "Needs"
+    category = "Simulation"
+    description = (
+        "Needs & Hunger System\n"
+        "\n"
+        "NPCs have a Hunger meter that drains over time at\n"
+        "10x speed.  When hunger drops below the eat threshold,\n"
+        "the NPC's Needs component sets priority='eat' and they\n"
+        "consume food from their Inventory.\n"
+        "\n"
+        "What to observe:\n"
+        " - Hunger bars drain: green > yellow > red\n"
+        " - 'HUNGRY' label appears when Needs.priority='eat'\n"
+        " - Food count decreases as NPCs eat\n"
+        " - Starving Nomad (10% start) eats immediately\n"
+        " - Well-Fed Farmer (80% start) takes longer to eat\n"
+        " - Starvation deals 2 HP/s when hunger hits zero\n"
+        "\n"
+        "Systems:  hunger_system  tick_ai  Brain(villager)\n"
+        "Controls: [Space] start / pause / reset"
+    )
+    default_debug = {"brain": True}
 
     def __init__(self):
         self.running = False
@@ -50,7 +71,7 @@ class NeedsExhibit(Exhibit):
             w.add(eid, Facing())
             w.add(eid, Health(current=100, maximum=100))
             w.add(eid, Lod(level="high"))
-            w.add(eid, Brain(kind="wander", active=True))
+            w.add(eid, Brain(kind="villager", active=True))
             w.add(eid, HomeRange(origin_x=x, origin_y=y, radius=3.0, speed=1.5))
             w.add(eid, Hunger(current=start_hunger, maximum=100.0,
                               rate=0.5, starve_dps=2.0))
@@ -79,7 +100,8 @@ class NeedsExhibit(Exhibit):
         movement_system(app.world, dt, tiles)
 
     def draw(self, surface: pygame.Surface, ox: int, oy: int,
-             app: App, eids: list[int]):
+             app: App, eids: list[int],
+             tile_px: int = TILE_SIZE, flags=None):
         for eid in eids:
             if not app.world.alive(eid):
                 continue
@@ -89,13 +111,13 @@ class NeedsExhibit(Exhibit):
             if not pos or not hunger:
                 continue
 
-            sx = ox + int(pos.x * TILE_SIZE)
-            sy = oy + int(pos.y * TILE_SIZE)
+            sx = ox + int(pos.x * tile_px)
+            sy = oy + int(pos.y * tile_px)
 
             # Hunger bar
-            bar_w = TILE_SIZE - 4
+            bar_w = max(4, tile_px - 4)
             bar_x = sx + 2
-            bar_y = sy + TILE_SIZE + 2
+            bar_y = sy + tile_px + 2
             ratio = max(0.0, hunger.current / max(hunger.maximum, 1.0))
             pygame.draw.rect(surface, (40, 40, 40), (bar_x, bar_y, bar_w, 4))
             if ratio > 0.5:
@@ -112,7 +134,7 @@ class NeedsExhibit(Exhibit):
             label = f"{pct}%"
             if needs and needs.priority == "eat":
                 label += " HUNGRY"
-            app.draw_text(surface, label, sx - 4, sy + TILE_SIZE + 8,
+            app.draw_text(surface, label, sx - 4, sy + tile_px + 8,
                           color=bc, font=app.font_sm)
 
             # Inventory
@@ -120,7 +142,7 @@ class NeedsExhibit(Exhibit):
             if inv:
                 total_food = sum(inv.items.values())
                 app.draw_text(surface, f"Food:{total_food}",
-                              sx - 4, sy + TILE_SIZE + 20,
+                              sx - 4, sy + tile_px + 20,
                               color=(180, 180, 180), font=app.font_sm)
 
     def info_text(self, app: App, eids: list[int]) -> str:

@@ -67,6 +67,8 @@ def _check_hit(world, proj_eid: int, pos, proj) -> int | None:
 
     Skips the projectile's owner AND any entity in the same faction group,
     so allied NPCs don't shoot each other.
+
+    Uses ``world.query_zone()`` for O(1) zone lookup.
     """
     px, py, r = pos.x, pos.y, proj.radius
 
@@ -74,12 +76,8 @@ def _check_hit(world, proj_eid: int, pos, proj) -> int | None:
     owner_faction = world.get(proj.owner_eid, Faction)
     owner_group = owner_faction.group if owner_faction else None
 
-    for eid, epos in world.all_of(Position):
+    for eid, epos, _hp in world.query_zone(pos.zone, Position, Health):
         if eid == proj_eid or eid == proj.owner_eid:
-            continue
-        if epos.zone != pos.zone:
-            continue
-        if not world.has(eid, Health):
             continue
 
         # Skip same-faction entities (friendly fire protection)
