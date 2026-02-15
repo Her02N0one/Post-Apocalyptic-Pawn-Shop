@@ -21,6 +21,7 @@ from logic.particles import ParticleManager
 from logic.combat.damage import apply_damage as _apply_damage
 from logic.combat.damage import handle_death  # re-exported for backward compat
 from core.tuning import get as _tun, section as _tun_sec
+from logic.faction_ops import entity_display_name
 
 # ── Re-exports so existing ``from logic.combat.attacks import …``
 #    keeps working after moving alerts to alerts.py. ──────────────────
@@ -230,9 +231,7 @@ def npc_ranged_attack(world, attacker_eid: int, target_eid: int) -> bool:
                       size=mf.get("size", 1.0),
                       spread=0.5, angle=angle)
 
-    attacker_name = "?"
-    if world.has(attacker_eid, Identity):
-        attacker_name = world.get(attacker_eid, Identity).name
+    attacker_name = entity_display_name(world, attacker_eid)
     print(f"[NPC RANGED] {attacker_name} fired")
 
     emit_combat_sound(world, attacker_eid, att_pos, "gunshot")

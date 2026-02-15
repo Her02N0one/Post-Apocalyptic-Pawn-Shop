@@ -19,6 +19,7 @@ from components import (
 )
 from components.simulation import SubzonePos, TravelPlan
 from simulation.subzone import SubzoneGraph
+from logic.faction_ops import entity_display_name
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -259,10 +260,7 @@ def demote_entity(world: Any, eid: int, graph: SubzoneGraph,
     _schedule_initial_events(world, eid, node.id, graph,
                              scheduler, game_time)
 
-    name = "?"
-    ident = world.get(eid, Identity)
-    if ident:
-        name = ident.name
+    name = entity_display_name(world, eid)
     print(f"[LOD] Demoted {name} (eid={eid}) to low LOD at "
           f"subzone={node.id}")
 

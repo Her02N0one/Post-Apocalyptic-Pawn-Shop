@@ -15,9 +15,10 @@ Extracted from ``simulation/events.py`` for clarity.
 from __future__ import annotations
 from typing import Any
 
-from components import Hunger, Inventory, Identity, ItemRegistry, Faction
+from components import Health, Hunger, Inventory, Identity, ItemRegistry, Faction
 from components.simulation import SubzonePos
 from simulation.subzone import SubzoneGraph
+from logic.faction_ops import entity_display_name
 
 
 # ── Constants ────────────────────────────────────────────────────────
@@ -124,10 +125,18 @@ def _communal_eat(world, eid, scheduler, game_time, current_node):
 
 
 def _try_communal_container(world, eid, hunger, registry, game_time):
-    """Eat from any container entity at the same subzone."""
+    """Eat from any container entity at the same subzone.
+
+    Delegates per-container eating to
+    ``logic.inventory_ops.consume_from_container``.
+    """
+    from logic.inventory_ops import consume_from_container
+
     szp = world.get(eid, SubzonePos)
     if szp is None:
         return
+
+    health = world.get(eid, Health)
 
     for ceid, cident in world.all_of(Identity):
         if cident.kind != "container":
@@ -139,26 +148,9 @@ def _try_communal_container(world, eid, hunger, registry, game_time):
         if cinv is None or not cinv.items:
             continue
 
-        best_id = None
-        best_food = 0.0
-        for item_id, qty in cinv.items.items():
-            if qty <= 0:
-                continue
-            if registry and registry.item_type(item_id) == "consumable":
-                food = registry.get_field(item_id, "food_value", 0.0)
-            else:
-                food = (25.0 if any(w in item_id
-                                    for w in ("stew", "ration", "beans", "meat"))
-                        else 0.0)
-            if food > best_food:
-                best_food = food
-                best_id = item_id
-        if best_id:
-            cinv.items[best_id] -= 1
-            if cinv.items[best_id] <= 0:
-                del cinv.items[best_id]
-            hunger.current = min(hunger.maximum, hunger.current + best_food)
-            _log_meal(world, eid, f"ate communal {best_id}")
+        if consume_from_container(cinv, hunger, registry,
+                                   heal_health=health):
+            _log_meal(world, eid, "ate communal food")
             return
 
 
@@ -184,10 +176,7 @@ def _schedule_next_meal_for(scheduler, eid, game_time, is_guard):
 
 
 def _log_meal(world, eid, msg):
-    name = "?"
-    ident = world.get(eid, Identity)
-    if ident:
-        name = ident.name
+    name = entity_display_name(world, eid)
     print(f"[MEAL] {name}: {msg}")
 
 

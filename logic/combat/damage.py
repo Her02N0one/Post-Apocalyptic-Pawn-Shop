@@ -17,6 +17,7 @@ from components import (
 )
 from logic.particles import ParticleManager
 from core.tuning import get as _tun, section as _tun_sec
+from logic.faction_ops import entity_display_name
 
 
 def apply_damage(
@@ -115,12 +116,8 @@ def apply_damage(
         )
 
     # ── Log ──────────────────────────────────────────────────────────
-    attacker_name = "?"
-    defender_name = "?"
-    if world.has(attacker_eid, Identity):
-        attacker_name = world.get(attacker_eid, Identity).name
-    if world.has(defender_eid, Identity):
-        defender_name = world.get(defender_eid, Identity).name
+    attacker_name = entity_display_name(world, attacker_eid)
+    defender_name = entity_display_name(world, defender_eid)
     crit_tag = " [CRIT]" if is_crit else ""
     print(f"[{log_prefix}] {attacker_name} hit {defender_name} for "
           f"{damage:.0f} damage{crit_tag} (HP: {health.current:.0f}/{health.maximum})")

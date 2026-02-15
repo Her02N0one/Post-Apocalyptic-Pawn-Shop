@@ -15,6 +15,7 @@ from components import (
     Identity, Loot,
 )
 from components.simulation import SubzonePos, TravelPlan, WorldMemory, Home
+from logic.faction_ops import entity_display_name
 
 
 # ── Result dataclass ─────────────────────────────────────────────────
@@ -385,14 +386,8 @@ def _record_combat_memory(world: Any, eid_a: int, eid_b: int,
 
 def _log_combat(world: Any, result: CombatResult) -> None:
     """Print combat result to console."""
-    w_name = "?"
-    l_name = "?"
-    w_ident = world.get(result.winner_eid, Identity)
-    l_ident = world.get(result.loser_eid, Identity)
-    if w_ident:
-        w_name = w_ident.name
-    if l_ident:
-        l_name = l_ident.name
+    w_name = entity_display_name(world, result.winner_eid)
+    l_name = entity_display_name(world, result.loser_eid)
 
     if result.loser_fled:
         print(f"[SIM COMBAT] {w_name} vs {l_name} — {l_name} fled "

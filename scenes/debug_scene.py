@@ -62,7 +62,6 @@ _COMP_COLORS: dict[str, tuple[int, int, int]] = {
     "Brain": (120, 200, 255), "Threat": (120, 200, 255),
     "AttackConfig": (120, 200, 255), "HomeRange": (120, 200, 255),
     "Task": (120, 200, 255), "Memory": (120, 200, 255),
-    "GoalSet": (120, 200, 255),
     "Faction": (200, 160, 255), "Dialogue": (200, 160, 255),
     "Ownership": (200, 160, 255), "CrimeRecord": (200, 160, 255),
     "Health": (255, 140, 100), "Combat": (255, 140, 100),

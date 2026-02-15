@@ -18,7 +18,8 @@ from components import (
 from logic.combat.damage import apply_damage
 from logic.particles import ParticleManager
 from core.tuning import get as _tun, section as _tun_sec
-from core.events import EventBus, EntityDied, EntityHit, FactionAlert
+from core.events import EventBus, EntityDied, FactionAlert
+from logic.faction_ops import entity_display_name
 
 
 def projectile_system(world, dt: float, tiles: list[list[int]]):
@@ -123,9 +124,7 @@ def _apply_projectile_damage(world, proj, target_eid: int, pos):
 
     # Death handling
     if is_dead:
-        target_name = "?"
-        if world.has(target_eid, Identity):
-            target_name = world.get(target_eid, Identity).name
+        target_name = entity_display_name(world, target_eid)
         print(f"[PROJECTILE] {target_name} killed")
         bus = world.res(EventBus)
         if bus:

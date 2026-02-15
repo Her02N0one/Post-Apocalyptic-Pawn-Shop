@@ -8,7 +8,7 @@ import random
 import math
 from core.ecs import World
 from components import (
-    Brain, HomeRange, Health, Inventory, ItemRegistry,
+    Brain, HomeRange, Health, Inventory,
     Identity, Faction, HitFlash,
 )
 from logic.ai.perception import find_player, find_nearest_enemy, hp_ratio
@@ -45,41 +45,21 @@ def try_dodge(world: World, eid: int, brain: Brain,
 
 def try_heal(world: World, eid: int, brain: Brain, s: dict,
              game_time: float) -> bool:
-    """If HP is low and entity has consumables, use the best one."""
+    """If HP is low and entity has consumables, use the best one.
+
+    Delegates the actual item search + consumption to
+    ``logic.inventory_ops.consume_best_heal``.
+    """
     if s.get("heal_until", 0.0) > game_time:
         return False
     hp = hp_ratio(world, eid)
     if hp > _tun("ai.helpers", "heal_hp_threshold", 0.4):
         return False
-    inv = world.get(eid, Inventory)
-    if inv is None:
+
+    from logic.inventory_ops import consume_best_heal
+    if not consume_best_heal(world, eid):
         return False
-    registry = world.res(ItemRegistry)
-    if registry is None:
-        return False
-    best_id = None
-    best_heal = 0.0
-    for item_id, qty in inv.items.items():
-        if qty <= 0:
-            continue
-        if registry.item_type(item_id) != "consumable":
-            continue
-        heal = registry.get_field(item_id, "heal", 0.0)
-        if heal > best_heal:
-            best_heal = heal
-            best_id = item_id
-    if best_id is None:
-        return False
-    health = world.get(eid, Health)
-    if health:
-        health.current = min(health.maximum, health.current + best_heal)
-    inv.items[best_id] -= 1
-    if inv.items[best_id] <= 0:
-        del inv.items[best_id]
-    name = "?"
-    if world.has(eid, Identity):
-        name = world.get(eid, Identity).name
-    print(f"[AI] {name} used {registry.display_name(best_id)} (+{best_heal:.0f} HP)")
+
     s["heal_until"] = game_time + _tun("ai.helpers", "heal_cooldown", 5.0)
     return True
 

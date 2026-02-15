@@ -12,6 +12,7 @@ from typing import Any
 from components import Identity, Inventory
 from components.simulation import SubzonePos, Home, Stockpile
 from simulation.subzone import SubzoneGraph
+from logic.faction_ops import entity_display_name
 
 
 def create_settlement(world: Any, name: str, zone: str,
@@ -107,10 +108,7 @@ def deposit_to_stockpile(world: Any, eid: int,
 
     stockpile.add(item_id, actual)
 
-    name = "?"
-    ident = world.get(eid, Identity)
-    if ident:
-        name = ident.name
+    name = entity_display_name(world, eid)
     print(f"[ECON] {name} deposited {actual}x {item_id} to stockpile")
 
     return actual

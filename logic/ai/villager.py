@@ -29,11 +29,10 @@ from components import (
     Brain, HomeRange, Position, Velocity, Needs, Hunger, Inventory,
     Identity, Faction, ItemRegistry,
 )
-from core.zone import is_passable, ZONE_PORTALS, ZONE_MAPS
+from core.zone import is_passable, ZONE_PORTALS
 from logic.ai.perception import find_player
 from logic.ai.steering import move_away, move_toward_pathfind
 from logic.ai.brains import register_brain
-from logic.pathfinding import find_path, path_next_waypoint
 from logic.needs import npc_eat_from_inventory
 from core.tuning import get as _tun
 
@@ -410,105 +409,15 @@ def _villager_brain(world: World, eid: int, brain: Brain, dt: float,
 
 # ── Wandering helper ─────────────────────────────────────────────────
 
-# Wander pick intervals now read from tuning
-
 def _wander_step(patrol: HomeRange, pos, vel, s: dict, dt: float,
                  speed_mult: float = 1.0, game_time: float = 0.0):
-    """Perform one frame of A*-backed wander, constrained to patrol radius.
-
-    Picks a random passable tile within patrol radius and follows an
-    A* path to it.  Falls back to reactive random walk when the zone
-    map is unavailable.
-    """
-    ox, oy = s.get("origin", (pos.x, pos.y))
-    wpath = s.get("_wander_path")
-    pick_time = s.get("_wander_pick_t", 0.0)
-    w_pick_max = _tun("ai.villager", "wander_pick_max", 4.5)
-    pick_ivl = s.get("_wander_pick_ivl", w_pick_max)
-    need_new = (
-        wpath is None
-        or len(wpath) == 0
-        or (game_time - pick_time) > pick_ivl
-    )
-
-    if need_new:
-        dest = None
-        tiles = ZONE_MAPS.get(pos.zone)
-        if tiles:
-            rows = len(tiles)
-            cols = len(tiles[0]) if rows else 0
-            for _ in range(6):
-                angle = random.uniform(0, 2 * math.pi)
-                r = random.uniform(1.5, patrol.radius)
-                tx = ox + math.cos(angle) * r
-                ty = oy + math.sin(angle) * r
-                tr, tc = int(ty), int(tx)
-                if 0 <= tr < rows and 0 <= tc < cols and is_passable(pos.zone, tx, ty):
-                    dest = (tx, ty)
-                    break
-        if dest:
-            new_path = find_path(pos.zone, pos.x, pos.y, dest[0], dest[1],
-                                 max_dist=int(patrol.radius) + 6)
-            s["_wander_path"] = new_path
-        else:
-            s["_wander_path"] = None
-        s["_wander_pick_t"] = game_time
-        w_pick_min = _tun("ai.villager", "wander_pick_min", 2.0)
-        s["_wander_pick_ivl"] = random.uniform(w_pick_min, w_pick_max)
-        wpath = s.get("_wander_path")
-
-    # Follow path
-    if wpath is not None and len(wpath) > 0:
-        wp = path_next_waypoint(wpath, pos.x, pos.y,
-                                reach=_tun("ai.villager", "waypoint_reach", 0.55))
-        if wp is not None:
-            wx, wy = wp
-            wdx = wx - pos.x
-            wdy = wy - pos.y
-            wd = math.hypot(wdx, wdy)
-            if wd > 0.05:
-                spd = patrol.speed * speed_mult
-                vel.x = (wdx / wd) * spd
-                vel.y = (wdy / wd) * spd
-            else:
-                vel.x, vel.y = 0.0, 0.0
-            return
-        else:
-            s["_wander_path"] = None
-            vel.x, vel.y = 0.0, 0.0
-            return
-
-    # Fallback: reactive random walk
-    s.setdefault("timer", 0.0)
-    s.setdefault("dir", (0.0, 0.0))
-
-    s["timer"] -= dt
-    if s["timer"] <= 0.0:
-        angle = random.uniform(0, 2 * math.pi)
-        spd = random.uniform(patrol.speed * 0.3,
-                             patrol.speed) * speed_mult
-        s["dir"] = (spd * math.cos(angle), spd * math.sin(angle))
-        s["timer"] = random.uniform(1.0, 3.0)
-
-    dx, dy = s["dir"]
-
-    nx = pos.x + dx * dt
-    ny = pos.y + dy * dt
-    if (nx - ox) ** 2 + (ny - oy) ** 2 > patrol.radius ** 2:
-        to_ox = ox - pos.x
-        to_oy = oy - pos.y
-        length = max(0.01, math.hypot(to_ox, to_oy))
-        spd = patrol.speed * 0.5 * speed_mult
-        s["dir"] = ((to_ox / length) * spd, (to_oy / length) * spd)
-        s["timer"] = random.uniform(0.5, 1.5)
-        dx, dy = s["dir"]
-
-    if is_passable(pos.zone, pos.x + dx * dt, pos.y + dy * dt):
-        vel.x = dx
-        vel.y = dy
-    else:
-        vel.x, vel.y = 0.0, 0.0
-        s["timer"] = 0.1
+    """Thin wrapper around :func:`logic.ai.wander.wander_step`."""
+    from logic.ai.wander import wander_step
+    wander_step(pos.zone, pos.x, pos.y, vel,
+                patrol.radius, patrol.speed,
+                s, dt, game_time,
+                speed_mult=speed_mult,
+                prefix="_vw", tun_ns="ai.villager")
 
 
 register_brain("villager", _villager_brain)

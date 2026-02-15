@@ -147,19 +147,3 @@ class Memory:
         for k in expired:
             self.data.pop(k, None)
             del self.expiry[k]
-
-
-@dataclass
-class GoalSet:
-    """Priority-ordered goal list for an entity.
-
-    ``goals`` is a list of ``(priority, Goal)`` tuples.  Lower priority
-    numbers are more important and preempt higher numbers.
-
-    ``active`` is the currently running Goal instance (or ``None``).
-    ``active_priority`` tracks the priority of the running goal so the
-    evaluator can decide whether a new goal should preempt it.
-    """
-    goals: list = field(default_factory=list)
-    active: Any = None
-    active_priority: int = 999

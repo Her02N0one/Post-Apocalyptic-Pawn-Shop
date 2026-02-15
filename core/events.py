@@ -41,15 +41,6 @@ class EntityDied:
 
 
 @dataclass
-class EntityHit:
-    """An entity took damage (after armor)."""
-    eid: int
-    attacker_eid: int | None = None
-    damage: float = 0.0
-    is_crit: bool = False
-
-
-@dataclass
 class FactionAlert:
     """Notify nearby allies that combat started."""
     group: str = ""
@@ -57,16 +48,6 @@ class FactionAlert:
     y: float = 0.0
     zone: str = ""
     threat_eid: int | None = None
-
-
-@dataclass
-class ProjectileHit:
-    """A projectile collided with something."""
-    proj_eid: int = 0
-    target_eid: int | None = None
-    x: float = 0.0
-    y: float = 0.0
-    zone: str = ""
 
 
 @dataclass
@@ -86,19 +67,6 @@ class CrimeWitnessed:
     x: float = 0.0
     y: float = 0.0
     zone: str = ""
-
-
-@dataclass
-class ZoneChanged:
-    """The player moved to a different zone."""
-    old_zone: str = ""
-    new_zone: str = ""
-
-
-@dataclass
-class TuningReloaded:
-    """The tuning.toml file was hot-reloaded."""
-    pass
 
 
 # ═══════════════════════════════════════════════════════════════════

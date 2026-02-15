@@ -12,6 +12,7 @@ from typing import Any
 from components import Health, Hunger, Inventory, Identity, ItemRegistry, Faction
 from components.simulation import SubzonePos, TravelPlan, WorldMemory, Home
 from simulation.subzone import SubzoneGraph
+from logic.faction_ops import entity_display_name
 
 
 def register_all_handlers(scheduler: Any, graph: SubzoneGraph) -> None:
@@ -60,10 +61,7 @@ def handle_arrive_node(world: Any, eid: int, event_type: str,
             if node:
                 szp.zone = node.zone
 
-    name = "?"
-    ident = world.get(eid, Identity)
-    if ident:
-        name = ident.name
+    name = entity_display_name(world, eid)
     print(f"[SIM] {name} arrived at {node_id} (from {from_node})")
 
     # Run checkpoint evaluation
@@ -95,10 +93,7 @@ def handle_hunger_critical(world: Any, eid: int, event_type: str,
     # Set hunger to the threshold
     hunger.current = max(0.0, hunger.maximum * 0.3)
 
-    name = "?"
-    ident = world.get(eid, Identity)
-    if ident:
-        name = ident.name
+    name = entity_display_name(world, eid)
 
     # Try to eat from inventory
     if _try_eat(world, eid, game_time):
@@ -152,10 +147,7 @@ def handle_finish_search(world: Any, eid: int, event_type: str,
         _post_decision(scheduler, eid, node_id, game_time)
         return
 
-    name = "?"
-    ident = world.get(eid, Identity)
-    if ident:
-        name = ident.name
+    name = entity_display_name(world, eid)
 
     # Transfer all items
     transferred = 0
@@ -190,10 +182,7 @@ def handle_finish_work(world: Any, eid: int, event_type: str,
     job = data.get("job", "")
     node_id = data.get("node", "")
 
-    name = "?"
-    ident = world.get(eid, Identity)
-    if ident:
-        name = ident.name
+    name = entity_display_name(world, eid)
 
     if job == "farming":
         # Add food to entity's settlement stockpile
@@ -256,10 +245,7 @@ def handle_rest_complete(world: Any, eid: int, event_type: str,
         health.current = min(health.maximum,
                              health.current + health.maximum * heal_rate)
 
-    name = "?"
-    ident = world.get(eid, Identity)
-    if ident:
-        name = ident.name
+    name = entity_display_name(world, eid)
     print(f"[SIM] {name} rested for {duration:.0f} min (HP: {health.current:.0f})"
           if health else f"[SIM] {name} rested")
 

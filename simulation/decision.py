@@ -23,6 +23,7 @@ from components import (
 from components.simulation import (
     SubzonePos, WorldMemory, Home, Stockpile, TravelPlan,
 )
+from logic.faction_ops import entity_display_name
 from simulation.subzone import SubzoneGraph
 
 
@@ -476,8 +477,5 @@ def _settlement_needs_supplies(world, home) -> bool:
 
 
 def _log_decision(world, eid, action_str: str) -> None:
-    name = "?"
-    ident = world.get(eid, Identity)
-    if ident:
-        name = ident.name
+    name = entity_display_name(world, eid)
     print(f"[SIM AI] {name}: {action_str}")

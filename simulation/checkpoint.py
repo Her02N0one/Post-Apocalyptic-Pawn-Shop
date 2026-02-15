@@ -22,6 +22,7 @@ from typing import Any
 from components import Health, Hunger, Inventory, Faction, Identity
 from components.simulation import SubzonePos, TravelPlan, WorldMemory
 from simulation.subzone import SubzoneGraph, SubzoneNode
+from logic.faction_ops import entity_display_name
 
 
 def run_checkpoint(world: Any, eid: int, node_id: str,
@@ -380,14 +381,8 @@ def _check_guard_crime_reaction(world: Any, eid: int,
 def _log_awareness(world: Any, eid: int, other_eid: int,
                    at_node: str, action: str) -> None:
     """Log adjacent-node awareness event."""
-    name = "?"
-    ident = world.get(eid, Identity)
-    if ident:
-        name = ident.name
-    other_name = "?"
-    other_ident = world.get(other_eid, Identity)
-    if other_ident:
-        other_name = other_ident.name
+    name = entity_display_name(world, eid)
+    other_name = entity_display_name(world, other_eid)
     print(f"[SIM AWARE] {name} spotted {other_name} at {at_node}"
           f" — {action}")
 
