@@ -1,4 +1,4 @@
-"""scenes/exhibits/helpers.py — Shared drawing and spawn utilities.
+"""scenes/exhibits/drawing.py — Shared drawing and spawn utilities.
 
 Used by multiple museum exhibits so they live here instead of being
 duplicated across exhibit files.
@@ -8,7 +8,6 @@ from __future__ import annotations
 import math
 import pygame
 from core.app import App
-from core.constants import TILE_SIZE
 from components import (
     Position, Velocity, Sprite, Identity, Collider, Hurtbox,
     Facing, Health, Lod, Brain,
@@ -121,7 +120,7 @@ def draw_entity_vision_cones(surface: pygame.Surface, ox: int, oy: int,
     Uses wireframe (arc + edge lines) instead of filled alpha surfaces
     so it stays fast even with realistic 5 km view distances.
     """
-    from logic.ai.perception import facing_to_angle
+    from systems.ai.perception import facing_to_angle
 
     sw, sh = surface.get_size()
     r, g, b = color[:3]

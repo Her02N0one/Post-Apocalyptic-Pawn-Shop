@@ -15,22 +15,16 @@ Controls:
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING
 
 from scenes.exhibits.base import Exhibit
 from core.constants import TILE_SIZE
 from components import (
     Position, Velocity, Sprite, Identity, Collider, Hurtbox,
-    Facing, Health, CombatStats, Lod, Brain, GameClock, Inventory,
+    Facing, Health, CombatStats, Lod, Brain, Inventory,
 )
 from components.ai import HomeRange, Threat, AttackConfig
 from components.social import Faction
-from components.simulation import SubzonePos, Home
-from simulation.stat_combat import stat_check_combat, CombatResult
-
-if TYPE_CHECKING:
-    import pygame
-    from core.app import App
+from systems.combat.offscreen import stat_check_combat, CombatResult
 
 
 class StatCombatExhibit(Exhibit):
@@ -196,7 +190,6 @@ class StatCombatExhibit(Exhibit):
             if not w.alive(eid):
                 continue
             hp = w.get(eid, Health)
-            ident = w.get(eid, Identity)
             if not hp:
                 continue
             bar_x = ox + bx * tile_px

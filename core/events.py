@@ -58,17 +58,6 @@ class AttackIntent:
     attack_type: str = "melee"     # "melee" or "ranged"
 
 
-@dataclass
-class CrimeWitnessed:
-    """A crime was observed by an NPC."""
-    criminal_eid: int = 0
-    witness_eid: int = 0
-    crime_type: str = ""
-    x: float = 0.0
-    y: float = 0.0
-    zone: str = ""
-
-
 # ═══════════════════════════════════════════════════════════════════
 #  Event Bus
 # ═══════════════════════════════════════════════════════════════════

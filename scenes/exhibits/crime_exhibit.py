@@ -18,23 +18,18 @@ Controls:
 
 from __future__ import annotations
 import math
-from typing import TYPE_CHECKING
 
 from scenes.exhibits.base import Exhibit
 from core.constants import TILE_SIZE
 from components import (
-    Position, Velocity, Sprite, Identity, Collider, Hurtbox,
+    Position, Velocity, Sprite, Identity, Collider,
     Facing, Health, CombatStats, Lod, Brain, GameClock,
     Player, Inventory,
 )
 from components.ai import HomeRange, Threat, AttackConfig, VisionCone
 from components.social import Faction, CrimeRecord
-from components.simulation import WorldMemory
-from logic.crime import find_witnesses, report_theft
-
-if TYPE_CHECKING:
-    import pygame
-    from core.app import App
+from components.offscreen import WorldMemory
+from systems.crime import find_witnesses, report_theft
 
 _WITNESS_RADIUS = 30.0  # m  (close enough to identify actions as criminal)
 
@@ -200,7 +195,6 @@ class CrimeExhibit(Exhibit):
 
     def draw(self, surface, ox, oy, app, eids, tile_px=TILE_SIZE, flags=None):
         import pygame
-        w = app.world
 
         # Draw witness radius circle around theft position
         if not flags or flags.ranges:

@@ -30,12 +30,12 @@ from components.ai import HomeRange, Threat, AttackConfig, VisionCone
 from components.combat import CombatStats, Projectile
 from components.rendering import HitFlash
 from components.social import Faction
-from logic.movement import movement_system
-from logic.ai.brains import tick_ai
-from logic.combat.projectiles import projectile_system
-from logic.combat import handle_death, npc_melee_attack, npc_ranged_attack
-from logic.combat.engagement import _combat_brain
-from logic.ai.perception import in_vision_cone, facing_to_angle
+from systems.physics import movement_system
+from systems.ai.brains import tick_ai
+from systems.combat.projectiles import projectile_system
+from systems.combat import handle_death, npc_melee_attack, npc_ranged_attack
+from systems.combat.engagement import _combat_brain
+from systems.ai.perception import in_vision_cone, facing_to_angle
 
 
 # ── Test harness ─────────────────────────────────────────────────────
@@ -361,7 +361,7 @@ def test_reaction_timing():
     # "searching" within 2 sensor ticks.  Previously, hostile NPCs
     # were skipped by emit_combat_sound — now only active modes
     # (chase/attack/flee) are skipped.
-    from logic.combat.attacks import emit_combat_sound, share_combat_intel
+    from systems.combat.attacks import emit_combat_sound, share_combat_intel
     w4 = World()
     _setup_bus(w4)
     tiles4 = _make_arena(80, 20, ZONE)
@@ -1087,7 +1087,7 @@ def test_fire_line_and_los_pathfinding():
     """NPCs actively reposition out of fire-lines, seek cover, and spread."""
     print("\n=== 7: Tactical Positioning, Cover & Fire-Line Communication ===")
     ZONE = "fireline_test"
-    from logic.combat.targeting import (
+    from systems.combat.targeting import (
         get_ally_fire_lines, fire_line_dodge_vector,
         point_fire_line_dist, FireLine, find_chase_los_waypoint,
         find_tactical_position, get_ally_positions,

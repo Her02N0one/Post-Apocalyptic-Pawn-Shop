@@ -5,10 +5,10 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.pytest_cache/
 
 # Virtual environment
-.venv/
-.venv-win/
+.venv*/
 venv/
 
 # IDE

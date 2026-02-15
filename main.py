@@ -15,7 +15,7 @@ from core.bootstrap import (
     load_game_data, resolve_zone, create_player,
     setup_world_resources, spawn_characters,
 )
-from scenes.world_scene import WorldScene
+from scenes.world import WorldScene
 
 
 def main():

@@ -28,10 +28,10 @@ from components import (
 )
 from components.ai import HomeRange
 from components.social import Faction
-from components.simulation import SubzonePos, Home
-from simulation.subzone import SubzoneGraph, SubzoneNode
-from simulation.scheduler import WorldScheduler
-from simulation.lod_transition import promote_entity, demote_entity
+from components.offscreen import SubzonePos, Home
+from core.subzone import SubzoneGraph, SubzoneNode
+from systems.simulation.scheduler import WorldScheduler
+from systems.simulation.lod import promote_entity, demote_entity
 
 if TYPE_CHECKING:
     import pygame

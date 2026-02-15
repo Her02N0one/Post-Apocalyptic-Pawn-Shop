@@ -4,7 +4,10 @@ NPC gateway placement, and the villager schedule brain.
 Run: python test_fixes.py
 """
 from __future__ import annotations
-import sys, traceback, random, math
+import math
+import random
+import sys
+import traceback
 
 passed = 0
 failed = 0
@@ -87,10 +90,10 @@ try:
         Identity, Position, Velocity, Collider, Hurtbox, Facing,
         Health, Brain, Lod, Inventory, HomeRange,
     )
-    from components.simulation import SubzonePos
-    from simulation.subzone import SubzoneGraph
-    from simulation.lod_transition import promote_entity
-    from simulation.scheduler import WorldScheduler
+    from components.offscreen import SubzonePos
+    from core.subzone import SubzoneGraph
+    from systems.simulation.lod import promote_entity
+    from systems.simulation.scheduler import WorldScheduler
 
     world = World()
     graph = SubzoneGraph.from_toml("data/subzones.toml")
@@ -162,10 +165,10 @@ try:
     from components import (
         Identity, Position, Health, Brain, Lod, HomeRange,
     )
-    from components.simulation import SubzonePos, TravelPlan
-    from simulation.subzone import SubzoneGraph
-    from simulation.lod_transition import promote_entity
-    from simulation.scheduler import WorldScheduler
+    from components.offscreen import SubzonePos, TravelPlan
+    from core.subzone import SubzoneGraph
+    from systems.simulation.lod import promote_entity
+    from systems.simulation.scheduler import WorldScheduler
     from core.zone import load_portals, ZONE_PORTALS
 
     # Ensure portals are loaded
@@ -261,7 +264,7 @@ print("\n=== Test 4: Villager brain schedule ===")
 try:
     from core import tuning as tuning_mod
     tuning_mod.load()
-    from logic.ai.villager import (
+    from systems.ai.villager import (
         _time_of_day, _day_length, _villager_brain,
         _walk_toward,
     )
@@ -270,7 +273,7 @@ try:
         Brain, HomeRange, Position, Velocity, Identity, Lod,
         GameClock,
     )
-    from simulation.subzone import SubzoneGraph
+    from core.subzone import SubzoneGraph
 
     DAY_LENGTH = _day_length()
 
@@ -362,10 +365,10 @@ try:
         Identity, Position, Velocity, Collider, Hurtbox, Facing,
         Lod, Inventory,
     )
-    from components.simulation import SubzonePos
-    from simulation.subzone import SubzoneGraph
-    from simulation.lod_transition import promote_entity, demote_entity
-    from simulation.scheduler import WorldScheduler
+    from components.offscreen import SubzonePos
+    from core.subzone import SubzoneGraph
+    from systems.simulation.lod import promote_entity, demote_entity
+    from systems.simulation.scheduler import WorldScheduler
 
     world = World()
     graph = SubzoneGraph.from_toml("data/subzones.toml")
@@ -412,12 +415,12 @@ try:
     from core.ecs import World
     from components import (
         Identity, Position, Velocity, Collider, Hurtbox, Facing,
-        Health, Brain, Lod, Inventory, HomeRange, Player,
+        Health, Brain, Lod, Inventory, HomeRange,
     )
-    from components.simulation import SubzonePos
-    from simulation.subzone import SubzoneGraph
-    from simulation.lod_transition import on_player_enter_zone
-    from simulation.scheduler import WorldScheduler
+    from components.offscreen import SubzonePos
+    from core.subzone import SubzoneGraph
+    from systems.simulation.lod import on_player_enter_zone
+    from systems.simulation.scheduler import WorldScheduler
 
     world = World()
     graph = SubzoneGraph.from_toml("data/subzones.toml")
@@ -475,7 +478,7 @@ except Exception:
 print("\n=== Test 7: Wall avoidance in _walk_toward ===")
 
 try:
-    from logic.ai.villager import _walk_toward
+    from systems.ai.villager import _walk_toward
     from components import Position, Velocity
     from core import zone as _zone_mod
 
@@ -539,7 +542,7 @@ except Exception:
 print("\n=== Test 8: Stuck detection ===")
 
 try:
-    from logic.ai.villager import _check_stuck
+    from systems.ai.villager import _check_stuck
     from core.tuning import get as _tun
     _STUCK_CHECK_INTERVAL = _tun("ai.villager", "stuck_check_interval", 1.0)
 

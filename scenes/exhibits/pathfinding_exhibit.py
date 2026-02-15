@@ -9,7 +9,7 @@ import pygame
 from core.app import App
 from core.constants import TILE_SIZE, TILE_WALL, TILE_GRASS
 from core.zone import ZONE_MAPS
-from logic.pathfinding import find_path
+from systems.pathfinding import find_path
 from scenes.exhibits.base import Exhibit
 from scenes.exhibits.drawing import draw_diamond
 

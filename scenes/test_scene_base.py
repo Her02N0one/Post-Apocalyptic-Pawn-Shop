@@ -124,21 +124,21 @@ class TestScene(Scene):
 
     def _draw_tiles(self, surface: pygame.Surface, *, show_grid: bool = False):
         """Draw the tile map using the shared renderer."""
-        from scenes.world_draw import draw_tiles
+        from scenes.world.draw import draw_tiles
         ox, oy = self._cam_offset(surface)
         draw_tiles(surface, self.tiles, ox, oy, show_grid,
                    0, 0, self.map_h, self.map_w)
 
     def _draw_entities(self, surface: pygame.Surface, app: App):
         """Draw all entities in this zone using the shared renderer."""
-        from scenes.world_draw import draw_entities
+        from scenes.world.draw import draw_entities
         ox, oy = self._cam_offset(surface)
         draw_entities(surface, app, ox, oy, self.zone, show_all_zones=False)
 
     def _draw_particles(self, surface: pygame.Surface, app: App):
         """Draw particles using the shared renderer."""
-        from logic.particles import ParticleManager
-        from scenes.world_draw import draw_particles
+        from systems.particles import ParticleManager
+        from scenes.world.draw import draw_particles
         pm = app.world.res(ParticleManager)
         if pm:
             ox, oy = self._cam_offset(surface)

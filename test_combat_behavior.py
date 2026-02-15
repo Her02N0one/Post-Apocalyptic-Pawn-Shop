@@ -9,7 +9,10 @@ layouts.  If they pass, the combat AI is behaving correctly.
 Run:  python test_combat_behavior.py
 """
 from __future__ import annotations
-import sys, math, random, traceback
+import math
+import random
+import sys
+import traceback
 
 # ── Test framework ──────────────────────────────────────────────────
 
@@ -34,21 +37,21 @@ def fail(label: str, detail: str = ""):
 
 # ── Imports ──────────────────────────────────────────────────────────
 
-from core.ecs import World
-from core.zone import ZONE_MAPS
-from core.constants import TILE_GRASS, TILE_WALL
-from core.events import EventBus, AttackIntent
-from components import (
+from core.ecs import World  # noqa: E402
+from core.zone import ZONE_MAPS  # noqa: E402
+from core.constants import TILE_GRASS, TILE_WALL  # noqa: E402
+from core.events import EventBus, AttackIntent  # noqa: E402
+from components import (  # noqa: E402
     Position, Velocity, Identity, Health, Facing, Brain,
     Collider, Hurtbox, Sprite, Player, Lod,
 )
-from components.ai import HomeRange, Threat, AttackConfig, VisionCone
-from components.combat import CombatStats
-from components.social import Faction
-from components.resources import GameClock
+from components.ai import HomeRange, Threat, AttackConfig, VisionCone  # noqa: E402
+from components.combat import CombatStats  # noqa: E402
+from components.social import Faction  # noqa: E402
+from components.resources import GameClock  # noqa: E402
 
 # Ensure tuning is loaded (uses defaults if no file)
-import core.tuning as _tuning
+import core.tuning as _tuning  # noqa: E402
 _tuning.load()
 
 
@@ -154,7 +157,7 @@ def _spawn_target(w: World, x: float, y: float, *,
 
 def _tick(w: World, npc_eid: int, dt: float = 0.016):
     """Run one combat brain tick at the current GameClock time."""
-    from logic.combat.engagement import _combat_brain
+    from systems.combat.engagement import _combat_brain
     clock = w.res(GameClock)
     brain = w.get(npc_eid, Brain)
     _combat_brain(w, npc_eid, brain, dt, clock.time)
@@ -882,7 +885,7 @@ try:
     tiles = _make_arena(20, 20, walls=wall_cells)
     w = _make_world()
 
-    from logic.combat.targeting import find_los_position
+    from systems.combat.targeting import find_los_position
     from core.zone import has_line_of_sight
 
     result = find_los_position(
@@ -918,7 +921,7 @@ try:
             thick_walls.append((r, c_off))
     _make_arena(20, 20, walls=thick_walls)
 
-    from logic.combat.targeting import find_los_position
+    from systems.combat.targeting import find_los_position
 
     result = find_los_position(
         ZONE, 5.0, 10.0,    # NPC position behind thick wall
@@ -964,7 +967,7 @@ try:
     brain_speed = math.hypot(vel.x, vel.y)
 
     # Now run movement system
-    from logic.movement import movement_system
+    from systems.physics import movement_system
     tiles = ZONE_MAPS[ZONE]
     movement_system(w, 0.016, tiles)
 
@@ -1005,7 +1008,7 @@ try:
     npc = _spawn_npc(w, 5.0, 10.0)
     tgt = _spawn_target(w, 10.0, 10.0)
 
-    from logic.combat.targeting import acquire_target
+    from systems.combat.targeting import acquire_target
 
     pos = w.get(npc, Position)
     info = acquire_target(w, npc, pos, 12.0)
@@ -1027,7 +1030,7 @@ try:
     npc = _spawn_npc(w, 8.0, 10.0)
     tgt = _spawn_target(w, 12.0, 10.0)
 
-    from logic.combat.targeting import acquire_target
+    from systems.combat.targeting import acquire_target
 
     pos = w.get(npc, Position)
     info = acquire_target(w, npc, pos, 12.0)
@@ -1048,7 +1051,7 @@ try:
     npc = _spawn_npc(w, 5.0, 10.0)
     tgt = _spawn_target(w, 10.0, 10.0)
 
-    from logic.combat.targeting import acquire_target
+    from systems.combat.targeting import acquire_target
 
     pos = w.get(npc, Position)
     info = acquire_target(w, npc, pos, 12.0)
@@ -1077,7 +1080,7 @@ try:
                         home_disposition="hostile"))
     w.zone_add(ally, ZONE)
 
-    from logic.combat.targeting import ally_in_line_of_fire
+    from systems.combat.targeting import ally_in_line_of_fire
 
     npc_pos = w.get(npc, Position)
     result = ally_in_line_of_fire(w, npc, npc_pos, 15.0, 15.0)
@@ -1106,7 +1109,7 @@ try:
                         home_disposition="hostile"))
     w.zone_add(ally, ZONE)
 
-    from logic.combat.targeting import ally_in_line_of_fire
+    from systems.combat.targeting import ally_in_line_of_fire
 
     npc_pos = w.get(npc, Position)
     result = ally_in_line_of_fire(w, npc, npc_pos, 15.0, 15.0)
@@ -1133,7 +1136,7 @@ try:
     # Target is to the LEFT (behind the NPC's facing)
     tgt = _spawn_target(w, 5.0, 15.0)
 
-    from logic.combat.targeting import is_detected_idle
+    from systems.combat.targeting import is_detected_idle
 
     npc_pos = w.get(npc, Position)
     dist = math.hypot(15.0 - 5.0, 0)
@@ -1188,7 +1191,7 @@ try:
     w.get(guard, Faction).disposition = "neutral"
     w.get(guard, Faction).home_disposition = "neutral"
 
-    from logic.combat.attacks import emit_combat_sound
+    from systems.combat.attacks import emit_combat_sound
     att_pos = w.get(attacker, Position)
     emit_combat_sound(w, attacker, att_pos, "gunshot")
 
@@ -1310,7 +1313,7 @@ try:
     w.get(ally, Faction).disposition = "neutral"
     attacker = _spawn_target(w, 8.0, 10.0, as_player=True)
 
-    from logic.combat.attacks import alert_nearby_faction
+    from systems.combat.attacks import alert_nearby_faction
     alert_nearby_faction(w, defender, attacker)
 
     ally_brain = w.get(ally, Brain)

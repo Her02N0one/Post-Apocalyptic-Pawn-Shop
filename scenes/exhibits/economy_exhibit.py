@@ -17,27 +17,21 @@ Controls:
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING
 
 from scenes.exhibits.base import Exhibit
 from core.constants import TILE_SIZE
 from components import (
     Position, Velocity, Sprite, Identity, Collider,
-    Facing, Health, CombatStats, Lod, Brain, GameClock,
+    Facing, Health, CombatStats, Lod, Brain,
     Hunger, Inventory,
 )
 from components.ai import HomeRange
 from components.social import Faction
-from components.simulation import SubzonePos, Home, Stockpile
-from simulation.economy import (
-    create_settlement, deposit_to_stockpile,
-    withdraw_from_stockpile, settlement_needs,
-    get_settlement_stockpile,
+from components.offscreen import SubzonePos, Home, Stockpile
+from systems.economy import (
+    deposit_to_stockpile,
+    withdraw_from_stockpile,
 )
-
-if TYPE_CHECKING:
-    import pygame
-    from core.app import App
 
 
 class EconomyExhibit(Exhibit):
@@ -201,7 +195,6 @@ class EconomyExhibit(Exhibit):
         pass
 
     def draw(self, surface, ox, oy, app, eids, tile_px=TILE_SIZE, flags=None):
-        import pygame
         w = app.world
 
         # Stockpile display

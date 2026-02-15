@@ -16,14 +16,14 @@ from core.app import App
 from core.constants import TILE_SIZE, TILE_WALL
 from core.zone import ZONE_MAPS
 from components import (
-    Position, Velocity, Sprite, Identity, Collider, Hurtbox,
+    Position, Velocity, Sprite, Identity, Collider,
     Facing, Health, Lod, Brain,
 )
 from components.ai import HomeRange, VisionCone
 from components.combat import CombatStats
 from components.social import Faction
-from logic.movement import movement_system
-from logic.ai.brains import tick_ai
+from systems.physics import movement_system
+from systems.ai.brains import tick_ai
 from scenes.exhibits.base import Exhibit
 from scenes.exhibits.drawing import (
     draw_circle_alpha, draw_entity_vision_cones,

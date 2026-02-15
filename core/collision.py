@@ -1,6 +1,6 @@
 """core/collision.py — Low-level AABB / tile-grid collision primitives.
 
-These live in ``core/`` (not ``logic/``) because both the engine layer
+These live in ``core/`` (not ``systems/``) because both the engine layer
 (zone safe-spawn resolution) and gameplay systems (movement, projectiles)
 need them.  Keeping them here prevents a circular dependency.
 """

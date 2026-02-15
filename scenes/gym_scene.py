@@ -29,8 +29,8 @@ from components import (
     Hurtbox, Health, Brain, Facing, Lod, GameClock,
 )
 from components.ai import HomeRange
-from logic.pathfinding import find_path
-from logic.tick import tick_systems
+from systems.pathfinding import find_path
+from systems.tick import tick_systems
 from scenes.test_scene_base import TestScene
 
 
@@ -290,7 +290,7 @@ class GymScene(TestScene):
         if self.goal:
             gx = ox + int(self.goal[0] * TILE_SIZE)
             gy = oy + int(self.goal[1] * TILE_SIZE)
-            from scenes.world_draw import _draw_diamond
+            from scenes.world.draw import _draw_diamond
             _draw_diamond(surface, (255, 50, 50), gx, gy, 6)
 
         # A* path from player

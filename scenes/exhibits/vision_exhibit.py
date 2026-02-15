@@ -19,18 +19,18 @@ from core.constants import TILE_SIZE
 from core.events import EventBus
 from components import (
     Position, Velocity, Sprite, Identity, Collider, Hurtbox,
-    Facing, Health, Lod, Brain, GameClock,
+    Facing, Health, Lod, Brain,
 )
 from components.ai import HomeRange, Threat, AttackConfig, VisionCone
 from components.combat import CombatStats
 from components.social import Faction
-from logic.movement import movement_system
-from logic.ai.brains import tick_ai
-from logic.combat.projectiles import projectile_system
-from logic.combat import handle_death, npc_melee_attack, npc_ranged_attack
-from logic.ai.perception import in_vision_cone, facing_to_angle
+from systems.physics import movement_system
+from systems.ai.brains import tick_ai
+from systems.combat.projectiles import projectile_system
+from systems.combat import handle_death, npc_melee_attack, npc_ranged_attack
+from systems.ai.perception import in_vision_cone, facing_to_angle
 from scenes.exhibits.base import Exhibit
-from scenes.exhibits.drawing import draw_cone_alpha, draw_circle_alpha
+from scenes.exhibits.drawing import draw_cone_alpha
 
 
 class VisionExhibit(Exhibit):

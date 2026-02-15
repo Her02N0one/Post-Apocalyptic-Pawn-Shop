@@ -9,6 +9,7 @@ combat         CombatStats, Loot, LootTableRef, Projectile
 ai             Brain, Task
 resources      Camera, SpawnInfo, Lod, ZoneMetadata, Player
 item_registry  ItemRegistry
+offscreen      SubzonePos, TravelPlan, Home, Stockpile, WorldMemory
 
 All public names are re-exported here so existing code that does
 ``from components import Position`` continues to work unchanged.
@@ -38,8 +39,8 @@ from components.resources import Camera, GameClock, SpawnInfo, Lod, ZoneMetadata
 # ── Registries ───────────────────────────────────────────────────────
 from components.item_registry import ItemRegistry
 
-# ── Simulation ───────────────────────────────────────────────────────
-from components.simulation import (
+# ── Off-screen (low-LOD) ─────────────────────────────────────────────
+from components.offscreen import (
     SubzonePos, TravelPlan, Home, Stockpile, MemoryEntry, WorldMemory,
 )
 

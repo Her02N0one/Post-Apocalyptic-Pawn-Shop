@@ -37,7 +37,7 @@ def fail(label: str, detail: str = ""):
 def make_world_and_sim():
     """Build a fresh ECS world + WorldSim with the subzone graph loaded."""
     from core.ecs import World
-    from simulation.world_sim import WorldSim
+    from systems.simulation.manager import WorldSim
 
     world = World()
     ws = WorldSim(world)
@@ -53,7 +53,7 @@ def spawn_npc(world, name, zone, subzone, faction_group, faction_disp,
     from components import (
         Identity, Health, Hunger, Inventory, CombatStats, Faction, Threat,
     )
-    from components.simulation import SubzonePos, Home, WorldMemory
+    from components.offscreen import SubzonePos, Home, WorldMemory
 
     eid = world.spawn()
     world.add(eid, Identity(name=name, kind="npc"))
@@ -97,7 +97,7 @@ try:
     ok(f"Spawned settler eid={settler} at road_crossroads")
 
     # Verify routes exist across the full graph
-    from simulation.travel import plan_route, begin_travel
+    from systems.simulation.travel import plan_route, begin_travel
 
     raider_plan = plan_route(ws.graph, "ruins_deep", "sett_market")
     assert raider_plan is not None, "No route from ruins_deep to sett_market"
@@ -111,9 +111,9 @@ try:
     ws.bootstrap(world, 0.0)
 
     # Both are at road_crossroads — directly trigger encounter
-    from simulation.stat_combat import resolve_encounter
+    from systems.combat.offscreen import resolve_encounter
     from components import Health
-    from components.simulation import SubzonePos
+    from components.offscreen import SubzonePos
 
     result = resolve_encounter(world, raider, settler, "road_crossroads",
                                ws.graph, ws.scheduler, 0.0)
@@ -165,7 +165,7 @@ try:
        f"{set(e.event_type for e in pending)}")
 
     # Winner should have combat memory
-    from components.simulation import WorldMemory
+    from components.offscreen import WorldMemory
     wmem = world.get(winner, WorldMemory)
     assert wmem is not None
     combat_mems = wmem.query_prefix("combat:")
@@ -215,7 +215,7 @@ try:
     # Both head to sett_farm (where Alice already is — Bob will arrive)
     ws.bootstrap(world, 0.0)
 
-    from simulation.travel import plan_route, begin_travel
+    from systems.simulation.travel import plan_route, begin_travel
     bob_plan = plan_route(ws.graph, "sett_well", "sett_farm")
     assert bob_plan is not None
     begin_travel(world, bob, bob_plan, ws.graph, ws.scheduler, 0.0)
@@ -296,7 +296,7 @@ try:
     ws.bootstrap(world, 0.0)
 
     # Send guard to market
-    from simulation.travel import plan_route, begin_travel
+    from systems.simulation.travel import plan_route, begin_travel
     plan = plan_route(ws.graph, "sett_gate", "sett_market")
     assert plan is not None
     begin_travel(world, guard, plan, ws.graph, ws.scheduler, 0.0)
@@ -343,7 +343,7 @@ try:
         Position, Player, Camera, Health, Hunger, Inventory,
         Identity, GameClock,
     )
-    from components.simulation import SubzonePos, WorldMemory
+    from components.offscreen import SubzonePos, WorldMemory
 
     world = World()
 
@@ -476,7 +476,7 @@ try:
     ws.bootstrap(world, 0.0)
 
     # Manually trigger the encounter via checkpoint
-    from simulation.stat_combat import resolve_encounter
+    from systems.combat.offscreen import resolve_encounter
     result = resolve_encounter(world, brute, coward, "ruins_entrance",
                                ws.graph, ws.scheduler, 0.0)
 

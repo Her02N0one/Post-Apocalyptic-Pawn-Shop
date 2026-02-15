@@ -16,13 +16,13 @@ from components import (
 from components.ai import HomeRange, Threat, AttackConfig, VisionCone
 from components.combat import CombatStats
 from components.social import Faction
-from logic.movement import movement_system
-from logic.ai.brains import tick_ai
-from logic.combat.projectiles import projectile_system
-from logic.combat import handle_death, npc_melee_attack, npc_ranged_attack
+from systems.physics import movement_system
+from systems.ai.brains import tick_ai
+from systems.combat.projectiles import projectile_system
+from systems.combat import handle_death, npc_melee_attack, npc_ranged_attack
 from scenes.exhibits.base import Exhibit
 from scenes.exhibits.drawing import (
-    draw_circle_alpha, draw_entity_vision_cones, spawn_combat_npc,
+    draw_entity_vision_cones, spawn_combat_npc,
 )
 
 

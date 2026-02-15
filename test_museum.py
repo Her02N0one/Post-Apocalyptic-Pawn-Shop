@@ -7,25 +7,27 @@ catch it.
 Run: python test_museum.py
 """
 from __future__ import annotations
-import sys, traceback, random, math
+import math
+import sys
+import traceback
 
 # ── Bootstrap (tuning + zone map) ────────────────────────────────────
 from core.tuning import load as _load_tuning
 _load_tuning()
 
-from core.ecs import World
-from core.zone import ZONE_MAPS
-from core.constants import (
-    TILE_GRASS, TILE_WALL, TILE_SIZE,
+from core.ecs import World  # noqa: E402
+from core.zone import ZONE_MAPS  # noqa: E402
+from core.constants import (  # noqa: E402
+    TILE_GRASS, TILE_WALL,
 )
-from core.events import EventBus, AttackIntent, EntityDied
-from components import (
+from core.events import EventBus, EntityDied  # noqa: E402
+from components import (  # noqa: E402
     Position, Velocity, Sprite, Identity, Collider, Hurtbox, Facing,
     Health, Hunger, Needs, Inventory, CombatStats, Lod, Brain, GameClock,
     Player,
 )
-from components.ai import HomeRange, Threat, AttackConfig, VisionCone
-from components.social import Faction
+from components.ai import HomeRange, Threat, AttackConfig, VisionCone  # noqa: E402
+from components.social import Faction  # noqa: E402
 
 # ── Test harness ─────────────────────────────────────────────────────
 
@@ -149,7 +151,7 @@ def spawn_combat_npc(w: World, name: str, brain_kind: str,
 
 def wire_combat(w: World):
     """Subscribe EntityDied + AttackIntent handlers — same as museum."""
-    from logic.combat import handle_death, npc_melee_attack, npc_ranged_attack
+    from systems.combat import handle_death, npc_melee_attack, npc_ranged_attack
     bus = w.res(EventBus)
 
     def _on_entity_died(ev):
@@ -171,8 +173,8 @@ def wire_combat(w: World):
 
 print("\n=== Test 1: Patrol — NPCs stay within patrol radius ===")
 try:
-    from logic.ai.brains import tick_ai
-    from logic.movement import movement_system
+    from systems.ai.brains import tick_ai
+    from systems.physics import movement_system
 
     w, tiles = fresh_world()
 
@@ -267,9 +269,9 @@ except Exception:
 
 print("\n=== Test 2: CombatStats — Two teams fight, damage is dealt ===")
 try:
-    from logic.ai.brains import tick_ai
-    from logic.movement import movement_system
-    from logic.combat.projectiles import projectile_system
+    from systems.ai.brains import tick_ai
+    from systems.physics import movement_system
+    from systems.combat.projectiles import projectile_system
 
     w, tiles = fresh_world()
     wire_combat(w)
@@ -395,10 +397,10 @@ except Exception:
 
 print("\n=== Test 3: Hearing — gunshot triggers searching then chase ===")
 try:
-    from logic.ai.brains import tick_ai
-    from logic.movement import movement_system
-    from logic.combat.projectiles import projectile_system
-    from logic.combat.attacks import emit_combat_sound
+    from systems.ai.brains import tick_ai
+    from systems.physics import movement_system
+    from systems.combat.projectiles import projectile_system
+    from systems.combat.attacks import emit_combat_sound
 
     w, tiles = fresh_world(tiles=[[TILE_GRASS] * 1620 for _ in range(30)])
     ZONE_MAPS[ZONE] = tiles
@@ -530,7 +532,7 @@ except Exception:
 
 print("\n=== Test 4: Pathfinding — A* finds paths, avoids walls ===")
 try:
-    from logic.pathfinding import find_path
+    from systems.pathfinding import find_path
 
     tiles = make_arena()
 
@@ -572,7 +574,7 @@ try:
     # Path through the narrow gap at row 10, col 15
     path2 = find_path(ZONE, 12.5, 10.5, 18.5, 10.5)
     if path2 and len(path2) >= 2:
-        ok(f"A* finds path through the 1-tile gap at (15,10)")
+        ok("A* finds path through the 1-tile gap at (15,10)")
     else:
         fail("A* cannot find path through the narrow gap")
 
@@ -596,9 +598,9 @@ except Exception:
 
 print("\n=== Test 5: Faction — Alert cascade when raider attacks ===")
 try:
-    from logic.ai.brains import tick_ai
-    from logic.movement import movement_system
-    from logic.combat.projectiles import projectile_system
+    from systems.ai.brains import tick_ai
+    from systems.physics import movement_system
+    from systems.combat.projectiles import projectile_system
 
     w, tiles = fresh_world()
     wire_combat(w)
@@ -716,7 +718,7 @@ except Exception:
 
 print("\n=== Test 6: Vision — directional cone detection ===")
 try:
-    from logic.ai.perception import in_vision_cone
+    from systems.ai.perception import in_vision_cone
 
     # Direct vision cone test — target directly in front of guard
     guard_pos = Position(x=15.0, y=10.0, zone=ZONE)
@@ -812,7 +814,7 @@ try:
     w.zone_add(ta, ZONE)
 
     # Tick once — guard should detect player in front and chase
-    from logic.combat.engagement import _combat_brain
+    from systems.combat.engagement import _combat_brain
     brain = w.get(gid, Brain)
     clock = w.res(GameClock)
     _combat_brain(w, gid, brain, 0.016, clock.time)
@@ -859,7 +861,7 @@ except Exception:
 
 print("\n=== Test 7: Particles — Emit, tick, and decay ===")
 try:
-    from logic.particles import ParticleManager
+    from systems.particles import ParticleManager
 
     pm = ParticleManager(max_particles=512)
 
@@ -934,7 +936,7 @@ except Exception:
 
 print("\n=== Test 8: Needs — Hunger drains, NPCs eat ===")
 try:
-    from logic.needs import hunger_system, auto_eat_system
+    from systems.needs import hunger_system, auto_eat_system
 
     w, tiles = fresh_world()
 
@@ -976,7 +978,7 @@ try:
         clock = w.res(GameClock)
         clock.time += dt
         hunger_system(w, dt * time_scale)
-        auto_eat_system(w, dt * time_scale)
+        auto_eat_system(w)
         w.purge()
 
     # Check hunger decreased
@@ -1068,7 +1070,7 @@ except Exception:
 
 print("\n=== Test 9: tick_systems — Full system orchestration ===")
 try:
-    from logic.tick import tick_systems
+    from systems.tick import tick_systems
 
     w, tiles = fresh_world()
     wire_combat(w)
@@ -1083,7 +1085,7 @@ try:
         initial_facing="left")
 
     # Add particle manager
-    from logic.particles import ParticleManager
+    from systems.particles import ParticleManager
     w.set_res(ParticleManager())
 
     # Tick 100 frames via tick_systems (not calling individual systems)
@@ -1174,10 +1176,10 @@ except Exception:
 
 print("\n=== Test 11: LOD — Promote / demote lifecycle ===")
 try:
-    from components.simulation import SubzonePos, Home
-    from simulation.subzone import SubzoneGraph, SubzoneNode
-    from simulation.scheduler import WorldScheduler
-    from simulation.lod_transition import promote_entity, demote_entity
+    from components.offscreen import SubzonePos, Home
+    from core.subzone import SubzoneGraph, SubzoneNode
+    from systems.simulation.scheduler import WorldScheduler
+    from systems.simulation.lod import promote_entity, demote_entity
 
     w, tiles = fresh_world()
 
@@ -1300,7 +1302,7 @@ except Exception:
 
 print("\n=== Test 12: Stat Combat — off-screen DPS resolution ===")
 try:
-    from simulation.stat_combat import stat_check_combat, CombatResult
+    from systems.combat.offscreen import stat_check_combat, CombatResult
 
     w, tiles = fresh_world()
 
@@ -1389,8 +1391,8 @@ except Exception:
 
 print("\n=== Test 13: Economy — stockpile deposit / withdraw / needs ===")
 try:
-    from components.simulation import SubzonePos as _SZP, Home as _Home
-    from components.simulation import Stockpile
+    from components.offscreen import SubzonePos as _SZP, Home as _Home
+    from components.offscreen import Stockpile
 
     w, tiles = fresh_world()
 
@@ -1407,7 +1409,7 @@ try:
     w.add(farmer, _Home(zone=ZONE, subzone="haven_centre"))
 
     # Deposit food
-    from simulation.economy import deposit_to_stockpile, withdraw_from_stockpile
+    from systems.economy import deposit_to_stockpile, withdraw_from_stockpile
 
     deposited = deposit_to_stockpile(w, farmer, "raw_food", 3)
     if deposited == 3:
@@ -1417,7 +1419,7 @@ try:
 
     stockpile = w.get(s, Stockpile)
     if stockpile.items.get("raw_food", 0) == 6:
-        ok(f"Stockpile has 6 raw_food (3 initial + 3 deposited)")
+        ok("Stockpile has 6 raw_food (3 initial + 3 deposited)")
     else:
         fail(f"Stockpile raw_food = {stockpile.items.get('raw_food', 0)}")
 
@@ -1481,9 +1483,9 @@ except Exception:
 
 print("\n=== Test 14: Crime — witness detection + guard reaction ===")
 try:
-    from components.simulation import WorldMemory as _WM
+    from components.offscreen import WorldMemory as _WM
     from components.social import CrimeRecord as _CR
-    from logic.crime import find_witnesses, report_theft
+    from systems.crime import find_witnesses, report_theft
 
     w, tiles = fresh_world()
 

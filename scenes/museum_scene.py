@@ -28,10 +28,9 @@ from core.app import App
 from core.constants import TILE_SIZE, TILE_COLORS
 from core.zone import ZONE_MAPS
 from components import (
-    Position, Sprite, Identity, Camera, Health, Brain, Facing, GameClock,
+    Position, Sprite, Identity, Camera, Health, Brain, GameClock,
 )
 from components.social import Faction
-from components.combat import Projectile
 
 # ── Exhibits ─────────────────────────────────────────────────────────
 from scenes.exhibits.base import Exhibit, DebugFlags, FLAG_META

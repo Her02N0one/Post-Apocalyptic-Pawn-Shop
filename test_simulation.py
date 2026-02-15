@@ -8,7 +8,9 @@ Tests three things:
 Run: python test_simulation.py
 """
 from __future__ import annotations
-import json, sys, traceback
+import json
+import sys
+import traceback
 from pathlib import Path
 
 # ── Colorless pass/fail markers ──────────────────────────────────────────
@@ -38,8 +40,8 @@ print("\n=== Test 1: WorldSim initialization ===")
 
 try:
     from core.ecs import World
-    from simulation.world_sim import WorldSim
-    from simulation.subzone import SubzoneGraph
+    from systems.simulation.manager import WorldSim
+    from core.subzone import SubzoneGraph
 
     world = World()
     ws = WorldSim(world)
@@ -87,9 +89,9 @@ print("\n=== Test 2: Scheduler ticks a low-LOD NPC ===")
 try:
     from core.ecs import World
     from components import Identity, Hunger, Inventory
-    from components.simulation import SubzonePos, WorldMemory
-    from simulation.world_sim import WorldSim
-    from simulation.scheduler import WorldScheduler
+    from components.offscreen import SubzonePos, WorldMemory
+    from systems.simulation.manager import WorldSim
+    from systems.simulation.scheduler import WorldScheduler
 
     world = World()
     ws = WorldSim(world)
@@ -160,9 +162,9 @@ try:
     from components import (
         Identity, Hunger, Inventory, Health, Player, Position
     )
-    from components.simulation import SubzonePos, WorldMemory
-    from simulation.world_sim import WorldSim
-    from simulation.scheduler import WorldScheduler
+    from components.offscreen import SubzonePos, WorldMemory
+    from systems.simulation.manager import WorldSim
+    from systems.simulation.scheduler import WorldScheduler
 
     # Build a minimal world with player + low-LOD NPC
     world = World()
@@ -221,7 +223,7 @@ try:
         entities_data[str(eid)] = ent_data
 
     # Low-LOD entities (have SubzonePos, NOT Position)
-    from components.simulation import Home
+    from components.offscreen import Home
     for eid, sp in world.all_of(SubzonePos):
         if eid in seen_eids or world.has(eid, Player):
             continue
@@ -307,7 +309,7 @@ except Exception:
 print("\n=== Test 4: Scheduler queue serialization ===")
 
 try:
-    from simulation.scheduler import WorldScheduler
+    from systems.simulation.scheduler import WorldScheduler
 
     sched = WorldScheduler()
     sched.post(10.0, 1, "HUNGER_CRITICAL", {"severity": "high"})
@@ -348,8 +350,8 @@ print("\n=== Test 5: Decision cycle runs end-to-end ===")
 try:
     from core.ecs import World
     from components import Identity, Hunger, Inventory, Health
-    from components.simulation import SubzonePos, Home, WorldMemory
-    from simulation.world_sim import WorldSim
+    from components.offscreen import SubzonePos, Home, WorldMemory
+    from systems.simulation.manager import WorldSim
 
     world = World()
     ws = WorldSim(world)
@@ -369,7 +371,7 @@ try:
     ok("Bootstrap complete")
 
     # Manually trigger a decision cycle
-    from simulation.decision import run_decision_cycle
+    from systems.ai.offscreen import run_decision_cycle
     action = run_decision_cycle(world, npc, "sett_farm", ws.graph,
                                 ws.scheduler, 0.0)
     ok(f"Decision cycle returned: '{action}'")

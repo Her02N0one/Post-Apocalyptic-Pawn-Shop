@@ -26,9 +26,9 @@ from components import (
 from core.data import DataLoader
 from core import zone as core_zone
 from core.save import load_game_state
-from logic.entity_factory import spawn_from_descriptor
-from logic.loot_tables import LootTableManager
-from logic.particles import ParticleManager
+from systems.entity_factory import spawn_from_descriptor
+from systems.loot_tables import LootTableManager
+from systems.particles import ParticleManager
 
 if TYPE_CHECKING:
     from core.app import App
@@ -224,7 +224,7 @@ def spawn_characters(app: App) -> None:
     with open(char_path, "rb") as f:
         data = tomllib.load(f)
 
-    from components.simulation import SubzonePos
+    from components.offscreen import SubzonePos
 
     count = 0
     container_ids: dict[str, list[int]] = {}

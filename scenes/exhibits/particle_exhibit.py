@@ -8,7 +8,7 @@ import random
 import pygame
 from core.app import App
 from core.constants import TILE_SIZE
-from logic.particles import ParticleManager
+from systems.particles import ParticleManager
 from scenes.exhibits.base import Exhibit
 
 _MODES = ["hit", "crit", "death", "muzzle", "custom"]
