@@ -83,6 +83,20 @@ class Inventory(Component):
     items: dict[str, int] = field(default_factory=dict)
 
 
+# ── Template ─────────────────────────────────────────────────────────
+
+@dataclass
+class PrefabRef(Component):
+    """Links entity to its prefab template for rebuilding transient components.
+
+    uid:    unique identifier matching ``"id"`` in zone descriptor files.
+    prefab: prefab name used to look up default component values.
+    """
+    _persist = True
+    uid: str = ""
+    prefab: str = ""
+
+
 # ── Player ───────────────────────────────────────────────────────────
 
 @dataclass
@@ -113,7 +127,7 @@ __all__ = [
     "Position", "Velocity", "Facing", "Collider",
     "Sprite", "Identity",
     "Health", "Inventory",
-    "Player",
+    "PrefabRef", "Player",
     # Resources
     "Camera", "GameClock",
 ]

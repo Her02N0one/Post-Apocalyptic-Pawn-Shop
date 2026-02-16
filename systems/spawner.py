@@ -22,7 +22,7 @@ from core.ecs import Component
 from core.types import Direction, EntityKind
 from components import (
     Position, Velocity, Sprite, Identity, Health,
-    Facing, Collider,
+    Facing, Collider, PrefabRef, Player,
 )
 
 if TYPE_CHECKING:
@@ -93,6 +93,10 @@ def _build_facing(d: dict) -> Facing:
     return Facing(direction=_DIRECTION_MAP.get(dir_str, Direction.DOWN))
 
 
+def _build_player(d: dict) -> Player:
+    return Player(speed=float(d.get("speed", 6.0)))
+
+
 # ── Prefab defaults ──────────────────────────────────────────────────
 # A prefab is just a set of default components.  The descriptor can
 # override any of them.
@@ -112,6 +116,14 @@ _PREFAB_DEFAULTS: dict[str, dict[str, Any]] = {
         "collider": {"w": 0.8, "h": 0.8, "solid": True},
         "facing": {"direction": "down"},
     },
+    "player": {
+        "identity": {"name": "You", "kind": "player"},
+        "sprite": {"char": "@", "color": [255, 255, 100], "layer": 10},
+        "health": {"current": 100, "maximum": 100},
+        "collider": {"w": 0.8, "h": 0.8, "solid": True},
+        "facing": {"direction": "down"},
+        "player": {"speed": 6.0},
+    },
 }
 
 
@@ -128,6 +140,11 @@ def spawn_from_descriptor(world: "World", desc: dict[str, Any],
     # Resolve prefab defaults (descriptor values override)
     prefab_name = desc.get("prefab", "")
     defaults = _PREFAB_DEFAULTS.get(prefab_name, {})
+
+    # PrefabRef — links entity to its template for rebuild on load
+    uid = desc.get("id", "")
+    if uid or prefab_name:
+        world.add(eid, PrefabRef(uid=uid, prefab=prefab_name))
 
     def merged(key: str) -> dict | None:
         """Return merged prefab-default + descriptor-override dict."""
@@ -175,6 +192,11 @@ def spawn_from_descriptor(world: "World", desc: dict[str, Any],
     if face_data:
         world.add(eid, _build_facing(face_data))
 
+    # Player tag
+    player_data = merged("player")
+    if player_data:
+        world.add(eid, _build_player(player_data))
+
     return eid
 
 
@@ -186,3 +208,61 @@ def spawn_zone_entities(world: "World",
     Returns a list of spawned entity IDs.
     """
     return [spawn_from_descriptor(world, desc, zone) for desc in entities]
+
+
+# ── Transient rebuild (used after loading a save) ────────────────────
+
+def rebuild_transients(world: "World",
+                       descriptor_index: dict[str, dict[str, Any]]) -> None:
+    """Rebuild transient components for every entity that has a PrefabRef.
+
+    After loading a save, entities only have their *persistent* components
+    (Position, Health, Inventory, PrefabRef).  This function looks up each
+    entity's prefab defaults + per-entity descriptor overrides and re-attaches
+    the transient components (Sprite, Identity, Collider, Facing, Player, etc.).
+    """
+    for eid, ref in world.all_of(PrefabRef):
+        desc = descriptor_index.get(ref.uid, {})
+        defaults = _PREFAB_DEFAULTS.get(ref.prefab, {})
+
+        def _merged(key: str, _d: dict = desc, _df: dict = defaults) -> dict | None:
+            base = _df.get(key)
+            over = _d.get(key)
+            if base is None and over is None:
+                return None
+            if base is None:
+                return over
+            if over is None:
+                return dict(base)
+            result = dict(base)
+            result.update(over)
+            return result
+
+        # Velocity (always present, starts at zero)
+        if not world.has(eid, Velocity):
+            world.add(eid, Velocity())
+
+        # Sprite
+        sprite_data = _merged("sprite")
+        if sprite_data and not world.has(eid, Sprite):
+            world.add(eid, _build_sprite(sprite_data))
+
+        # Identity
+        id_data = _merged("identity")
+        if id_data and not world.has(eid, Identity):
+            world.add(eid, _build_identity(id_data))
+
+        # Collider
+        col_data = _merged("collider")
+        if col_data and not world.has(eid, Collider):
+            world.add(eid, _build_collider(col_data))
+
+        # Facing
+        face_data = _merged("facing")
+        if face_data and not world.has(eid, Facing):
+            world.add(eid, _build_facing(face_data))
+
+        # Player tag (only for player prefab)
+        player_data = _merged("player")
+        if player_data and not world.has(eid, Player):
+            world.add(eid, _build_player(player_data))

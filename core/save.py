@@ -83,7 +83,8 @@ def _component_from_dict(cls: type[Component], data: dict[str, Any]) -> Componen
 
 # ── Save ─────────────────────────────────────────────────────────────
 
-def save_game(world: "World", zone: str, slot: int = 0) -> Path:
+def save_game(world: "World", zone: str, slot: int = 0, *,
+              visited_zones: set[str] | None = None) -> Path:
     """Persist all _persist=True components to a save file.
 
     Returns the path written.
@@ -121,6 +122,7 @@ def save_game(world: "World", zone: str, slot: int = 0) -> Path:
     save_data = {
         "zone": zone,
         "clock": clock_time,
+        "visited_zones": sorted(visited_zones) if visited_zones else [zone],
         "entities": entities,
     }
 
