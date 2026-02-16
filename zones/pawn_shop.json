@@ -3,6 +3,7 @@
   "width": 12,
   "height": 10,
   "interior": true,
+  "first_person": true,
   "anchor": [5.0, 6.0],
   "tiles": [
     [ 6,  6,  6,  6,  6,  6,  6,  6,  6,  6,  6,  6],

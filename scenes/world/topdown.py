@@ -64,11 +64,11 @@ class TopDown(Scene):
             elif event.key == pygame.K_F9:
                 self.session.load()
             elif event.key == pygame.K_RETURN:
-                if self.session.is_interior:
+                if self.session.first_person:
                     from scenes.world.firstperson import FirstPerson
                     app.push_scene(FirstPerson(self.session))
                 else:
-                    self.session.status = "First-person only in interiors"
+                    self.session.status = "No first-person view here"
                     self.session.status_timer = 1.5
 
     def _do_interact(self, app: App) -> None:
@@ -130,6 +130,13 @@ class TopDown(Scene):
 
         # ── Events ───────────────────────────────────────────────
         app.world.events.flush()
+
+        # ── Portal check ─────────────────────────────────────────
+        if self.session.check_portals():
+            # Auto-switch to first-person if entering an FP zone
+            if self.session.first_person:
+                from scenes.world.firstperson import FirstPerson
+                app.push_scene(FirstPerson(self.session))
 
         # ── Camera follow player ─────────────────────────────────
         cam = app.world.resources.try_get(Camera)
@@ -240,7 +247,7 @@ class TopDown(Scene):
 
         # Controls
         hint = "WASD=move  E=interact  Tab=debug  F5=save  F9=load"
-        if self.session.is_interior:
+        if self.session.first_person:
             hint = "WASD=move  E=interact  Enter=1st person  Tab=debug  F5=save  F9=load"
         app.draw_text(surface, hint,
                       10, sh - 18,

@@ -241,27 +241,33 @@ class TestPrefabRef:
         assert set(data["visited_zones"]) == {"zone_a", "zone_b"}
 
 
-class TestInteriorFlag:
-    """Zone.interior propagates through Session."""
+class TestFirstPersonFlag:
+    """Zone.first_person propagates through Session."""
 
-    def test_playground_not_interior(self):
+    def test_playground_no_first_person(self):
         s = Session(World())
         s.new_game("playground")
-        assert s.is_interior is False
+        assert s.first_person is False
 
-    def test_pawn_shop_is_interior(self):
+    def test_pawn_shop_first_person(self):
         from core.zones import load_zone
         z = load_zone("pawn_shop")
-        assert z.interior is True
+        assert z.first_person is True
 
-    def test_session_interior_from_zone(self):
-        """Session.is_interior reflects loaded zone's flag."""
+    def test_session_first_person_from_zone(self):
+        """Session.first_person reflects loaded zone's flag."""
         s = Session(World())
         s.new_game("playground")
-        assert s.is_interior is False
+        assert s.first_person is False
         # Manually load an interior zone template
         s._load_zone_template("pawn_shop")
-        assert s.is_interior is True
+        assert s.first_person is True
+
+    def test_interior_implies_first_person(self):
+        """Zones with 'interior: true' auto-set first_person."""
+        from core.zones import load_zone
+        z = load_zone("pawn_shop")
+        assert z.first_person is True
 
     def test_window_tile_is_solid(self):
         """Physics should treat TILE_WINDOW as solid."""
@@ -275,3 +281,50 @@ class TestInteriorFlag:
         ]
         assert _hits_wall(1.5, 1.5, 0.5, 0.5, 3, 3, tiles) is True
         assert _hits_wall(0.5, 0.5, 0.5, 0.5, 3, 3, tiles) is False
+
+
+class TestPortals:
+    """Session.check_portals teleports the player between zones."""
+
+    def test_portal_changes_zone(self):
+        """Walking onto a portal tile switches the zone."""
+        w = World()
+        s = Session(w)
+        s.new_game("playground")
+        assert s.zone_name == "playground"
+        # Move player onto the house door tile (row=6, col=24)
+        result = w.query_one(Player, Position)
+        _, eid, pos = result[0], result[0], result[2]
+        pos.x = 24.0
+        pos.y = 6.0
+        changed = s.check_portals()
+        assert changed is True
+        assert s.zone_name == "house_interior"
+        assert s.first_person is True
+
+    def test_portal_round_trip(self):
+        """Can go into house_interior and come back."""
+        w = World()
+        s = Session(w)
+        s.new_game("playground")
+        result = w.query_one(Player, Position)
+        _, _, pos = result
+        # Enter house
+        pos.x, pos.y = 24.0, 6.0
+        s.check_portals()
+        assert s.zone_name == "house_interior"
+        # Exit house (portal at row=8, col=5)
+        pos.x, pos.y = 5.0, 8.0
+        s.check_portals()
+        assert s.zone_name == "playground"
+
+    def test_no_portal_no_change(self):
+        """Standing on a non-portal tile does nothing."""
+        w = World()
+        s = Session(w)
+        s.new_game("playground")
+        result = w.query_one(Player, Position)
+        _, _, pos = result
+        pos.x, pos.y = 10.0, 10.0
+        assert s.check_portals() is False
+        assert s.zone_name == "playground"

@@ -22,8 +22,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
-from core.zones import load_zone
-from components import Camera, GameClock
+from core.zones import load_zone, Zone
+from components import Camera, GameClock, Position, Player
 from systems.spawner import (
     spawn_from_descriptor,
     spawn_zone_entities,
@@ -50,7 +50,7 @@ class Session:
         self.map_h: int = 0
         self.visited_zones: set[str] = set()
 
-        self.is_interior: bool = False    # current zone allows first-person
+        self.first_person: bool = False   # current zone supports first-person view
 
         # uid → zone descriptor dict (for rebuilding transient components)
         self._descriptor_index: dict[str, dict[str, Any]] = {}
@@ -58,6 +58,43 @@ class Session:
         # Status message — the scene can read & display this
         self.status: str = ""
         self.status_timer: float = 0.0
+
+        # Portal lookup built when a zone is loaded
+        self._portal_map: dict[tuple[int,int], tuple[str, float, float]] = {}
+
+    # ── Portal checking ───────────────────────────────────────────
+
+    def check_portals(self) -> bool:
+        """If the player is standing on a portal tile, teleport them.
+
+        Returns True if a zone change occurred.
+        """
+        result = self.world.query_one(Player, Position)
+        if not result:
+            return False
+        eid, _, pos = result
+        # Player centre tile
+        r = int(pos.y + 0.4)
+        c = int(pos.x + 0.4)
+        key = (r, c)
+        if key not in self._portal_map:
+            return False
+
+        target_zone, target_r, target_c = self._portal_map[key]
+        old_zone = self.zone_name
+
+        # Load the destination zone
+        self._load_zone_template(target_zone)
+        self.visited_zones.add(target_zone)
+
+        # Move player
+        pos.x = target_c
+        pos.y = target_r
+        pos.zone = target_zone
+
+        self.status = f"Entered {target_zone}"
+        self.status_timer = 1.5
+        return True
 
     # ── New game ──────────────────────────────────────────────────
 
@@ -147,8 +184,9 @@ class Session:
         self.tiles = zd.tiles
         self.map_h = len(zd.tiles)
         self.map_w = len(zd.tiles[0]) if zd.tiles else 0
-        self.is_interior = zd.interior
+        self.first_person = zd.first_person
         self._cache_descriptors_from_list(zd.entities)
+        self._build_portal_map(zd)
 
     def _cache_zone_descriptors(self, name: str) -> None:
         """Cache entity descriptors from a zone without loading tiles."""
@@ -176,3 +214,14 @@ class Session:
         for eid in all_eids:
             self.world.kill(eid)
         self.world.purge()
+
+    def _build_portal_map(self, zd: "Zone") -> None:
+        """Build tile→(target_zone, row, col) lookup from zone portals."""
+        self._portal_map.clear()
+        for portal in zd.portals:
+            for tile in portal.tiles:
+                self._portal_map[tile] = (
+                    portal.target_zone,
+                    portal.target_row,
+                    portal.target_col,
+                )

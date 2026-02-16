@@ -200,6 +200,13 @@ class FirstPerson(Scene):
         # ── Events ───────────────────────────────────────────────
         app.world.events.flush()
 
+        # ── Portal check ─────────────────────────────────────────
+        if self.session.check_portals():
+            if not self.session.first_person:
+                # Destination doesn't support FP — pop back to TopDown
+                app.pop_scene()
+                return
+
         # ── Camera ───────────────────────────────────────────────
         cam = app.world.resources.try_get(Camera)
         result = app.world.query_one(Player, Position)

@@ -40,7 +40,7 @@ class Zone:
     tiles: list[list[int]]
     portals: list[Portal] = field(default_factory=list)
     entities: list[dict[str, Any]] = field(default_factory=list)
-    interior: bool = False  # True → allows first-person view
+    first_person: bool = False  # True → zone can be viewed in first-person
 
 
 def load_zone(name: str) -> Zone:
@@ -73,6 +73,7 @@ def load_zone(name: str) -> Zone:
     entities: list[dict[str, Any]] = data.get("entities", [])
 
     interior: bool = bool(data.get("interior", False))
+    first_person: bool = bool(data.get("first_person", interior))
 
     return Zone(
         name=name,
@@ -81,7 +82,7 @@ def load_zone(name: str) -> Zone:
         anchor=anchor,
         tiles=tiles,
         portals=portals,
-        interior=interior,
+        first_person=first_person,
         entities=entities,
     )
 
