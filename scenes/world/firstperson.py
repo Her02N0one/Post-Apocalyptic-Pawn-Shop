@@ -23,7 +23,7 @@ import math
 import pygame
 
 from core.app import App
-from core.constants import TILE_SIZE, TILE_COLORS, TILE_WALL
+from core.constants import TILE_SIZE, TILE_WALL
 from core.scene import Scene
 from core.types import Direction
 from components import (
@@ -35,6 +35,7 @@ from systems.interaction import try_interact, nearest_interactable
 from systems.raycaster import (
     cast_walls, project_entities, build_zbuffer,
 )
+from systems.textures import TextureAtlas, TEX_SIZE
 
 from typing import TYPE_CHECKING
 
@@ -50,6 +51,28 @@ RAY_STEP = 2               # cast every Nth column (1 = full res)
 # Ceiling / floor colours
 _CEILING = (30, 30, 40)
 _FLOOR = (50, 50, 45)
+_FOG_RATE = 16             # higher = fog kicks in sooner
+_GRAD_BANDS = 24           # bands for ceiling/floor gradient
+
+
+def _draw_gradient(surface: pygame.Surface, sw: int, sh: int) -> None:
+    """Gradient ceiling (dark -> light) and floor (light -> dark)."""
+    half = sh // 2
+    band_h = max(1, half // _GRAD_BANDS + 1)
+    for i in range(_GRAD_BANDS):
+        t = i / _GRAD_BANDS
+        # Ceiling: dim at top, brighter near horizon
+        cr = int(_CEILING[0] * (0.3 + 0.7 * t))
+        cg = int(_CEILING[1] * (0.3 + 0.7 * t))
+        cb = int(_CEILING[2] * (0.3 + 0.7 * t))
+        y = int(t * half)
+        pygame.draw.rect(surface, (cr, cg, cb), (0, y, sw, band_h))
+        # Floor: brighter near horizon, dimmer toward bottom
+        fr = int(_FLOOR[0] * (1.0 - 0.5 * t))
+        fg = int(_FLOOR[1] * (1.0 - 0.5 * t))
+        fb = int(_FLOOR[2] * (1.0 - 0.5 * t))
+        y = half + int(t * half)
+        pygame.draw.rect(surface, (fr, fg, fb), (0, y, sw, band_h))
 
 
 class FirstPerson(Scene):
@@ -60,6 +83,8 @@ class FirstPerson(Scene):
         self.player_angle: float = math.pi * 1.5  # facing "up" (north)
         self.show_debug = False
         self._mouse_captured = False
+        self._atlas = TextureAtlas()
+        self._font_cache: dict[int, pygame.font.Font] = {}
 
     # ── Lifecycle ─────────────────────────────────────────────────
 
@@ -199,31 +224,57 @@ class FirstPerson(Scene):
         _, _, pos = result
         px, py = pos.x, pos.y
 
-        # ── Ceiling / floor ──────────────────────────────────────
-        surface.fill(_CEILING)
-        pygame.draw.rect(surface, _FLOOR, (0, sh // 2, sw, sh // 2))
+        # ── Gradient ceiling / floor ─────────────────────────────
+        _draw_gradient(surface, sw, sh)
 
-        # ── Walls ────────────────────────────────────────────────
+        # ── Walls (textured) ─────────────────────────────────────
         slices = cast_walls(
             px, py, self.player_angle, FOV,
             sw, sh, self.session.tiles,
             step=RAY_STEP,
         )
 
+        atlas = self._atlas
+        half = sh // 2
         for ws in slices:
-            # Wall colour from tile palette, darkened on one side
-            base = TILE_COLORS.get(ws.tile_id, (90, 90, 90))
-            if ws.side == 1:
-                color = (base[0] * 2 // 3, base[1] * 2 // 3, base[2] * 2 // 3)
+            tex_surf = atlas.get(ws.tile_id)
+            tx = int(ws.tex_x * TEX_SIZE) & (TEX_SIZE - 1)
+
+            half_h = ws.height / 2.0
+            y_top = half - half_h
+            y_bot = half + half_h
+
+            cy0 = max(0, int(y_top))
+            cy1 = min(sh, int(y_bot))
+            draw_h = cy1 - cy0
+            if draw_h < 1:
+                continue
+
+            # Map clipped screen range to texture V range
+            if ws.height > 0:
+                v0 = (cy0 - y_top) / ws.height
+                v1 = (cy1 - y_top) / ws.height
             else:
-                color = base
+                v0, v1 = 0.0, 1.0
 
-            half_h = ws.height // 2
-            y_start = max(0, sh // 2 - half_h)
-            y_end = min(sh, sh // 2 + half_h)
+            tv0 = max(0, min(TEX_SIZE - 1, int(v0 * TEX_SIZE)))
+            tv1 = max(tv0 + 1, min(TEX_SIZE, int(v1 * TEX_SIZE)))
 
-            for c in range(ws.screen_x, min(ws.screen_x + RAY_STEP, sw)):
-                pygame.draw.line(surface, color, (c, y_start), (c, y_end))
+            # 1-px-wide texture column -> scale to screen size
+            strip = tex_surf.subsurface((tx, tv0, 1, tv1 - tv0))
+            col_w = min(RAY_STEP, sw - ws.screen_x)
+            scaled = pygame.transform.scale(strip, (col_w, draw_h))
+
+            # N/S face shading
+            if ws.side == 1:
+                scaled.fill((170, 170, 170), special_flags=pygame.BLEND_MULT)
+
+            # Distance fog (fade toward black)
+            fog = max(40, min(255, int(255 - ws.distance * _FOG_RATE)))
+            if fog < 250:
+                scaled.fill((fog, fog, fog), special_flags=pygame.BLEND_MULT)
+
+            surface.blit(scaled, (ws.screen_x, cy0))
 
         # ── Entity billboards ────────────────────────────────────
         zone = self.session.zone_name
@@ -252,6 +303,14 @@ class FirstPerson(Scene):
 
     # ── Billboard rendering ──────────────────────────────────────
 
+    def _get_font(self, size: int) -> pygame.font.Font:
+        """Cached monospace font at *size* pixels."""
+        size = max(8, min(72, size))
+        size = (size // 2) * 2  # round to even -> fewer cache entries
+        if size not in self._font_cache:
+            self._font_cache[size] = pygame.font.SysFont("monospace", size)
+        return self._font_cache[size]
+
     def _draw_billboards(
         self, surface: pygame.Surface, app: App,
         billboards: list, zbuf: list[float],
@@ -260,31 +319,46 @@ class FirstPerson(Scene):
         for bb in billboards:
             if bb.height < 2:
                 continue
-            # Character rendered at a size proportional to distance
+
             font_size = max(8, min(72, bb.height // 2))
-            # Use cached font closest to the size we need
-            font = pygame.font.SysFont("monospace", font_size)
-            img = font.render(bb.char, True, bb.color)
+            font = self._get_font(font_size)
+
+            # Distance-fogged colour
+            fog = max(40, min(255, int(255 - bb.distance * _FOG_RATE)))
+            color = (
+                bb.color[0] * fog // 255,
+                bb.color[1] * fog // 255,
+                bb.color[2] * fog // 255,
+            )
+
+            img = font.render(bb.char, True, color)
             img_w, img_h = img.get_size()
 
             dx = int(bb.screen_x - img_w // 2)
             dy = int(bb.screen_y + (bb.height - img_h) // 2)
 
-            # Simple per-column z-occlusion (clip against zbuffer)
             left = max(0, dx)
             right = min(sw, dx + img_w)
             if left >= right:
                 continue
 
-            # Check if majority of the sprite is behind walls
-            visible_cols = 0
+            # Per-column z-clip: find contiguous visible span
+            vis_l, vis_r = right, left
             for c in range(left, right):
                 if bb.distance < zbuf[c]:
-                    visible_cols += 1
-            if visible_cols < (right - left) * 0.3:
+                    if c < vis_l:
+                        vis_l = c
+                    vis_r = c + 1
+
+            if vis_l >= vis_r:
                 continue
 
-            surface.blit(img, (dx, dy))
+            # Blit only the visible horizontal slice
+            src_x = vis_l - dx
+            src_w = vis_r - vis_l
+            if src_w > 0 and src_x >= 0 and src_x + src_w <= img_w:
+                clipped = img.subsurface((src_x, 0, src_w, img_h))
+                surface.blit(clipped, (vis_l, dy))
 
             # Health bar
             hp = app.world.get(bb.eid, Health)

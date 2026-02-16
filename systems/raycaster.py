@@ -32,6 +32,10 @@ class WallSlice:
     tile_id: int      # which tile was hit (for colour lookup)
     side: int         # 0 = hit a vertical (E/W) face, 1 = horizontal (N/S)
     tex_x: float      # 0..1 position along the wall face
+    # For textured floor/ceiling casting
+    ray_dir_x: float = 0.0
+    ray_dir_y: float = 0.0
+    wall_x: float = 0.0  # exact fractional hit position (before floor())
 
 
 @dataclass
@@ -161,6 +165,12 @@ def cast_walls(
 
         tid = tiles[my][mx] if (0 <= my < map_h and 0 <= mx < map_w) else 0
 
+        # Exact wall hit position (for floor casting)
+        if side == 0:
+            wall_exact = py + perp * rd_y
+        else:
+            wall_exact = px + perp * rd_x
+
         slices.append(WallSlice(
             screen_x=x,
             distance=perp,
@@ -168,6 +178,9 @@ def cast_walls(
             tile_id=tid,
             side=side,
             tex_x=wx,
+            ray_dir_x=rd_x,
+            ray_dir_y=rd_y,
+            wall_x=wall_exact,
         ))
 
     return slices
