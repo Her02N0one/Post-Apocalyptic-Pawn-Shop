@@ -63,6 +63,9 @@ class WorldScene(Scene):
                 self.session.save()
             elif event.key == pygame.K_F9:
                 self.session.load()
+            elif event.key == pygame.K_RETURN:
+                from scenes.world.doom_scene import DoomScene
+                app.push_scene(DoomScene(self.session))
 
     def _do_interact(self, app: App) -> None:
         """Handle E key — interact with nearest entity."""
@@ -232,7 +235,7 @@ class WorldScene(Scene):
                              sw // 2 - 80, 40, (c, c, c))
 
         # Controls
-        app.draw_text(surface, "WASD=move  E=interact  Tab=debug  F5=save  F9=load",
+        app.draw_text(surface, "WASD=move  E=interact  Enter=1st person  Tab=debug  F5=save  F9=load",
                       10, sh - 18,
                       (80, 100, 90), app.font_sm)
 

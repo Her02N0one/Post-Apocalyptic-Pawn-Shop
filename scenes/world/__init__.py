@@ -10,5 +10,6 @@ editor   Tile-editor state and input handling
 """
 
 from scenes.world.scene import WorldScene
+from scenes.world.doom_scene import DoomScene
 
-__all__ = ["WorldScene"]
+__all__ = ["WorldScene", "DoomScene"]
