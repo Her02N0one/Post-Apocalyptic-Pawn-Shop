@@ -82,7 +82,7 @@ Entities are defined in TOML:
 ## Project Structure
 
 ```
-main.py                  Entry point — bootstrap → WorldScene → run
+main.py                  Entry point — bootstrap → TopDown → run
 
 core/                    Engine layer (no game logic)
   app.py                 Pygame shell, scene stack, game loop

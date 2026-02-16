@@ -1,4 +1,4 @@
-"""scenes/world/scene.py — Top-down tile scene (presentation layer).
+"""scenes/world/topdown.py — Top-down tile view (presentation layer).
 
 Renders tiles and entities.  Camera follows the player.
 WASD to move.  E to interact.  Tab toggles debug HUD.
@@ -29,8 +29,8 @@ if TYPE_CHECKING:
     from core.session import Session
 
 
-class WorldScene(Scene):
-    """Top-down tile-based game scene (presentation only).
+class TopDown(Scene):
+    """Top-down tile-based view (presentation only).
 
     All zone loading, entity spawning, and save/load orchestration
     live in ``Session``.  This scene only reads data and renders.
@@ -64,8 +64,8 @@ class WorldScene(Scene):
             elif event.key == pygame.K_F9:
                 self.session.load()
             elif event.key == pygame.K_RETURN:
-                from scenes.world.doom_scene import DoomScene
-                app.push_scene(DoomScene(self.session))
+                from scenes.world.firstperson import FirstPerson
+                app.push_scene(FirstPerson(self.session))
 
     def _do_interact(self, app: App) -> None:
         """Handle E key — interact with nearest entity."""

@@ -8,7 +8,7 @@
 
 from core.app import App
 from core.session import Session
-from scenes.world import WorldScene
+from scenes.world import TopDown
 
 START_ZONE = "playground"
 
@@ -21,7 +21,7 @@ def main():
     session.new_game(START_ZONE)
 
     # Scene is presentation only — reads tiles/entities from session
-    app.push_scene(WorldScene(session))
+    app.push_scene(TopDown(session))
     app.run()
 
 

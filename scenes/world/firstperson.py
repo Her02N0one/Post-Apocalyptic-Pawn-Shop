@@ -1,6 +1,6 @@
-"""scenes/world/doom_scene.py — First-person raycasted subzone view.
+"""scenes/world/firstperson.py — First-person raycasted subzone view.
 
-Renders the same tile grid and ECS entities as WorldScene, but from a
+Renders the same tile grid and ECS entities as TopDown, but from a
 Wolfenstein / Doom-style first-person perspective using raycasting.
 
 Controls:
@@ -52,8 +52,8 @@ _CEILING = (30, 30, 40)
 _FLOOR = (50, 50, 45)
 
 
-class DoomScene(Scene):
-    """First-person raycasted scene — renders the same world as WorldScene."""
+class FirstPerson(Scene):
+    """First-person raycasted view — renders the same world as TopDown."""
 
     def __init__(self, session: "Session") -> None:
         self.session = session

@@ -11,7 +11,7 @@ Usage::
 
     session = Session(app.world)
     session.new_game("playground")       # loads zone, spawns player + NPCs
-    app.push_scene(WorldScene(session))  # scene only reads session data
+    app.push_scene(TopDown(session))  # view only reads session data
 
     session.save()                       # persist dynamic state
     session.load()                       # restore from disk

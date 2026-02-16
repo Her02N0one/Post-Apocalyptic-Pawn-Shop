@@ -8,7 +8,7 @@ Usage::
     slices = cast_walls(px, py, angle, FOV, sw, sh, tiles)
     sprites = project_entities(px, py, angle, FOV, sw, sh, entities)
 
-The renderer (DoomScene) converts these to draw calls.
+The renderer (FirstPerson) converts these to draw calls.
 """
 
 from __future__ import annotations
