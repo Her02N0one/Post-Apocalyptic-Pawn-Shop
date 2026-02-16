@@ -1,422 +1,233 @@
-"""
-scenes/world/scene.py — Top-down tile view
+"""scenes/world/scene.py — Top-down tile scene.
 
-Renders a tile grid and entities on top of it.
-Camera follows the player. WASD to move.
-Tab toggles debug overlay.
-
-Tiles are just colored rectangles for now.
-Entities render as colored characters at their float positions.
+Renders a tile grid and entities.  Camera follows the player.
+WASD/arrows to move.  Escape to quit.  Tab toggles debug HUD.
 """
 
 from __future__ import annotations
+
 import pygame
-from core.scene import Scene
+
 from core.app import App
-from core.constants import TILE_SIZE
+from core.constants import TILE_SIZE, TILE_COLORS
+from core.scene import Scene
+from core.types import Direction
+from core.zones import load_zone as load_zone_data, Zone
 from components import (
-    Position, Player, Camera, Identity, ItemRegistry,
-    Health, Inventory, HitFlash, Lod, Facing, Equipment, Projectile,
-    GameClock, Faction,
+    Position, Velocity, Sprite, Player, Facing, Collider,
+    Health, Identity, Camera, GameClock,
 )
-from systems.engine.tick import tick_systems, input_system, item_pickup_system
-from systems.actions import mouse_world_pos
-from systems.engine.particles import ParticleManager
-from systems.engine.input_manager import InputManager, InputContext
-from systems.engine.entity_factory import spawn_zone_entities
-from systems.engine.tick import tick_systems
-from ui import ModalStack
-from scenes.world.editor import EditorController
-from scenes.world.draw import (
-    draw_tiles, draw_entities, draw_debug_colliders, draw_weapon_hitbox,
-    draw_muzzle_flash, draw_particles, draw_projectiles, draw_crosshair,
-    draw_range_ring, draw_tooltip, draw_hud, draw_debug_overlay,
-)
-from core.zone import ZONE_MAPS, ZONE_TELEPORTERS, ZONE_ANCHORS
-from core.save import save_game_state
-from scenes.world.zones import load_zone, check_player_teleport
-from scenes.world.update import (
-    update_input_context, route_ui_event, process_gameplay_intents,
-    update_tooltips, tick_timers,
-)
-from systems.offscreen.manager import WorldSim
-from core.events import EventBus
-from core import tuning as tuning_mod
+from systems.physics import movement_system
+from systems.spawner import spawn_zone_entities
 
 
 class WorldScene(Scene):
-    def __init__(self, tile_map: list[list[int]] | None = None,
-                 editor_mode: bool = False, zone_name: str | None = None):
-        self.editor_active = False
-        self.editor_mode = bool(editor_mode)
-        self.zone = zone_name or "overworld"
-        self.npcs_enabled = False
+    """Top-down tile-based game scene."""
 
-        self.editor = EditorController()
-
-        if self.editor_mode and self.zone not in ZONE_MAPS:
-            tile_map = [[1] * 30 for _ in range(30)]
-            self.editor_active = True
-
-        if tile_map is None and self.zone in ZONE_MAPS:
-            src = ZONE_MAPS[self.zone]
-            tile_map = [row[:] for row in src]
-        elif tile_map is None:
-            tile_map = [[1] * 30 for _ in range(30)]
-
-        self.tiles = tile_map
-        self.map_h = len(tile_map)
-        self.map_w = len(tile_map[0]) if tile_map else 0
-        if self.editor_active:
-            self._orig_tiles = [row[:] for row in self.tiles]
+    def __init__(self, zone_name: str = "playground") -> None:
+        self.zone_name = zone_name
         self.show_debug = False
-        self.show_grid = False
-        self.show_all_zones = False
 
-        # Attack visualization state
-        self.attack_active = False
-        self.attack_timer = 0.0
-        self.attack_direction = (1, 0)
-        self.attack_cooldown = 0.0
-        self.attack_cooldown_max = 0.3
-
-        # Mouse aim state
-        self.mouse_world_x = 0.0
-        self.mouse_world_y = 0.0
-        self.show_crosshair = True
-
-        # Muzzle flash (ranged weapon visual)
-        self.muzzle_flash_timer = 0.0
-        self.muzzle_flash_start: tuple[float, float] = (0.0, 0.0)
-        self.muzzle_flash_end: tuple[float, float] = (0.0, 0.0)
-
-        # Entity tooltip (mouse hover)
-        self.tooltip_eid: int | None = None
-        self.tooltip_text: str = ""
-        self.tooltip_hp: tuple[float, float] | None = None
-
-        # UI modal stack
-        self.modals = ModalStack()
-
-        # Intent-based input system
-        self.input = InputManager()
-
-        # World simulation (off-screen persistent entities)
-        self.world_sim: WorldSim | None = None
-
-        # Time-scale for fast-forward (1.0 = normal, hold F for 10x)
-        self.time_scale: float = 1.0
-
-        if tile_map is not None and not self.editor_active:
-            ZONE_MAPS[self.zone] = tile_map
-
-        if not self.editor_active:
-            load_zone(self, self.zone)
-        else:
-            # Editor mode: populate teleporters from portals + legacy
-            from core.zone import portal_lookup_for_zone
-            self.editor.teleporters = {}
-            for (r, c), (tz, sr, sc, pid) in portal_lookup_for_zone(self.zone).items():
-                self.editor.teleporters[(r, c)] = {
-                    "zone": tz, "r": int(sr), "c": int(sc), "portal_id": pid,
-                }
-                if 0 <= r < self.map_h and 0 <= c < self.map_w:
-                    self.tiles[r][c] = 9
-            for (r, c), tgt in ZONE_TELEPORTERS.get(self.zone, {}).items():
-                if (r, c) not in self.editor.teleporters:
-                    self.editor.teleporters[(r, c)] = tgt
-                    if 0 <= r < self.map_h and 0 <= c < self.map_w:
-                        self.tiles[r][c] = 9
-
-    def on_enter(self, app: App):
-        if not app.world.res(Camera):
-            app.world.set_res(Camera())
-        if not app.world.res(GameClock):
-            app.world.set_res(GameClock())
-        from components.dev_log import DevLog
-        if not app.world.res(DevLog):
-            app.world.set_res(DevLog())
-
-        # ── Event bus & tuning ───────────────────────────────────────
-        if not app.world.res(EventBus):
-            bus = EventBus()
-            app.world.set_res(bus)
-        else:
-            bus = app.world.res(EventBus)
-        tuning_mod.load()  # load data/tuning.toml (idempotent)
-
-        # Subscribe combat handlers so projectiles can emit events
-        from systems.combat import handle_death, alert_nearby_faction, npc_melee_attack, npc_ranged_attack
-        _world_ref = app.world
-
-        def _on_entity_died(ev):
-            handle_death(_world_ref, ev.eid)
-
-        def _on_faction_alert(ev):
-            for eid, pos in _world_ref.all_of(Position):
-                fac = _world_ref.get(eid, Faction)
-                if fac and fac.group == ev.group and pos.zone == ev.zone:
-                    alert_nearby_faction(_world_ref, eid, ev.threat_eid)
-                    break
-
-        def _on_attack_intent(ev):
-            if ev.attack_type == "ranged":
-                npc_ranged_attack(_world_ref, ev.attacker_eid, ev.target_eid)
-            else:
-                npc_melee_attack(_world_ref, ev.attacker_eid, ev.target_eid)
-
-        bus.subscribe("EntityDied", _on_entity_died)
-        bus.subscribe("FactionAlert", _on_faction_alert)
-        bus.subscribe("AttackIntent", _on_attack_intent)
-
-        from systems.social.dialogue import QuestLog
-        from systems.social.dialogue import DialogueManager, load_builtin_trees
-        if not app.world.res(QuestLog):
-            app.world.set_res(QuestLog())
-        if not app.world.res(DialogueManager):
-            dm = DialogueManager()
-            load_builtin_trees(dm)
-            app.world.set_res(dm)
-
-        if self.editor_active:
-            cx = self.map_w / 2.0
-            cy = self.map_h / 2.0
-            res = app.world.query_one(Player, Position)
-            if res:
-                eid, _, pos = res
-                pos.zone = self.zone
-                app.world.zone_set(eid, self.zone)
-                pos.x = cx
-                pos.y = cy
-            cam = app.world.res(Camera)
-            if cam:
-                cam.x = cx
-                cam.y = cy
-
-        # Spawn zone-file entities (NPCs, dummies, objects, etc.)
+        # Try to load from disk; fall back to blank grass field
         try:
-            spawned = spawn_zone_entities(app.world, self.zone)
-        except Exception as ex:
-            print(f"[ZONE] spawn error: {ex}")
-            spawned = []
+            zd = load_zone_data(zone_name)
+            self.tiles = zd.tiles
+            self.anchor = zd.anchor
+            self._entity_descriptors = zd.entities
+        except FileNotFoundError:
+            self.tiles = [[1] * 30 for _ in range(30)]
+            self.anchor = (15.0, 15.0)
+            self._entity_descriptors = []
 
-        # Overlay any saved dynamic data (positions, health, etc.)
-        if spawned:
-            from core.save import load_game_state, apply_zone_saves
-            save_data = load_game_state()
-            if save_data:
-                n = apply_zone_saves(app.world, save_data)
-                if n:
-                    print(f"[SAVE] Restored {n} entities from save")
+        self.map_h = len(self.tiles)
+        self.map_w = len(self.tiles[0]) if self.tiles else 0
 
-        # Initialise off-screen world simulation
-        self._init_world_sim(app)
+    # ── Lifecycle ─────────────────────────────────────────────────
 
-    def _init_world_sim(self, app: App):
-        """Initialise the world simulation if a subzone graph exists."""
-        from pathlib import Path
-        from components.offscreen import Stockpile
-        from systems.social.settlement import create_settlement
-        graph_path = Path("data/subzones.toml")
-        if not graph_path.exists():
-            return
-        try:
-            self.world_sim = WorldSim(app.world)
-            self.world_sim.load_graph(graph_path)
+    def on_enter(self, app: App) -> None:
+        if not app.world.resources.has(Camera):
+            app.world.resources.set(Camera())
+        if not app.world.resources.has(GameClock):
+            app.world.resources.set(GameClock())
 
-            # Ensure the settlement stockpile exists for the sim layer
-            has_stockpile = any(True for _ in app.world.all_of(Stockpile))
-            if not has_stockpile:
-                graph = self.world_sim.graph
-                subzone_id = "sett_storehouse"
-                if subzone_id not in graph.nodes:
-                    for node in graph.nodes.values():
-                        if node.zone == "settlement":
-                            subzone_id = node.id
-                            break
-                node = graph.get_node(subzone_id)
-                if node:
-                    create_settlement(app.world, "Settlement", node.zone, node.id)
-
-            # Attach container EIDs to graph nodes (set by spawn_characters)
-            from core.bootstrap import ContainerMap
-            cmap = app.world.res(ContainerMap)
-            if cmap and hasattr(cmap, "mapping"):
-                for subzone_id, eids in cmap.mapping.items():
-                    node = self.world_sim.graph.get_node(subzone_id)
-                    if node:
-                        node.container_eids.extend(eids)
-                print(f"[SIM] Attached containers to {len(cmap.mapping)} subzone nodes")
-
-            clock = app.world.res(GameClock)
-            game_time = clock.time if clock else 0.0
-            # clock.time is in real seconds (incremented by dt each frame).
-            # All scheduler and activity times use the same real-second base.
-            self.world_sim.bootstrap(app.world, game_time)
-
-            # Promote entities in the player's starting zone to high-LOD
-            self.world_sim.on_zone_change(app.world, self.zone, game_time)
-        except Exception as ex:
-            print(f"[SIM] Failed to initialise world sim: {ex}")
-            import traceback; traceback.print_exc()
-            self.world_sim = None
-
-    # ── helpers ──────────────────────────────────────────────────────
-
-    def _screen_to_tile(self, mx: int, my: int, app: App):
-        """Convert mouse screen coords to (row, col) tile coords or None."""
-        cam = app.world.res(Camera) or Camera()
-        sw, sh = app._virtual_size
-        ox = sw // 2 - int(cam.x * TILE_SIZE)
-        oy = sh // 2 - int(cam.y * TILE_SIZE)
-        col = (mx - ox) // TILE_SIZE
-        row = (my - oy) // TILE_SIZE
-        if 0 <= row < self.map_h and 0 <= col < self.map_w:
-            return row, col
-        return None
-
-    # ── event handler ────────────────────────────────────────────────
-
-    def handle_event(self, event: pygame.event.Event, app: App):
-        update_input_context(self)
-        self.input.feed(event)
-
-        if event.type == pygame.KEYDOWN:
-            if self.editor.text_input_active:
-                self.editor.handle_key(event, self)
-                return
-            if self.modals.is_open:
-                route_ui_event(self, event, app)
-                return
-
-        elif event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEMOTION) and self.modals.is_open:
-            route_ui_event(self, event, app)
-            return
-
-        elif event.type == pygame.MOUSEBUTTONDOWN and self.editor_active:
-            self.editor.handle_mouse_down(event, app, self)
-
-        elif event.type == pygame.MOUSEBUTTONUP and self.editor_active:
-            if event.button == 1 and self.editor.mouse_drag_start is not None:
-                rc = self._screen_to_tile(*event.pos, app)
-                if rc:
-                    row, col = rc
-                    r0, c0 = self.editor.mouse_drag_start
-                    rmin, rmax = min(r0, row), max(r0, row)
-                    cmin, cmax = min(c0, col), max(c0, col)
-                    for rr in range(rmin, rmax + 1):
-                        for cc in range(cmin, cmax + 1):
-                            self.tiles[rr][cc] = self.editor.selected_tile
-                    print(f"[EDITOR] filled ({rmin},{cmin})-({rmax},{cmax})")
-                self.editor.mouse_drag_start = None
-
-    # ── update ───────────────────────────────────────────────────────
-
-    def update(self, dt: float, app: App):
-        self._last_dt = dt
-        update_input_context(self)
-        self.input.end_frame()
-
-        # ── Fast-forward: hold F for 10x, Shift+F for 30x ──
-        keys = pygame.key.get_pressed()
-        if keys[pygame.K_f] and not self.editor_active and not self.modals.is_open:
-            mods = pygame.key.get_mods()
-            self.time_scale = 30.0 if (mods & pygame.KMOD_SHIFT) else 10.0
-        else:
-            self.time_scale = 1.0
-
-        # Apply time scale to dt for simulation systems
-        scaled_dt = dt * self.time_scale
-
-        if self.input.context == InputContext.GAMEPLAY:
-            process_gameplay_intents(self, app)
-        elif self.input.context == InputContext.EDITOR:
-            self.editor.update_intents(self.input, self, app)
-
-        input_system(app.world, move=self.input.movement())
-        self.input.begin_frame()
-        self.modals.update(dt)
-
-        # ── Core system tick (clock, LOD, needs, brains, physics, events, particles)
-        tick_systems(app.world, scaled_dt, self.tiles)
-
-        # Tick the off-screen world simulation
-        if self.world_sim and self.world_sim.active:
-            clock = app.world.res(GameClock)
-            game_minutes = clock.time if clock else 0.0
-            # When fast-forwarding, tick multiple times to process queued events
-            if self.time_scale > 1.01:
-                steps = min(int(self.time_scale), 30)
-                for _ in range(steps):
-                    self.world_sim.tick(app.world, game_minutes)
-            else:
-                self.world_sim.tick(app.world, game_minutes)
-
-        app.world.purge()
-
-        mw = mouse_world_pos(app, self)
-        if mw:
-            self.mouse_world_x, self.mouse_world_y = mw
-
-        update_tooltips(self, app, mw)
-        tick_timers(self, dt, app)
-
-        check_player_teleport(self, app)
-
+        # Move player to zone anchor if this is the first zone load
         result = app.world.query_one(Player, Position)
-        cam = app.world.res(Camera)
-        if result and cam:
+        if result:
+            _, _, pos = result
+            if pos.zone == self.zone_name:
+                pass  # Already in this zone
+            else:
+                pos.x, pos.y = self.anchor
+                app.world.set_zone(result[0], self.zone_name)
+
+        # Spawn zone entities (NPCs, dummies, objects)
+        if self._entity_descriptors:
+            spawned = spawn_zone_entities(
+                app.world, self._entity_descriptors, self.zone_name,
+            )
+            print(f"[ZONE] Spawned {len(spawned)} entities in '{self.zone_name}'")
+            self._entity_descriptors = []  # Don't re-spawn on re-enter
+
+    # ── Events ────────────────────────────────────────────────────
+
+    def handle_event(self, event: pygame.event.Event, app: App) -> None:
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                app.running = False
+            elif event.key == pygame.K_TAB:
+                self.show_debug = not self.show_debug
+
+    # ── Update ────────────────────────────────────────────────────
+
+    def update(self, dt: float, app: App) -> None:
+        keys = pygame.key.get_pressed()
+
+        # ── Input → player velocity ──────────────────────────────
+        dx = dy = 0.0
+        if keys[pygame.K_w] or keys[pygame.K_UP]:    dy -= 1
+        if keys[pygame.K_s] or keys[pygame.K_DOWN]:  dy += 1
+        if keys[pygame.K_a] or keys[pygame.K_LEFT]:  dx -= 1
+        if keys[pygame.K_d] or keys[pygame.K_RIGHT]: dx += 1
+
+        # Normalise diagonal movement
+        if dx and dy:
+            dx *= 0.7071
+            dy *= 0.7071
+
+        for eid, player, vel in app.world.query(Player, Velocity):
+            vel.x = dx * player.speed
+            vel.y = dy * player.speed
+
+            facing = app.world.get(eid, Facing)
+            if facing and (abs(vel.x) > 0.01 or abs(vel.y) > 0.01):
+                if abs(vel.x) >= abs(vel.y):
+                    facing.direction = (
+                        Direction.RIGHT if vel.x > 0 else Direction.LEFT
+                    )
+                else:
+                    facing.direction = (
+                        Direction.DOWN if vel.y > 0 else Direction.UP
+                    )
+
+        # ── Game clock ───────────────────────────────────────────
+        clock = app.world.resources.try_get(GameClock)
+        if clock:
+            clock.time += dt
+
+        # ── Physics ──────────────────────────────────────────────
+        movement_system(app.world, dt, self.tiles)
+
+        # ── Camera follow player ─────────────────────────────────
+        cam = app.world.resources.try_get(Camera)
+        result = app.world.query_one(Player, Position)
+        if cam and result:
             _, _, pos = result
             cam.x = pos.x
             cam.y = pos.y
 
-        item_pickup_system(app.world)
+        app.world.purge()
 
-        if self.editor_active:
-            self.editor.continuous_paint(app, self, cam)
+    # ── Draw ──────────────────────────────────────────────────────
 
-    # ── draw ─────────────────────────────────────────────────────────
-
-    def draw(self, surface: pygame.Surface, app: App):
+    def draw(self, surface: pygame.Surface, app: App) -> None:
         surface.fill((20, 20, 25))
-        cam = app.world.res(Camera) or Camera()
+        cam = app.world.resources.try_get(Camera) or Camera()
         sw, sh = surface.get_size()
 
         ox = sw // 2 - int(cam.x * TILE_SIZE)
         oy = sh // 2 - int(cam.y * TILE_SIZE)
 
-        start_col = max(0, -ox // TILE_SIZE)
-        start_row = max(0, -oy // TILE_SIZE)
-        end_col = min(self.map_w, (sw - ox) // TILE_SIZE + 1)
-        end_row = min(self.map_h, (sh - oy) // TILE_SIZE + 1)
+        # Visible tile range (culling)
+        c0 = max(0, -ox // TILE_SIZE)
+        r0 = max(0, -oy // TILE_SIZE)
+        c1 = min(self.map_w, (sw - ox) // TILE_SIZE + 1)
+        r1 = min(self.map_h, (sh - oy) // TILE_SIZE + 1)
 
-        draw_tiles(surface, self.tiles, ox, oy, self.show_grid,
-                   start_row, start_col, end_row, end_col)
-        draw_entities(surface, app, ox, oy, self.zone, self.show_all_zones)
+        # ── Tiles ────────────────────────────────────────────────
+        for row in range(r0, r1):
+            for col in range(c0, c1):
+                tid = self.tiles[row][col]
+                color = TILE_COLORS.get(tid, (40, 40, 40))
+                rect = (ox + col * TILE_SIZE, oy + row * TILE_SIZE,
+                        TILE_SIZE, TILE_SIZE)
+                pygame.draw.rect(surface, color, rect)
 
+        # ── Entities ─────────────────────────────────────────────
+        for eid, pos, sprite in app.world.query(Position, Sprite):
+            if pos.zone != self.zone_name:
+                continue
+            px = ox + int(pos.x * TILE_SIZE)
+            py = oy + int(pos.y * TILE_SIZE)
+            img = app.font.render(sprite.char, True, sprite.color)
+            surface.blit(img, (px + 4, py + 2))
+
+            # Health bar for non-player entities
+            hp = app.world.get(eid, Health)
+            if hp and not app.world.has(eid, Player) and hp.current < hp.maximum:
+                bar_w = TILE_SIZE - 4
+                ratio = max(0.0, hp.current / hp.maximum)
+                pygame.draw.rect(surface, (60, 0, 0),
+                                 (px + 2, py - 4, bar_w, 3))
+                pygame.draw.rect(surface, (0, 200, 0),
+                                 (px + 2, py - 4, int(bar_w * ratio), 3))
+
+        # ── HUD ──────────────────────────────────────────────────
+        self._draw_hud(surface, app)
+
+        # ── Debug overlay ────────────────────────────────────────
         if self.show_debug:
-            draw_debug_colliders(surface, app, ox, oy, self.zone, self.show_all_zones)
+            self._draw_debug(surface, app)
 
-        draw_weapon_hitbox(surface, app, self, ox, oy)
-        draw_muzzle_flash(surface, self, ox, oy)
+    # ── HUD ───────────────────────────────────────────────────────
 
-        pm = app.world.res(ParticleManager)
-        if pm:
-            draw_particles(pm, surface, ox, oy, TILE_SIZE)
+    def _draw_hud(self, surface: pygame.Surface, app: App) -> None:
+        """Minimal HUD: health bar, zone name, controls hint."""
+        sw, _ = surface.get_size()
 
-        draw_projectiles(surface, app, ox, oy, self.zone)
-        draw_crosshair(surface, app, self)
-        draw_range_ring(surface, app, ox, oy, self.zone, self)
-        draw_tooltip(surface, app, self)
-        draw_hud(surface, app, self)
+        result = app.world.query_one(Player, Health)
+        if result:
+            _, _, hp = result
+            # Health bar
+            bar_x, bar_y = 10, 10
+            bar_w, bar_h = 120, 12
+            ratio = max(0.0, hp.current / hp.maximum)
+            pygame.draw.rect(surface, (60, 0, 0), (bar_x, bar_y, bar_w, bar_h))
+            pygame.draw.rect(surface, (0, 200, 0),
+                             (bar_x, bar_y, int(bar_w * ratio), bar_h))
+            app.draw_text(surface, f"{int(hp.current)}/{int(hp.maximum)} HP",
+                          bar_x + bar_w + 6, bar_y - 1, (200, 200, 200),
+                          app.font_sm)
 
-        if self.modals.is_open:
-            self.modals.draw(surface, app)
+        # Zone name
+        app.draw_text(surface, self.zone_name, sw - 100, 10,
+                      (120, 140, 130), app.font_sm)
 
-        if self.show_debug:
-            draw_debug_overlay(surface, app, self, cam)
+        # Controls
+        app.draw_text(surface, "WASD=move  Tab=debug  Esc=quit",
+                      10, surface.get_height() - 18,
+                      (80, 100, 90), app.font_sm)
 
-        if self.editor_active:
-            self.editor.draw(surface, app, self, cam, ox, oy,
-                             start_row, start_col, end_row, end_col)
+    def _draw_debug(self, surface: pygame.Surface, app: App) -> None:
+        """Debug overlay: FPS, position, entity count."""
+        y = 30
+        fps = app.clock.get_fps()
+        app.draw_text_bg(surface, f"FPS: {fps:.0f}", 10, y, (0, 255, 200))
+        y += 16
+
+        result = app.world.query_one(Player, Position)
+        if result:
+            _, _, pos = result
+            app.draw_text_bg(surface, f"Pos: ({pos.x:.1f}, {pos.y:.1f})",
+                             10, y, (0, 255, 200))
+            y += 16
+
+        # Count entities in current zone
+        n = len(app.world.zone_entities(self.zone_name))
+        app.draw_text_bg(surface, f"Entities: {n}", 10, y, (0, 255, 200))
+        y += 16
+
+        clock = app.world.resources.try_get(GameClock)
+        if clock:
+            app.draw_text_bg(surface, f"Time: {clock.time:.1f}s",
+                             10, y, (0, 255, 200))
 

@@ -1,68 +1,119 @@
-"""components — ECS component dataclasses, organised by domain.
+"""components — Typed ECS component dataclasses.
 
-Submodules
-----------
-spatial        Position, Velocity, Collider, Facing, Hurtbox
-rendering      Identity, Sprite, HitFlash
-rpg            Health, Hunger, Inventory, Equipment
-combat         CombatStats, Loot, LootTableRef, Projectile
-ai             Brain, Task
-resources      Camera, SpawnInfo, Lod, ZoneMetadata, Player
-item_registry  ItemRegistry
-offscreen      SubzonePos, TravelPlan, Home, Stockpile, WorldMemory
+Every game component subclasses ``core.ecs.Component``.
+Resources (Camera, GameClock) are plain dataclasses — NOT Components —
+so they can only live in ``world.resources``, never on an entity.
 
-All public names are re-exported here so existing code that does
-``from components import Position`` continues to work unchanged.
+Set ``_persist = True`` on components that should survive save/load.
 """
 
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from core.ecs import Component
+from core.types import Direction, EntityKind
+
+
 # ── Spatial ──────────────────────────────────────────────────────────
-from components.spatial import Position, Velocity, Collider, Facing, Hurtbox, Pushable, Persist
+
+@dataclass
+class Position(Component):
+    """Entity location in the world (tiles)."""
+    _persist = True
+    x: float = 0.0
+    y: float = 0.0
+    zone: str = "playground"
+
+
+@dataclass
+class Velocity(Component):
+    """Movement vector (tiles/second)."""
+    x: float = 0.0
+    y: float = 0.0
+
+
+@dataclass
+class Facing(Component):
+    """Which direction the entity faces."""
+    direction: Direction = Direction.DOWN
+
+
+@dataclass
+class Collider(Component):
+    """Axis-aligned collision box (tile units, relative to Position)."""
+    w: float = 0.8
+    h: float = 0.8
+    ox: float = 0.0
+    oy: float = 0.0
+    solid: bool = True
+
 
 # ── Rendering ────────────────────────────────────────────────────────
-from components.rendering import Identity, Sprite, HitFlash
+
+@dataclass
+class Sprite(Component):
+    """Visual representation — a colored character."""
+    char: str = "?"
+    color: tuple[int, int, int] = (255, 255, 255)
+    layer: int = 0
+
+
+@dataclass
+class Identity(Component):
+    """Name and role tag."""
+    name: str = ""
+    kind: EntityKind = EntityKind.NPC
+
 
 # ── RPG ──────────────────────────────────────────────────────────────
-from components.rpg import Health, Hunger, Needs, Inventory, Equipment
 
-# ── CombatStats ───────────────────────────────────────────────────────────
-from components.combat import CombatStats, Loot, LootTableRef, Projectile
+@dataclass
+class Health(Component):
+    """Hit points."""
+    _persist = True
+    current: float = 100.0
+    maximum: float = 100.0
 
-# ── AI ───────────────────────────────────────────────────────────────
-from components.ai import Brain, HomeRange, Threat, AttackConfig, VisionCone, Task, Memory
 
-# ── Social ───────────────────────────────────────────────────────────
-from components.social import Faction, Dialogue, Ownership, CrimeRecord, Locked
+@dataclass
+class Inventory(Component):
+    """Item bag — maps item name → count."""
+    _persist = True
+    items: dict[str, int] = field(default_factory=dict)
 
-# ── World resources / singletons ─────────────────────────────────────
-from components.resources import Camera, GameClock, SpawnInfo, Lod, ZoneMetadata, Player, LodTimer, RefillTimers
 
-# ── Registries ───────────────────────────────────────────────────────
-from components.item_registry import ItemRegistry
+# ── Player ───────────────────────────────────────────────────────────
 
-# ── Off-screen (low-LOD) ─────────────────────────────────────────────
-from components.offscreen import (
-    SubzonePos, TravelPlan, Home, Stockpile, MemoryEntry, WorldMemory,
-)
+@dataclass
+class Player(Component):
+    """Marks this entity as the player-controlled character."""
+    speed: float = 6.0
+
+
+# ═════════════════════════════════════════════════════════════════════
+#  Resources (plain dataclasses — NOT Components)
+# ═════════════════════════════════════════════════════════════════════
+
+@dataclass
+class Camera:
+    """Viewport position.  World resource, never attached to an entity."""
+    x: float = 0.0
+    y: float = 0.0
+
+
+@dataclass
+class GameClock:
+    """Canonical game timer (real seconds)."""
+    time: float = 0.0
+
 
 __all__ = [
-    # spatial
-    "Position", "Velocity", "Collider", "Facing", "Hurtbox",
-    # rendering
-    "Identity", "Sprite", "HitFlash",
-    # rpg
-    "Health", "Hunger", "Needs", "Inventory", "Equipment",
-    # combat
-    "CombatStats", "Loot", "LootTableRef", "Projectile",
-    # ai
-    "Brain", "HomeRange", "Threat", "AttackConfig", "VisionCone", "Task", "Memory",
-    # social
-    "Faction", "Dialogue", "Ownership", "CrimeRecord", "Locked",
-    # resources
-    "Camera", "GameClock", "SpawnInfo", "Lod", "ZoneMetadata", "Player",
-    "LodTimer", "RefillTimers",
-    # registries
-    "ItemRegistry",
-    # simulation
-    "SubzonePos", "TravelPlan", "Home", "Stockpile",
-    "MemoryEntry", "WorldMemory",
+    # Components
+    "Position", "Velocity", "Facing", "Collider",
+    "Sprite", "Identity",
+    "Health", "Inventory",
+    "Player",
+    # Resources
+    "Camera", "GameClock",
 ]

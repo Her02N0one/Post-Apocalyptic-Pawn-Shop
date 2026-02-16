@@ -1,35 +1,46 @@
-"""
-main.py — Bootstrap
+"""main.py — Bootstrap.
 
 1. Create the app
-2. Load game data (items, loot tables)
-3. Resolve starting zone
-4. Create the player (restoring from save if present)
-5. Spawn NPCs / containers
-6. Push the starting scene
-7. Run
+2. Spawn the player entity at the zone anchor
+3. Push the starting scene
+4. Run
 """
 
 from core.app import App
-from core.bootstrap import (
-    load_game_data, resolve_zone, create_player,
-    setup_world_resources,
+from core.types import Direction, EntityKind
+from core.zones import load_zone
+from components import (
+    Position, Velocity, Sprite, Player, Facing, Identity, Health,
+    Collider, Camera,
 )
 from scenes.world import WorldScene
+
+START_ZONE = "playground"
 
 
 def main():
     app = App(title="Shopkeeper", width=960, height=640)
 
-    load_game_data(app)
+    # Load zone to get anchor point
+    zone = load_zone(START_ZONE)
+    ax, ay = zone.anchor
 
-    tiles, default_zone, editor_mode = resolve_zone()
+    # ── Player entity ────────────────────────────────────────────
+    player = app.world.spawn()
+    app.world.add(player, Position(x=ax, y=ay, zone=START_ZONE))
+    app.world.add(player, Velocity())
+    app.world.add(player, Sprite(char="@", color=(255, 255, 100), layer=10))
+    app.world.add(player, Player(speed=6.0))
+    app.world.add(player, Facing(direction=Direction.DOWN))
+    app.world.add(player, Identity(name="You", kind=EntityKind.PLAYER))
+    app.world.add(player, Health())
+    app.world.add(player, Collider(w=0.8, h=0.8, solid=True))
 
-    player, start_zone = create_player(app, default_zone, editor_mode)
+    # ── World resources ──────────────────────────────────────────
+    app.world.resources.set(Camera())
 
-    setup_world_resources(app, tiles, default_zone)
-
-    app.push_scene(WorldScene(editor_mode=editor_mode, zone_name=start_zone))
+    # ── Go ───────────────────────────────────────────────────────
+    app.push_scene(WorldScene())
     app.run()
 
 
