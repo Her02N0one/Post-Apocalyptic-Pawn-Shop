@@ -207,11 +207,38 @@ def _gen_noise(base: tuple[int, int, int]) -> pygame.Surface:
     return surf
 
 
+# ── Window (frosted pane with frame) ────────────────────────────────
+
+def _gen_window(base: tuple[int, int, int]) -> pygame.Surface:
+    import math as _math
+    surf = pygame.Surface((TEX_SIZE, TEX_SIZE))
+    frame = (60, 50, 40)
+    rng = random.Random(88)
+    for y in range(TEX_SIZE):
+        for x in range(TEX_SIZE):
+            # 4-pixel wooden frame around edges + cross bar in centre
+            if x < 4 or x >= 60 or y < 4 or y >= 60:
+                surf.set_at((x, y), frame)
+            elif abs(x - 32) < 2 or abs(y - 32) < 2:
+                surf.set_at((x, y), frame)
+            else:
+                # Frosted glass: base colour + slight noise + vertical gradient
+                grad = int(20 * _math.sin(y * 0.15))
+                c = (
+                    _clamp(base[0] + rng.randint(-6, 6) + grad),
+                    _clamp(base[1] + rng.randint(-6, 6) + grad),
+                    _clamp(base[2] + rng.randint(-4, 4) + grad + 10),
+                )
+                surf.set_at((x, y), c)
+    return surf
+
+
 # ── Registry ────────────────────────────────────────────────────────
 
 from core.constants import (
     TILE_VOID, TILE_GRASS, TILE_DIRT, TILE_STONE, TILE_WATER,
     TILE_WOOD_FLOOR, TILE_WALL, TILE_SAND, TILE_RUBBLE, TILE_TELEPORTER,
+    TILE_WINDOW,
 )
 
 _GENERATORS = {
@@ -225,4 +252,5 @@ _GENERATORS = {
     TILE_SAND:       _gen_sand,
     TILE_RUBBLE:     _gen_dirt,
     TILE_TELEPORTER: _gen_teleporter,
+    TILE_WINDOW:     _gen_window,
 }

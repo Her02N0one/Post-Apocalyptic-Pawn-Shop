@@ -13,7 +13,9 @@ import math
 from typing import TYPE_CHECKING
 
 from components import Position, Velocity, Collider, Player
-from core.constants import TILE_WALL
+from core.constants import TILE_WALL, TILE_WINDOW
+
+_SOLID_TILES = frozenset({TILE_WALL, TILE_WINDOW})
 
 if TYPE_CHECKING:
     from core.ecs import World
@@ -34,7 +36,7 @@ def _hits_wall(x: float, y: float,
         for c in range(int(math.floor(left)), int(math.floor(right)) + 1):
             if r < 0 or r >= map_h or c < 0 or c >= map_w:
                 return True
-            if tiles[r][c] == TILE_WALL:
+            if tiles[r][c] in _SOLID_TILES:
                 return True
     return False
 

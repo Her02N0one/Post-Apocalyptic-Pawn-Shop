@@ -50,6 +50,8 @@ class Session:
         self.map_h: int = 0
         self.visited_zones: set[str] = set()
 
+        self.is_interior: bool = False    # current zone allows first-person
+
         # uid → zone descriptor dict (for rebuilding transient components)
         self._descriptor_index: dict[str, dict[str, Any]] = {}
 
@@ -145,6 +147,7 @@ class Session:
         self.tiles = zd.tiles
         self.map_h = len(zd.tiles)
         self.map_w = len(zd.tiles[0]) if zd.tiles else 0
+        self.is_interior = zd.interior
         self._cache_descriptors_from_list(zd.entities)
 
     def _cache_zone_descriptors(self, name: str) -> None:

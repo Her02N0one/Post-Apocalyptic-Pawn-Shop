@@ -16,7 +16,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from core.constants import TILE_WALL
+from core.constants import TILE_WALL, TILE_WINDOW
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -54,7 +54,7 @@ class BillboardSprite:
 #  Wall raycasting (DDA)
 # ═════════════════════════════════════════════════════════════════════
 
-_WALL_TILES: frozenset[int] = frozenset({TILE_WALL})
+_WALL_TILES: frozenset[int] = frozenset({TILE_WALL, TILE_WINDOW})
 _MAX_STEPS = 64
 
 

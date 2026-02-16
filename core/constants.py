@@ -72,6 +72,7 @@ TILE_WALL       = 6
 TILE_SAND       = 7
 TILE_RUBBLE     = 8
 TILE_TELEPORTER = 9
+TILE_WINDOW     = 10  # transparent from interior side
 
 # Render
 TILE_SIZE = 32
@@ -88,4 +89,5 @@ TILE_COLORS = {
     7: (140, 130, 90),     # sand
     8: (100, 85, 70),      # rubble
     9: (180, 20, 180),     # teleporter
+    10: (100, 140, 180),    # window
 }

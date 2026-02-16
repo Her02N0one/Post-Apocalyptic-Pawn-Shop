@@ -239,3 +239,39 @@ class TestPrefabRef:
         data = load_game(TEST_SLOT)
         assert "visited_zones" in data
         assert set(data["visited_zones"]) == {"zone_a", "zone_b"}
+
+
+class TestInteriorFlag:
+    """Zone.interior propagates through Session."""
+
+    def test_playground_not_interior(self):
+        s = Session(World())
+        s.new_game("playground")
+        assert s.is_interior is False
+
+    def test_pawn_shop_is_interior(self):
+        from core.zones import load_zone
+        z = load_zone("pawn_shop")
+        assert z.interior is True
+
+    def test_session_interior_from_zone(self):
+        """Session.is_interior reflects loaded zone's flag."""
+        s = Session(World())
+        s.new_game("playground")
+        assert s.is_interior is False
+        # Manually load an interior zone template
+        s._load_zone_template("pawn_shop")
+        assert s.is_interior is True
+
+    def test_window_tile_is_solid(self):
+        """Physics should treat TILE_WINDOW as solid."""
+        from systems.physics import _hits_wall
+        from core.constants import TILE_WINDOW, TILE_WOOD_FLOOR
+        # 3×3 grid: floor except centre = window
+        tiles = [
+            [TILE_WOOD_FLOOR, TILE_WOOD_FLOOR, TILE_WOOD_FLOOR],
+            [TILE_WOOD_FLOOR, TILE_WINDOW,     TILE_WOOD_FLOOR],
+            [TILE_WOOD_FLOOR, TILE_WOOD_FLOOR, TILE_WOOD_FLOOR],
+        ]
+        assert _hits_wall(1.5, 1.5, 0.5, 0.5, 3, 3, tiles) is True
+        assert _hits_wall(0.5, 0.5, 0.5, 0.5, 3, 3, tiles) is False

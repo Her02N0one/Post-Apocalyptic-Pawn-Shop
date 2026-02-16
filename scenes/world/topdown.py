@@ -64,8 +64,12 @@ class TopDown(Scene):
             elif event.key == pygame.K_F9:
                 self.session.load()
             elif event.key == pygame.K_RETURN:
-                from scenes.world.firstperson import FirstPerson
-                app.push_scene(FirstPerson(self.session))
+                if self.session.is_interior:
+                    from scenes.world.firstperson import FirstPerson
+                    app.push_scene(FirstPerson(self.session))
+                else:
+                    self.session.status = "First-person only in interiors"
+                    self.session.status_timer = 1.5
 
     def _do_interact(self, app: App) -> None:
         """Handle E key — interact with nearest entity."""
@@ -235,7 +239,10 @@ class TopDown(Scene):
                              sw // 2 - 80, 40, (c, c, c))
 
         # Controls
-        app.draw_text(surface, "WASD=move  E=interact  Enter=1st person  Tab=debug  F5=save  F9=load",
+        hint = "WASD=move  E=interact  Tab=debug  F5=save  F9=load"
+        if self.session.is_interior:
+            hint = "WASD=move  E=interact  Enter=1st person  Tab=debug  F5=save  F9=load"
+        app.draw_text(surface, hint,
                       10, sh - 18,
                       (80, 100, 90), app.font_sm)
 
