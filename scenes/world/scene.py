@@ -19,6 +19,9 @@ from components import (
 )
 from systems.physics import movement_system
 from systems.spawner import spawn_zone_entities
+from systems.interaction import try_interact, nearest_interactable
+from core.save import save_game, load_game, restore_entity, has_save
+from core.events import InteractionEvent
 
 
 class WorldScene(Scene):
@@ -27,6 +30,8 @@ class WorldScene(Scene):
     def __init__(self, zone_name: str = "playground") -> None:
         self.zone_name = zone_name
         self.show_debug = False
+        self._interact_label: str = ""
+        self._interact_timer: float = 0.0
 
         # Try to load from disk; fall back to blank grass field
         try:
@@ -76,6 +81,92 @@ class WorldScene(Scene):
                 app.running = False
             elif event.key == pygame.K_TAB:
                 self.show_debug = not self.show_debug
+            elif event.key == pygame.K_e:
+                self._do_interact(app)
+            elif event.key == pygame.K_F5:
+                path = save_game(app.world, self.zone_name)
+                self._interact_label = f"Saved to {path.name}"
+                self._interact_timer = 2.0
+            elif event.key == pygame.K_F9:
+                self._do_load(app)
+
+    def _do_interact(self, app: App) -> None:
+        """Handle E key — interact with nearest entity."""
+        if try_interact(app.world, app.world.events):
+            # The event will be flushed during update(); show feedback now
+            found = nearest_interactable(app.world)
+            if found:
+                ident = app.world.get(found[0], Identity)
+                name = ident.name if ident else "???"
+                self._interact_label = f"Interacted with {name}"
+                self._interact_timer = 1.5
+        else:
+            self._interact_label = "Nothing nearby"
+            self._interact_timer = 1.0
+
+    def _do_load(self, app: App) -> None:
+        """Handle F9 — load game from slot 0."""
+        data = load_game(slot=0)
+        if data is None:
+            self._interact_label = "No save found"
+            self._interact_timer = 1.5
+            return
+
+        # Clear all non-player entities in current zone
+        player_result = app.world.query_one(Player, Position)
+        player_eid = player_result[0] if player_result else -1
+
+        for eid in list(app.world.zone_entities(self.zone_name)):
+            if eid != player_eid:
+                app.world.kill(eid)
+        app.world.purge()
+
+        # Restore persistent components onto existing entities
+        for entry in data.get("entities", []):
+            restored = restore_entity(app.world, entry)
+            # If this was the player, merge onto existing player entity
+            pos = app.world.get(restored, Position)
+            if pos and player_eid > 0:
+                from components import Health, Inventory
+                p_pos = app.world.get(player_eid, Position)
+                if p_pos:
+                    p_pos.x, p_pos.y, p_pos.zone = pos.x, pos.y, pos.zone
+                p_hp = app.world.get(player_eid, Health)
+                r_hp = app.world.get(restored, Health)
+                if p_hp and r_hp:
+                    p_hp.current = r_hp.current
+                    p_hp.maximum = r_hp.maximum
+                # Remove the duplicate
+                app.world.kill(restored)
+
+        # Restore clock
+        from components import GameClock
+        clock = app.world.resources.try_get(GameClock)
+        if clock:
+            clock.time = data.get("clock", 0.0)
+
+        app.world.purge()
+
+        # Reload zone if it changed
+        saved_zone = data.get("zone", self.zone_name)
+        if saved_zone != self.zone_name:
+            self.zone_name = saved_zone
+            try:
+                zd = load_zone_data(saved_zone)
+                self.tiles = zd.tiles
+                self.map_h = len(self.tiles)
+                self.map_w = len(self.tiles[0]) if self.tiles else 0
+                self._entity_descriptors = zd.entities
+            except FileNotFoundError:
+                pass
+
+        # Re-spawn zone NPCs
+        if self._entity_descriptors:
+            spawn_zone_entities(app.world, self._entity_descriptors, self.zone_name)
+            self._entity_descriptors = []
+
+        self._interact_label = "Game loaded"
+        self._interact_timer = 2.0
 
     # ── Update ────────────────────────────────────────────────────
 
@@ -109,6 +200,10 @@ class WorldScene(Scene):
                         Direction.DOWN if vel.y > 0 else Direction.UP
                     )
 
+        # ── Interaction label fade ─────────────────────────────
+        if self._interact_timer > 0:
+            self._interact_timer -= dt
+
         # ── Game clock ───────────────────────────────────────────
         clock = app.world.resources.try_get(GameClock)
         if clock:
@@ -116,6 +211,9 @@ class WorldScene(Scene):
 
         # ── Physics ──────────────────────────────────────────────
         movement_system(app.world, dt, self.tiles)
+
+        # ── Events ───────────────────────────────────────────────
+        app.world.events.flush()
 
         # ── Camera follow player ─────────────────────────────────
         cam = app.world.resources.try_get(Camera)
@@ -202,8 +300,25 @@ class WorldScene(Scene):
         app.draw_text(surface, self.zone_name, sw - 100, 10,
                       (120, 140, 130), app.font_sm)
 
+        # Interaction prompt
+        target = nearest_interactable(app.world)
+        if target:
+            t_eid, _ = target
+            ident = app.world.get(t_eid, Identity)
+            name = ident.name if ident else f"Entity #{t_eid}"
+            app.draw_text(surface, f"[E] {name}",
+                          sw // 2 - 40, surface.get_height() - 36,
+                          (255, 230, 150), app.font_sm)
+
+        # Status label (save/load/interaction feedback)
+        if self._interact_timer > 0 and self._interact_label:
+            alpha = min(1.0, self._interact_timer / 0.5)
+            c = int(220 * alpha)
+            app.draw_text_bg(surface, self._interact_label,
+                             sw // 2 - 80, 40, (c, c, c))
+
         # Controls
-        app.draw_text(surface, "WASD=move  Tab=debug  Esc=quit",
+        app.draw_text(surface, "WASD=move  E=interact  Tab=debug  F5=save  F9=load",
                       10, surface.get_height() - 18,
                       (80, 100, 90), app.font_sm)
 

@@ -102,6 +102,9 @@ class World:
         self._zone_index: dict[str, set[int]] = {}
         self.resources = Resources()
 
+        from core.events import EventBus
+        self.events = EventBus()
+
     # ── Zone index ────────────────────────────────────────────────
 
     def _zone_update(self, eid: int, zone: str) -> None:
