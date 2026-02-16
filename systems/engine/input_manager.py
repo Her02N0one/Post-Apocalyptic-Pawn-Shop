@@ -41,7 +41,7 @@ class InputContext(Enum):
 # Gameplay:  move_up  move_down  move_left  move_right
 #            attack  interact  inventory  save
 #            weapon_1 .. weapon_4
-#            toggle_debug  toggle_grid  spawn_test
+#            toggle_debug  toggle_grid
 #            toggle_editor  debug_scene  entity_dump  toggle_zones
 # UI:        ui_up  ui_down  ui_left  ui_right  ui_confirm  ui_close
 #            ui_equip  ui_use  ui_transfer
@@ -77,7 +77,6 @@ _GAMEPLAY_BINDS: dict[str, list[tuple[int, int]]] = {
     "toggle_zones": [(pygame.K_F3, 0)],
     "debug_scene":  [(pygame.K_F1, 0)],
     "entity_dump":  [(pygame.K_F2, 0)],
-    "spawn_test":   [(pygame.K_BACKQUOTE, 0)],
     "toggle_editor":[(pygame.K_F4, 0)],
     "scene_picker": [(pygame.K_F5, 0)],
     "tuning_reload":[(pygame.K_F6, 0)],

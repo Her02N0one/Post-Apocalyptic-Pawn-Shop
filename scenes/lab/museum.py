@@ -1,4 +1,4 @@
-"""scenes/museum_scene.py — Interactive Exhibit Museum.
+"""scenes/lab/museum.py — Interactive Exhibit Museum.
 
 Two-mode UI:
     PICKER mode  — full-screen exhibit selector grouped by category
@@ -33,19 +33,8 @@ from components import (
 from components.social import Faction
 
 # ── Exhibits ─────────────────────────────────────────────────────────
-from scenes.exhibits.base import Exhibit, DebugFlags, FLAG_META
-from scenes.exhibits.patrol_exhibit import PatrolExhibit
-from scenes.exhibits.combat_exhibit import CombatExhibit
-from scenes.exhibits.hearing_exhibit import HearingExhibit
-from scenes.exhibits.pathfinding_exhibit import PathfindingExhibit
-from scenes.exhibits.faction_exhibit import FactionExhibit
-from scenes.exhibits.vision_exhibit import VisionExhibit
-from scenes.exhibits.particle_exhibit import ParticleExhibit
-from scenes.exhibits.needs_exhibit import NeedsExhibit
-from scenes.exhibits.lod_exhibit import LODExhibit
-from scenes.exhibits.stat_combat_exhibit import StatCombatExhibit
-from scenes.exhibits.economy_exhibit import EconomyExhibit
-from scenes.exhibits.crime_exhibit import CrimeExhibit
+from scenes.lab.exhibits.base import Exhibit, DebugFlags, FLAG_META
+from scenes.lab.exhibits import discover_exhibits
 
 from core.constants import TILE_WALL as _TILE_WALL
 
@@ -131,20 +120,9 @@ class MuseumScene(Scene):
         self._picker_hover = -1       # mouse hover index
         self._picker_scroll = 0.0     # vertical scroll offset (pixels)
 
-        # Build the exhibit list — order matches tab indices
+        # Build the exhibit list — auto-discovered from scenes/lab/exhibits/
         self._exhibits: list[Exhibit] = [
-            PatrolExhibit(),       # 0  — settlement patrol
-            CombatExhibit(),       # 1  — team fight
-            HearingExhibit(),      # 2  — gunshot → searching → chase
-            PathfindingExhibit(),  # 3  — A* pathfinding
-            FactionExhibit(),      # 4  — alert cascade
-            VisionExhibit(),       # 5  — directional vision cone
-            ParticleExhibit(),     # 6  — particle effects
-            NeedsExhibit(),        # 7  — hunger / eating
-            LODExhibit(),          # 8  — LOD promote / demote
-            StatCombatExhibit(),   # 9  — off-screen stat combat
-            EconomyExhibit(),      # 10 — stockpile economy
-            CrimeExhibit(),        # 11 — witness / crime
+            cls() for cls in discover_exhibits()
         ]
 
         # Pre-compute category order for picker
@@ -170,7 +148,9 @@ class MuseumScene(Scene):
         self._picker_content_h = 0
 
     @property
-    def _exhibit(self) -> Exhibit:
+    def _exhibit(self) -> Exhibit | None:
+        if not self._exhibits:
+            return None
         return self._exhibits[self.tab]
 
     # ── Lifecycle ────────────────────────────────────────────────────
@@ -197,6 +177,8 @@ class MuseumScene(Scene):
         """Reset arena and delegate to the active exhibit."""
         self._clear_entities(app)
         ex = self._exhibit
+        if ex is None:
+            return
         self.map_w = ex.arena_w
         self.map_h = ex.arena_h
         self.tiles = _make_arena(self.map_w, self.map_h)
@@ -211,6 +193,8 @@ class MuseumScene(Scene):
 
     def _open_exhibit(self, app: App, index: int):
         """Switch to exhibit mode with the given exhibit."""
+        if not self._exhibits:
+            return
         self.tab = index
         self._mode = "exhibit"
         self._setup_tab(app)
@@ -330,9 +314,10 @@ class MuseumScene(Scene):
 
             # Space — exhibit action
             if event.key == pygame.K_SPACE:
-                result = self._exhibit.on_space(app)
-                if result == "reset":
-                    self._setup_tab(app)
+                if self._exhibit is not None:
+                    result = self._exhibit.on_space(app)
+                    if result == "reset":
+                        self._setup_tab(app)
                 return
 
         # Scroll-wheel zoom
@@ -362,8 +347,9 @@ class MuseumScene(Scene):
             return
 
         # Delegate to active exhibit
-        self._exhibit.handle_event(event, app,
-                                   lambda: self._mouse_to_tile(app))
+        if self._exhibit is not None:
+            self._exhibit.handle_event(event, app,
+                                       lambda: self._mouse_to_tile(app))
 
     # ── Update ───────────────────────────────────────────────────────
 
@@ -391,7 +377,9 @@ class MuseumScene(Scene):
         if clock:
             clock.time += dt
 
-        self._exhibit.update(app, dt, self.tiles, self._eids)
+        ex = self._exhibit
+        if ex is not None:
+            ex.update(app, dt, self.tiles, self._eids)
         app.world.purge()
 
     # ── Draw ─────────────────────────────────────────────────────────
@@ -589,8 +577,9 @@ class MuseumScene(Scene):
                     pygame.draw.rect(surface, (60, 60, 60), rect, 1)
 
         # ── Exhibit overlays ─────────────────────────────────────────
-        self._exhibit.draw(surface, ox, oy, app, self._eids,
-                           tile_px=tile_px, flags=flags)
+        if self._exhibit is not None:
+            self._exhibit.draw(surface, ox, oy, app, self._eids,
+                               tile_px=tile_px, flags=flags)
 
         # ── Entities ─────────────────────────────────────────────────
         for eid in self._eids:
@@ -604,8 +593,8 @@ class MuseumScene(Scene):
             sy = oy + int(pos.y * tile_px)
 
             # Exhibit entity-specific overlay (LOD colouring etc.)
-            override = self._exhibit.draw_entity_overlay(
-                surface, sx, sy, eid, app)
+            override = (self._exhibit.draw_entity_overlay(
+                surface, sx, sy, eid, app) if self._exhibit else None)
             draw_color = override if override else sprite.color
 
             # Scale character font by zoom
@@ -674,7 +663,7 @@ class MuseumScene(Scene):
         self._draw_flag_bar(surface, app)
 
         # Status bar
-        info = self._exhibit.info_text(app, self._eids)
+        info = self._exhibit.info_text(app, self._eids) if self._exhibit else ""
         if info:
             app.draw_text_bg(surface, info, 8, sh - 30, (180, 180, 180))
 
@@ -695,6 +684,8 @@ class MuseumScene(Scene):
         surface.blit(bar, (0, 0))
 
         ex = self._exhibit
+        if ex is None:
+            return
         cat_color = _CAT_COLORS.get(ex.category, (180, 180, 180))
 
         # Category tag
@@ -748,6 +739,8 @@ class MuseumScene(Scene):
         pygame.draw.rect(surface, (0, 180, 140), (px, py, panel_w, panel_h), 1)
 
         ex = self._exhibit
+        if ex is None:
+            return
         lines = ex.description.split("\n") if ex.description else []
 
         tx = px + 10

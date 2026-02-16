@@ -145,7 +145,6 @@ def process_gameplay_intents(scene, app):
     from systems.actions import (
         player_attack, player_interact_nearby, player_toggle_inventory,
     )
-    from systems.engine.entity_factory import spawn_test_entities
     from core.save import save_game_state
     from core.zone import ZONE_MAPS
 
@@ -156,10 +155,10 @@ def process_gameplay_intents(scene, app):
     if inp.just("toggle_grid"):
         scene.show_grid = not scene.show_grid
     if inp.just("debug_scene"):
-        from scenes.debug_scene import DebugScene
+        from scenes.lab.debug import DebugScene
         app.push_scene(DebugScene())
     if inp.just("scene_picker"):
-        from scenes.scene_picker import ScenePickerScene
+        from scenes.lab.picker import ScenePickerScene
         app.push_scene(ScenePickerScene())
     if inp.just("tuning_reload"):
         from core import tuning as tuning_mod
@@ -168,8 +167,6 @@ def process_gameplay_intents(scene, app):
         dump_entity_debug(app)
     if inp.just("toggle_zones"):
         scene.show_all_zones = not scene.show_all_zones
-    if inp.just("spawn_test"):
-        spawn_test_entities(app.world, scene.zone)
     if inp.just("save"):
         save_path = save_game_state(app)
         print(f"[SAVE] Game saved to {save_path}")

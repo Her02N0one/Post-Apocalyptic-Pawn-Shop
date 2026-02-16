@@ -1,4 +1,4 @@
-"""scenes/exhibits/vision_exhibit.py — Directional Vision exhibit.
+"""scenes/lab/exhibits/vision_exhibit.py — Directional Vision exhibit.
 
 Demonstrates that NPCs can only see targets within their vision cone.
 A guard faces right — a target in front is detected immediately, a
@@ -29,8 +29,8 @@ from systems.ai.brains import tick_ai
 from systems.combat.projectiles import projectile_system
 from systems.combat import handle_death, npc_melee_attack, npc_ranged_attack
 from systems.ai.perception import in_vision_cone, facing_to_angle
-from scenes.exhibits.base import Exhibit
-from scenes.exhibits.drawing import draw_cone_alpha
+from scenes.lab.exhibits.base import Exhibit
+from ui.primitives import draw_cone_alpha
 
 
 class VisionExhibit(Exhibit):

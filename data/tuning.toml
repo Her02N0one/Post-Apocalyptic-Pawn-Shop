@@ -46,8 +46,8 @@ fallback_hurtbox_h           = 0.8      # m
 
 [combat.ranged]
 default_accuracy             = 0.7
-default_proj_speed           = 12.0     # m/s
-default_max_range            = 10.0     # m
+default_proj_speed           = 22.0     # m/s
+default_max_range            = 16.0     # m
 accuracy_spread_factor       = 0.4      # radians multiplier
 projectile_spawn_offset      = 0.5      # m from entity centre
 projectile_falloff_min       = 0.5      # damage multiplier at max range

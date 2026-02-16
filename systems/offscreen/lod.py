@@ -22,8 +22,8 @@ from components import GameClock, LodTimer
 from core.subzone import SubzoneGraph
 from core.tuning import get as _tun
 from systems.social.faction_disposition import entity_display_name
-from systems.engine.entity_factory import ensure_combat_components
 from systems.offscreen.scheduler import WorldScheduler
+from components.dev_log import log_event
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -107,6 +107,7 @@ def promote_entity(world: Any, eid: int, graph: SubzoneGraph,
 
     # 3. Replace SubzonePos with real Position
     zone = szp.zone
+    origin_subzone = szp.subzone  # stash for demotion
     world.remove(eid, SubzonePos)
     world.add(eid, Position(x=tile_x, y=tile_y, zone=zone))
     world.zone_add(eid, zone)
@@ -121,14 +122,20 @@ def promote_entity(world: Any, eid: int, graph: SubzoneGraph,
         if lod:
             lod.level = "high"
             lod.transition_until = game_time + 0.5
+            lod.origin_subzone = origin_subzone
         else:
-            world.add(eid, Lod(level="high", transition_until=game_time + 0.5))
-        print(f"[LOD] Promoted container {ident.name} (eid={eid}) at "
-              f"({tile_x:.1f}, {tile_y:.1f}) in {zone}")
+            world.add(eid, Lod(level="high", transition_until=game_time + 0.5,
+                               origin_subzone=origin_subzone))
+        log_event(world, eid, "lod",
+                  f"Promoted container at ({tile_x:.1f}, {tile_y:.1f}) in {zone}",
+                  name=ident.name)
         return True
 
     # --- NPC path from here ---
 
+    # Lazy import to avoid circular dependency:
+    # engine.__init__ → tick → offscreen.lod → engine.entity_factory
+    from systems.engine.entity_factory import ensure_combat_components
     ensure_combat_components(world, eid)
 
     # 4. Activate Brain
@@ -150,12 +157,15 @@ def promote_entity(world: Any, eid: int, graph: SubzoneGraph,
     if lod:
         lod.level = "high"
         lod.transition_until = game_time + 0.5
+        lod.origin_subzone = origin_subzone
     else:
-        world.add(eid, Lod(level="high", transition_until=game_time + 0.5))
+        world.add(eid, Lod(level="high", transition_until=game_time + 0.5,
+                           origin_subzone=origin_subzone))
 
     name = ident.name if ident else "?"
-    print(f"[LOD] Promoted {name} (eid={eid}) to high LOD at "
-          f"({tile_x:.1f}, {tile_y:.1f}) in {zone}")
+    log_event(world, eid, "lod",
+              f"Promoted to high LOD at ({tile_x:.1f}, {tile_y:.1f}) in {zone}",
+              name=name)
 
     return True
 
@@ -185,8 +195,18 @@ def demote_entity(world: Any, eid: int, graph: SubzoneGraph,
     if pos is None:
         return False
 
-    # 1. Find which subzone the entity is in
-    node = graph.nearest_node_to_tile(pos.zone, int(pos.x), int(pos.y))
+    # 1. Find which subzone the entity is in.
+    #    Prefer origin_subzone stashed at promotion time (avoids drift
+    #    for containers near anchor boundaries).
+    lod = world.get(eid, Lod)
+    origin = lod.origin_subzone if lod else ""
+    if origin:
+        node = graph.get_node(origin)
+        # Validate the node still exists and is in the right zone
+        if node is None or node.zone != pos.zone:
+            node = graph.nearest_node_to_tile(pos.zone, int(pos.x), int(pos.y))
+    else:
+        node = graph.nearest_node_to_tile(pos.zone, int(pos.x), int(pos.y))
     if node is None:
         # No subzone data for this zone — can't demote
         return False
@@ -253,8 +273,9 @@ def demote_entity(world: Any, eid: int, graph: SubzoneGraph,
                              scheduler, game_time)
 
     name = entity_display_name(world, eid)
-    print(f"[LOD] Demoted {name} (eid={eid}) to low LOD at "
-          f"subzone={node.id}")
+    log_event(world, eid, "lod",
+              f"Demoted to low LOD at subzone={node.id}",
+              name=name)
 
     return True
 
@@ -297,8 +318,8 @@ def on_player_enter_zone(world: Any, new_zone: str,
         if demote_entity(world, eid, graph, scheduler, game_time):
             demoted += 1
 
-    print(f"[LOD] Zone transition to {new_zone}: "
-          f"promoted={promoted}, demoted={demoted}")
+    log_event(world, -1, "lod",
+              f"Zone transition to {new_zone}: promoted={promoted}, demoted={demoted}")
 
     return promoted, demoted
 

@@ -21,7 +21,7 @@ from components import (
     Position, Velocity, Sprite, Identity,
     Health, Hunger, Inventory, SpawnInfo, Brain, HomeRange, Threat, AttackConfig,
     Player, Camera, Collider, ZoneMetadata, CombatStats, Loot, HitFlash,
-    LootTableRef, Facing, Hurtbox, Equipment,
+    LootTableRef, Facing, Hurtbox, Equipment, Persist,
 )
 from core.data import DataLoader
 from core import zone as core_zone
@@ -71,7 +71,7 @@ def load_game_data(app: App) -> None:
 
 # ── Zone resolution ─────────────────────────────────────────────────
 
-def resolve_zone(default_zone: str = "settlement"):
+def resolve_zone(default_zone: str = "playground"):
     """Determine starting zone and whether we need editor mode.
 
     Returns (tiles, start_zone, editor_mode).
@@ -128,6 +128,7 @@ def create_player(app: App, default_zone: str, editor_mode: bool) -> int:
         app.world.add(player, Equipment())
     app.world.add(player, Facing(direction="down"))
     app.world.add(player, Hurtbox(ox=0.0, oy=0.0, w=0.8, h=0.8))
+    app.world.add(player, Persist(uid="player"))
 
     return player, start_zone
 
@@ -139,9 +140,14 @@ def _restore_or_place_player(app: App, player: int,
     Returns the zone the player should start in.
     """
     save_data = load_game_state()
-    if save_data and save_data.get("player"):
-        return _apply_save_data(app, player, save_data["player"],
-                                default_zone)
+    player_data = None
+    if save_data:
+        # Format v3: entities dict keyed by Persist uid
+        entities = save_data.get("entities", {})
+        player_data = entities.get("player")
+
+    if player_data:
+        return _apply_save_data(app, player, player_data, default_zone)
 
     # No save — place at zone anchor
     anchor = core_zone.ZONE_ANCHORS.get(default_zone, (15.0, 15.0))
@@ -153,39 +159,52 @@ def _restore_or_place_player(app: App, player: int,
 
 def _apply_save_data(app: App, player: int, player_data: dict,
                      default_zone: str) -> str:
-    """Restore player state from a save-data dict. Returns start zone."""
-    saved_zone = player_data.get("zone", default_zone)
+    """Restore player state from a save-data dict. Returns start zone.
+
+    ``player_data`` is a v3-format component dict: ``{ClassName: {fields}}``.
+    """
+    # Extract Position to determine zone
+    pos_data = player_data.get("Position", {})
+    saved_zone = pos_data.get("zone", default_zone)
     if saved_zone not in core_zone.ZONE_MAPS:
         saved_zone = default_zone
 
     app.world.add(player, Position(
-        x=float(player_data.get("x", 25.0)),
-        y=float(player_data.get("y", 25.0)),
+        x=float(pos_data.get("x", 25.0)),
+        y=float(pos_data.get("y", 25.0)),
         zone=saved_zone,
     ))
     app.world.zone_add(player, saved_zone)
 
-    # Inventory
-    saved_inv = player_data.get("inventory")
-    if saved_inv:
-        app.world.add(player, Inventory(items=dict(saved_inv)))
+    # Restore Inventory
+    inv_data = player_data.get("Inventory")
+    if inv_data:
+        app.world.add(player, Inventory(items=dict(inv_data.get("items", {}))))
 
-    # Equipment
-    saved_eq = player_data.get("equipment")
-    if saved_eq:
+    # Restore Equipment
+    eq_data = player_data.get("Equipment")
+    if eq_data:
         app.world.add(player, Equipment(
-            weapon=saved_eq.get("weapon", ""),
-            armor=saved_eq.get("armor", ""),
+            weapon=eq_data.get("weapon", ""),
+            armor=eq_data.get("armor", ""),
         ))
 
-    # Crime record
-    saved_cr = player_data.get("crime_record")
-    if saved_cr:
+    # Restore Health
+    hp_data = player_data.get("Health")
+    if hp_data:
+        app.world.add(player, Health(
+            current=float(hp_data.get("current", 100.0)),
+            maximum=float(hp_data.get("maximum", 100.0)),
+        ))
+
+    # Restore CrimeRecord
+    cr_data = player_data.get("CrimeRecord")
+    if cr_data:
         from components.social import CrimeRecord
         cr = CrimeRecord(
-            offenses=dict(saved_cr.get("offenses", {})),
-            total_witnessed=saved_cr.get("total_witnessed", 0),
-            decay_timer=saved_cr.get("decay_timer", 0.0),
+            offenses=dict(cr_data.get("offenses", {})),
+            total_witnessed=cr_data.get("total_witnessed", 0),
+            decay_timer=cr_data.get("decay_timer", 0.0),
         )
         app.world.add(player, cr)
 

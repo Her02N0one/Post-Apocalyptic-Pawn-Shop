@@ -1,4 +1,4 @@
-"""scenes/scene_picker.py — Scene selector overlay (F3).
+"""scenes/lab/picker.py — Scene selector overlay (F3).
 
 A minimal full-screen menu that lets you jump into test scenes:
   - Gym (Movement & Pathfinding)
@@ -16,9 +16,9 @@ from core.app import App
 
 
 _ENTRIES = [
-    ("Gym",    "Movement & Pathfinding test arena",  "scenes.gym_scene",    "GymScene"),
-    ("Zoo",    "Auto-populated entity bestiary",      "scenes.zoo_scene",    "ZooScene"),
-    ("Museum", "Interactive system exhibits",         "scenes.museum_scene", "MuseumScene"),
+    ("Gym",    "Movement & Pathfinding test arena",  "scenes.lab.gym",    "GymScene"),
+    ("Zoo",    "Auto-populated entity bestiary",      "scenes.lab.zoo",    "ZooScene"),
+    ("Museum", "Interactive system exhibits",         "scenes.lab.museum", "MuseumScene"),
 ]
 
 

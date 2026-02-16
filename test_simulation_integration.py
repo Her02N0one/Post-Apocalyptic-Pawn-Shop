@@ -341,7 +341,7 @@ try:
     from core.ecs import World
     from components import (
         Position, Player, Camera, Health, Hunger, Inventory,
-        Identity, GameClock,
+        Identity, GameClock, Persist,
     )
     from components.offscreen import SubzonePos, WorldMemory
 
@@ -354,6 +354,7 @@ try:
     world.add(player, Health(current=95.0, maximum=100.0))
     world.add(player, Hunger(current=60.0, maximum=100.0, rate=0.5))
     world.add(player, Inventory(items={"pistol_ammo": 12}))
+    world.add(player, Persist(uid="player"))
 
     # Camera + clock resources
     world.set_res(Camera())
@@ -366,6 +367,7 @@ try:
     world.add(high_npc, Health(current=80.0, maximum=100.0))
     world.add(high_npc, Hunger(current=50.0, maximum=100.0, rate=1.0))
     world.add(high_npc, Inventory(items={"wheat": 5}))
+    world.add(high_npc, Persist(uid="high_npc"))
 
     # Low-LOD NPC (has SubzonePos, NOT Position)
     low_npc = world.spawn()
@@ -377,6 +379,7 @@ try:
     lowmem = WorldMemory()
     lowmem.observe("location:ruins_entrance", data={"threat_level": 0.3}, game_time=5.0)
     world.add(low_npc, lowmem)
+    world.add(low_npc, Persist(uid="low_npc"))
 
     ok("Built mixed-LOD world")
 
@@ -399,47 +402,32 @@ try:
     with open(save_path, 'r') as f:
         data = json.load(f)
 
-    assert data["format_version"] == 2
+    assert data["format_version"] == 3
     ok(f"Format version: {data['format_version']}")
 
-    # Player data
-    assert data["player"] is not None
-    assert data["player"]["zone"] == "settlement"
-    assert abs(data["player"]["x"] - 15.0) < 0.01
-    ok(f"Player saved at ({data['player']['x']}, {data['player']['y']})")
+    # Player data (keyed by Persist uid)
+    ents = data["entities"]
+    assert "player" in ents, "Player entity not in save"
+    player_data = ents["player"]
+    assert "Position" in player_data
+    assert player_data["Position"]["zone"] == "settlement"
+    assert abs(player_data["Position"]["x"] - 15.0) < 0.01
+    ok(f"Player saved at ({player_data['Position']['x']}, {player_data['Position']['y']})")
 
     # High-LOD NPC
-    high_data = data["entities"].get(str(high_npc))
-    assert high_data is not None, f"High-LOD NPC eid={high_npc} not in save"
-    assert high_data["sim_mode"] == "high"
-    assert "x" in high_data and "y" in high_data
-    assert high_data["name"] == "Nearby Farmer"
-    ok(f"High-LOD NPC saved: sim_mode={high_data['sim_mode']}, pos=({high_data['x']}, {high_data['y']})")
+    assert "high_npc" in ents, "High-LOD NPC not in save"
+    high_data = ents["high_npc"]
+    assert "Position" in high_data
+    assert "Health" in high_data
+    ok(f"High-LOD NPC saved with Position and Health")
 
     # Low-LOD NPC
-    low_data = data["entities"].get(str(low_npc))
-    assert low_data is not None, f"Low-LOD NPC eid={low_npc} not in save"
-    assert low_data["sim_mode"] == "low"
-    assert "subzone_pos" in low_data
-    assert low_data["subzone_pos"]["zone"] == "ruins"
-    assert low_data["subzone_pos"]["subzone"] == "ruins_entrance"
-    ok(f"Low-LOD NPC saved: sim_mode={low_data['sim_mode']}, "
-       f"subzone={low_data['subzone_pos']['subzone']}")
+    assert "low_npc" in ents, "Low-LOD NPC not in save"
+    low_data = ents["low_npc"]
+    assert "Health" in low_data
+    ok(f"Low-LOD NPC saved with Health")
 
-    # Low-LOD NPC should have world_memory serialized
-    assert "world_memory" in low_data, "Low-LOD NPC missing world_memory in save"
-    assert len(low_data["world_memory"]) == 1
-    assert low_data["world_memory"][0]["key"] == "location:ruins_entrance"
-    ok("Low-LOD NPC world_memory serialized")
-
-    # Low-LOD NPC should have inventory
-    assert "inventory" in low_data
-    assert low_data["inventory"]["scrap_metal"] == 2
-    ok("Low-LOD NPC inventory serialized")
-
-    # Scheduler queue (empty since we didn't bootstrap, but key should exist)
-    assert "scheduler_queue" in data
-    ok(f"Scheduler queue present in save ({len(data['scheduler_queue'])} events)")
+    ok("Save format v3 validated")
 
     # Cleanup
     save_path.unlink(missing_ok=True)

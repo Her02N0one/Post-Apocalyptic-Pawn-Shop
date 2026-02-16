@@ -1,4 +1,4 @@
-"""scenes/exhibits/stat_combat_exhibit.py — Off-Screen Stat Combat exhibit.
+"""scenes/lab/exhibits/stat_combat_exhibit.py — Off-Screen Stat Combat exhibit.
 
 Demonstrates how combat resolves for entities in unloaded zones.
 Two hostile NPCs are placed at the same subzone node and their
@@ -16,7 +16,7 @@ Controls:
 
 from __future__ import annotations
 
-from scenes.exhibits.base import Exhibit
+from scenes.lab.exhibits.base import Exhibit
 from core.constants import TILE_SIZE
 from components import (
     Position, Velocity, Sprite, Identity, Collider, Hurtbox,

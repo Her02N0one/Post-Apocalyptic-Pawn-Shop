@@ -13,7 +13,7 @@ main.py — Bootstrap
 from core.app import App
 from core.bootstrap import (
     load_game_data, resolve_zone, create_player,
-    setup_world_resources, spawn_characters,
+    setup_world_resources,
 )
 from scenes.world import WorldScene
 
@@ -28,8 +28,6 @@ def main():
     player, start_zone = create_player(app, default_zone, editor_mode)
 
     setup_world_resources(app, tiles, default_zone)
-
-    spawn_characters(app)
 
     app.push_scene(WorldScene(editor_mode=editor_mode, zone_name=start_zone))
     app.run()

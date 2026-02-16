@@ -73,7 +73,7 @@ class ScheduledActivity:
     gathering_node: str
     times: list[float]
     duration: float = 10.0
-    day_length: float = 1440.0
+    day_length: float = 300.0   # default = core.constants.DAY_LENGTH (real seconds)
     group_filter: str = ""
     delay_check: Callable[[Any, int], bool] | None = None
     delay_amount: float = 0.0
@@ -183,11 +183,31 @@ def _schedule_next_for(activity, scheduler, eid, game_time, is_delayed):
     scheduler.post(nxt + delay, eid, activity.event_type, {})
 
 
+def _iter_eligible(activity, world):
+    """Yield entity IDs eligible for an activity regardless of LOD state.
+
+    Uses Faction.group (which persists across LOD transitions) instead
+    of SubzonePos, so entities promoted to high-LOD aren't skipped.
+    When the scheduler fires the event, the handler already guards
+    against high-LOD entities — the important thing is that they stay
+    *in the schedule* so they don't drift out of the cycle.
+    """
+    if activity.group_filter:
+        for eid, faction in world.all_of(Faction):
+            if faction.group == activity.group_filter and world.alive(eid):
+                yield eid
+    else:
+        # No group filter — all entities with SubzonePos (backward compat)
+        for eid, _szp in world.all_of(SubzonePos):
+            if world.alive(eid):
+                yield eid
+
+
 def schedule_activities(activity: ScheduledActivity, world: Any,
                         scheduler: Any, game_time: float) -> int:
     """Bootstrap: schedule the first round of activity events.
 
-    Finds all eligible entities (low-LOD, matching group filter)
+    Finds all eligible entities (matching group filter, any LOD)
     and posts the next occurrence of the activity for each.
 
     Returns the count of events scheduled.
@@ -204,11 +224,7 @@ def schedule_activities(activity: ScheduledActivity, world: Any,
                + activity.times[0])
 
     count = 0
-    for eid, szp in world.all_of(SubzonePos):
-        if activity.group_filter:
-            faction = world.get(eid, Faction)
-            if not faction or faction.group != activity.group_filter:
-                continue
+    for eid in _iter_eligible(activity, world):
         is_delayed = (activity.delay_check is not None
                       and activity.delay_check(world, eid))
         delay = activity.delay_amount if is_delayed else 0.0
@@ -222,13 +238,13 @@ def schedule_activities(activity: ScheduledActivity, world: Any,
 
 
 def _schedule_recurring(activity, world, scheduler, last_time):
-    """Post the next recurring batch after *last_time*."""
+    """Post the next recurring batch after *last_time*.
+
+    Scans by Faction group (not SubzonePos) so entities that spent
+    time in high-LOD stay in the schedule when they return to low-LOD.
+    """
     nxt = next_occurrence(activity, last_time)
-    for eid, szp in world.all_of(SubzonePos):
-        if activity.group_filter:
-            faction = world.get(eid, Faction)
-            if not faction or faction.group != activity.group_filter:
-                continue
+    for eid in _iter_eligible(activity, world):
         is_delayed = (activity.delay_check is not None
                       and activity.delay_check(world, eid))
         delay = activity.delay_amount if is_delayed else 0.0
@@ -248,5 +264,6 @@ def register_activity(activity: ScheduledActivity, scheduler: Any,
 # ── Logging helper ───────────────────────────────────────────────────
 
 def _log(activity, world, eid, msg):
+    from components.dev_log import log_event
     name = entity_display_name(world, eid)
-    print(f"[{activity.name.upper()}] {name}: {msg}")
+    log_event(world, eid, "schedule", msg, name=name)

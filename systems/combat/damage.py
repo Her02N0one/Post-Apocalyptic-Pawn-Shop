@@ -18,6 +18,7 @@ from components import (
 from systems.engine.particles import ParticleManager
 from core.tuning import get as _tun, section as _tun_sec
 from systems.social.faction_disposition import entity_display_name
+from components.dev_log import log_event
 
 
 def apply_damage(
@@ -119,8 +120,11 @@ def apply_damage(
     attacker_name = entity_display_name(world, attacker_eid)
     defender_name = entity_display_name(world, defender_eid)
     crit_tag = " [CRIT]" if is_crit else ""
-    print(f"[{log_prefix}] {attacker_name} hit {defender_name} for "
-          f"{damage:.0f} damage{crit_tag} (HP: {health.current:.0f}/{health.maximum})")
+    log_event(world, attacker_eid, "combat",
+              f"hit {defender_name} for {damage:.0f} damage{crit_tag} "
+              f"(HP: {health.current:.0f}/{health.maximum})",
+              name=attacker_name,
+              details={"defender": defender_eid, "damage": damage, "crit": is_crit})
 
     is_dead = health.current <= 0
     return damage, is_crit, is_dead

@@ -58,8 +58,10 @@ def _log(world: World, eid: int, cat: str, msg: str, t: float = 0.0, **kw):
 def tick_ai(world: World, dt: float):
     """Execute brains for active, high-LOD entities.
 
-    Brains receive ``game_time`` (``GameClock.time``) which advances
-    at 1.0 per real second (at 1x speed).
+    Brains receive ``game_time`` (``GameClock.time``) which is in
+    **real seconds** (advanced by ``dt`` each frame).  All time-based
+    constants — villager day length, meal schedules, hunger predictions
+    — share this same real-second time base.
     """
     clock = world.res(GameClock)
     game_time = clock.time if clock else 0.0

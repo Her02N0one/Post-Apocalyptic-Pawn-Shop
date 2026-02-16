@@ -17,7 +17,9 @@ from components import (
     Lod, Hurtbox, CombatStats, Loot, LootTableRef,
     Faction, Dialogue, Ownership, Locked,
     SubzonePos, TravelPlan, Home, WorldMemory,
+    Pushable, Persist,
 )
+from components.ai import VisionCone
 
 
 # ── Field-schema helpers ─────────────────────────────────────────────
@@ -107,6 +109,23 @@ _COMPONENT_TABLE: list[tuple[str, type, dict[str, tuple[str, Callable, Any]]]] =
         "abstract":     ("abstract",     _bool, False),
         "spawn_radius": ("spawn_radius", _float, 8.0),
     }),
+    ("pushable", Pushable, {
+        "friction": ("friction", _float, 5.0),
+    }),
+    ("persist", Persist, {
+        "uid": ("uid", _str, ""),
+    }),
+    ("vision_cone", VisionCone, {
+        "fov_degrees":       ("fov_degrees",       _float, 120.0),
+        "view_distance":     ("view_distance",     _float, 5000.0),
+        "peripheral_range":  ("peripheral_range",  _float, 10.0),
+    }),
+    ("lod", Lod, {
+        "level": ("level", _str, "low"),
+    }),
+    ("facing", Facing, {
+        "direction": ("direction", _str, "down"),
+    }),
 ]
 
 
@@ -155,8 +174,17 @@ def spawn_from_descriptor(world: World, desc: dict, zone: str) -> int:
     """Create an entity from a data descriptor dict.
 
     Works with both zone-file entity blocks and test_entities dicts.
+    If the descriptor has a ``"prefab"`` key, the named prefab is
+    resolved and deep-merged underneath the caller's overrides.
     Returns the new entity ID.
     """
+    # ── Prefab resolution ────────────────────────────────────────────
+    prefab_name = desc.get("prefab")
+    if prefab_name:
+        from systems.engine.prefabs import resolve_prefab, _deep_merge
+        base = resolve_prefab(prefab_name)
+        desc = _deep_merge(base, {k: v for k, v in desc.items() if k != "prefab"})
+
     eid = world.spawn()
 
     # ── Identity (special: fallback for flat dicts) ──────────────────
@@ -232,8 +260,9 @@ def spawn_from_descriptor(world: World, desc: dict, zone: str) -> int:
         world.add(eid, WorldMemory())
 
     # ── Facing (auto-add for brain entities) ─────────────────────────
-    if desc.get("_add_facing", False) or "brain" in desc:
-        world.add(eid, Facing())
+    if not world.has(eid, Facing):
+        if desc.get("_add_facing", False) or "brain" in desc:
+            world.add(eid, Facing())
 
     # ── Brain + split components (backward-compat migration) ─────────
     _apply_brain_split(world, eid, desc)
@@ -251,6 +280,14 @@ def spawn_from_descriptor(world: World, desc: dict, zone: str) -> int:
     # ── Lod (ensure exists) ──────────────────────────────────────────
     if not world.has(eid, Lod):
         world.add(eid, Lod(level="low"))
+
+    # ── HomeRange origin defaults to entity position if unset ────────
+    if world.has(eid, HomeRange) and world.has(eid, Position):
+        hr = world.get(eid, HomeRange)
+        pos = world.get(eid, Position)
+        if hr.origin_x == 0.0 and hr.origin_y == 0.0:
+            hr.origin_x = pos.x
+            hr.origin_y = pos.y
 
     return eid
 
@@ -328,15 +365,13 @@ def _apply_brain_split(world: World, eid: int, desc: dict) -> None:
         ))
 
 
-def spawn_zone_entities(world: World, zone: str, npcs_enabled: bool = True) -> list[int]:
+def spawn_zone_entities(world: World, zone: str) -> list[int]:
     """Spawn all entities defined in the zone's spawn data.
 
     Skips spawning if any entity with SpawnInfo.zone == zone already exists
     (prevents duplicates on re-entry).
     Returns list of spawned entity IDs.
     """
-    if not npcs_enabled:
-        return []
 
     from core.zone import ZONE_SPAWNS
 
@@ -356,9 +391,13 @@ def spawn_zone_entities(world: World, zone: str, npcs_enabled: bool = True) -> l
                 "abstract": not has_pos,
                 "spawn_radius": 8.0,
             }}
-        eids.append(spawn_from_descriptor(world, desc, zone))
+        eid = spawn_from_descriptor(world, desc, zone)
+        # Pushable entities need a Velocity so the physics push works
+        if world.has(eid, Pushable) and not world.has(eid, Velocity):
+            world.add(eid, Velocity())
+        eids.append(eid)
     return eids
 
 
-# Test spawning moved to data/test_spawner.py — re-export for backward compat.
-from data.test_spawner import spawn_test_entities, spawn_test_dummy  # noqa: F401
+# Test spawning moved to data/dummy_spawner.py — re-export for backward compat.
+from data.dummy_spawner import spawn_test_entities  # noqa: F401

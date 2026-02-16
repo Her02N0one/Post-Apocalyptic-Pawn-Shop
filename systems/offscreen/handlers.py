@@ -15,6 +15,7 @@ from core.subzone import SubzoneGraph
 from systems.social.faction_disposition import entity_display_name
 from systems.items.inventory_consume import consume_best_food, eat_from_stockpile, npc_try_eat_any
 from systems.social.settlement import add_to_stockpile
+from components.dev_log import log_event
 
 
 def register_all_handlers(scheduler: Any, graph: SubzoneGraph) -> None:
@@ -64,7 +65,7 @@ def handle_arrive_node(world: Any, eid: int, event_type: str,
                 szp.zone = node.zone
 
     name = entity_display_name(world, eid)
-    print(f"[SIM] {name} arrived at {node_id} (from {from_node})")
+    log_event(world, eid, "sim", f"arrived at {node_id} (from {from_node})", name=name)
 
     # Run checkpoint evaluation
     if graph:
@@ -99,11 +100,11 @@ def handle_hunger_critical(world: Any, eid: int, event_type: str,
 
     # Try all eating strategies (inventory → stockpile → container)
     if npc_try_eat_any(world, eid):
-        print(f"[SIM] {name} ate food (hunger critical)")
+        log_event(world, eid, "sim", "ate food (hunger critical)", name=name)
         _schedule_hunger_event(world, eid, scheduler, game_time)
         return
 
-    print(f"[SIM] {name} is critically hungry — no food!")
+    log_event(world, eid, "sim", "critically hungry — no food!", name=name)
 
     # Interrupt current activity — trigger decision cycle to find food
     szp = world.get(eid, SubzonePos)
@@ -161,7 +162,8 @@ def handle_finish_search(world: Any, eid: int, event_type: str,
             game_time=game_time, ttl=600.0,
         )
 
-    print(f"[SIM] {name} searched container at {node_id} — got {transferred} items")
+    log_event(world, eid, "sim",
+              f"searched container at {node_id} — got {transferred} items", name=name)
 
     # Decision cycle for next action
     _post_decision(scheduler, eid, node_id, game_time)
@@ -194,7 +196,7 @@ def handle_finish_work(world: Any, eid: int, event_type: str,
             inv = world.get(eid, Inventory)
             if inv:
                 inv.items[product] = inv.items.get(product, 0) + 1
-        print(f"[SIM] {name} crafted {product}")
+        log_event(world, eid, "sim", f"crafted {product}", name=name)
 
     _post_decision(scheduler, eid, node_id, game_time)
 
@@ -241,8 +243,9 @@ def handle_rest_complete(world: Any, eid: int, event_type: str,
                              health.current + health.maximum * heal_rate)
 
     name = entity_display_name(world, eid)
-    print(f"[SIM] {name} rested for {duration:.0f} min (HP: {health.current:.0f})"
-          if health else f"[SIM] {name} rested")
+    log_event(world, eid, "sim",
+              f"rested for {duration:.0f}s (HP: {health.current:.0f})" if health
+              else "rested", name=name)
 
     _post_decision(scheduler, eid, node_id, game_time)
 
@@ -319,14 +322,13 @@ def schedule_hunger_event(world: Any, eid: int, scheduler: Any,
         scheduler.post(game_time + 0.5, eid, "HUNGER_CRITICAL", {})
         return
 
-    # Predict when hunger hits threshold
-    # hunger.rate is hunger/second, but scheduler works in game-minutes
-    # Convert: drain per minute = rate * 60
-    drain_per_minute = hunger.rate * 60.0
-    if drain_per_minute <= 0:
+    # Predict when hunger hits threshold.
+    # hunger.rate is hunger/second, game_time is in real seconds
+    # (GameClock.time += dt each frame), so no unit conversion needed.
+    if hunger.rate <= 0:
         return  # No drain
 
-    time_to_critical = (hunger.current - threshold) / drain_per_minute
+    time_to_critical = (hunger.current - threshold) / hunger.rate
     scheduler.post(game_time + time_to_critical, eid, "HUNGER_CRITICAL", {})
 
 

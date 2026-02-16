@@ -1,4 +1,4 @@
-"""scenes/exhibits/base.py — Exhibit protocol for museum tabs.
+"""scenes/lab/exhibits/base.py — Exhibit protocol for museum tabs.
 
 Every museum tab is an Exhibit subclass that owns its own:
     * entity spawning  (setup)

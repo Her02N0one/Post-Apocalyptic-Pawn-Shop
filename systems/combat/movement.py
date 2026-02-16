@@ -93,7 +93,13 @@ def ranged_attack(pos, vel, tx: float, ty: float, dist: float,
             rx, ry = repos_target
             d_repos = math.hypot(pos.x - rx, pos.y - ry)
             if d_repos < 0.5:
-                vel.x, vel.y = 0.0, 0.0
+                # Arrived at repos — strafe to keep moving while
+                # engagement layer searches for a new position.
+                _do_strafe(pos, vel, target_proxy, speed,
+                           _tun("combat.engagement",
+                                "strafe_speed_los_mult", 1.2),
+                           state, dt,
+                           min_t=0.3, max_t=0.6)
             else:
                 move_toward_pathfind(
                     pos, vel, rx, ry,

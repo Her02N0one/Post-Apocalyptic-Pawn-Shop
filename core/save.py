@@ -1,35 +1,204 @@
-"""core/save.py — Game state persistence (separate from zone templates).
+"""core/save.py — Game state persistence (format version 3).
 
-Save files (JSON) store only runtime state:
-- Player position, inventory, health, hunger
-- Entity positions and state (high-LOD living entities or low-LOD task data)
-- Container state (which loot has been scavenged)
-- Flags, quests, etc.
+Only **dynamic** component data is saved.  Static data (sprite colour,
+dialogue barks, collider shape, etc.) comes from zone templates and is
+loaded by ID when the zone spawns entities.  This keeps save files
+small and means you can iterate on template data without invalidating
+saves.
 
-Zone files (NBT) store only static template data:
-- Tile layout
-- Entity spawn definitions (not their runtime state)
-- Loot table specs
-- Points of interest
-- Anchors
+Save format (JSON)
+------------------
+.. code-block:: json
 
-When loading a game:
-1. Load zone NBT (static template)
-2. Load save JSON (runtime state overlay)
-3. Merge: spawn entities from NBT, then override positions/state from save
+    {
+        "format_version": 3,
+        "current_zone": "playground",
+        "entities": {
+            "player": {
+                "Position": {"x": 5.0, "y": 10.0, "zone": "playground"},
+                "Health":   {"current": 95, "maximum": 100},
+                ...
+            },
+            "dummy_bob": {
+                "Position": {"x": 12.0, "y": 8.0, "zone": "playground"},
+                ...
+            }
+        }
+    }
+
+The entity key is ``Persist.uid``.  On load, entities are first spawned
+from their zone template (which provides all static data), then any
+saved dynamic fields are overlaid on top.
 """
 
 from __future__ import annotations
+import dataclasses
 import json
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core.app import App
-
+    from core.ecs import World
 
 SAVES_DIR = Path("saves")
+FORMAT_VERSION = 3
 
+# ── Static / dynamic split ───────────────────────────────────────────
+#
+# Static components come from zone templates (loaded by entity ID).
+# They are **not** written to save files — only dynamic state is saved.
+# If you add a new component that holds mutable game state, make sure
+# it is NOT listed here so it gets saved automatically.
+
+STATIC_COMPONENTS: frozenset[str] = frozenset({
+    # Appearance — loaded from template
+    "Sprite",
+    # Dialogue / quest hooks — loaded from template
+    "Dialogue",
+    # Physics shape — loaded from template
+    "Collider", "Hurtbox", "Pushable",
+    # Base attack config — loaded from template
+    "AttackConfig",
+    # Loot / ownership — loaded from template
+    "LootTableRef", "Ownership", "Locked", "Loot",
+    # AI pathing / perception config — loaded from template
+    "HomeRange", "Threat", "VisionCone",
+    # Identity — name/kind come from template
+    "Identity",
+    # Spawn bookkeeping — template only
+    "SpawnInfo",
+    # Transient runtime state — reconstructed each session
+    "Velocity", "Facing", "Lod", "HitFlash", "Needs",
+})
+
+
+# ── Component registry ───────────────────────────────────────────────
+#
+# Maps ``ClassName`` → class for every known component type.
+# Populated lazily on first use from the ``components`` package.
+
+_COMPONENT_REGISTRY: dict[str, type] = {}
+_REGISTRY_READY = False
+
+
+def _ensure_registry() -> None:
+    """Lazily populate the component registry from the components package."""
+    global _REGISTRY_READY
+    if _REGISTRY_READY:
+        return
+    import components as _pkg
+    import components.spatial
+    import components.rendering
+    import components.rpg
+    import components.combat
+    import components.ai
+    import components.social
+    import components.resources
+    import components.offscreen
+
+    _modules = [
+        _pkg,
+        components.spatial,
+        components.rendering,
+        components.rpg,
+        components.combat,
+        components.ai,
+        components.social,
+        components.resources,
+        components.offscreen,
+    ]
+    for mod in _modules:
+        for name in dir(mod):
+            obj = getattr(mod, name)
+            if isinstance(obj, type) and dataclasses.is_dataclass(obj):
+                _COMPONENT_REGISTRY[obj.__name__] = obj
+    _REGISTRY_READY = True
+
+
+# ── Serialisation helpers ─────────────────────────────────────────────
+
+def _serialise_value(val: Any) -> Any:
+    """Convert a Python value to a JSON-safe representation."""
+    if isinstance(val, tuple):
+        return list(val)
+    if isinstance(val, dict):
+        return {str(k): _serialise_value(v) for k, v in val.items()}
+    if isinstance(val, list):
+        return [_serialise_value(v) for v in val]
+    if dataclasses.is_dataclass(val) and not isinstance(val, type):
+        return serialise_component(val)
+    if isinstance(val, (int, float, str, bool, type(None))):
+        return val
+    # Fallback: convert to string
+    return str(val)
+
+
+def serialise_component(comp: Any) -> dict[str, Any]:
+    """Serialise a single dataclass component to a plain dict."""
+    d: dict[str, Any] = {}
+    for f in dataclasses.fields(comp):
+        d[f.name] = _serialise_value(getattr(comp, f.name))
+    return d
+
+
+def deserialise_component(cls: type, data: dict[str, Any]) -> Any:
+    """Create a dataclass component instance from a serialised dict."""
+    valid_fields = {f.name: f for f in dataclasses.fields(cls)}
+    kwargs: dict[str, Any] = {}
+    for key, val in data.items():
+        if key not in valid_fields:
+            continue
+        f = valid_fields[key]
+        # tuple coercion: if the field's default is a tuple, convert
+        default = f.default
+        if default is dataclasses.MISSING:
+            default = None
+        if isinstance(val, list) and isinstance(default, tuple):
+            val = tuple(val)
+        kwargs[key] = val
+    return cls(**kwargs)
+
+
+# ── Entity serialisation ─────────────────────────────────────────────
+
+def serialise_entity(world: "World", eid: int) -> dict[str, dict]:
+    """Serialise the *dynamic* components of entity *eid*.
+
+    Static components (listed in ``STATIC_COMPONENTS``) are skipped —
+    they come from zone templates and don't need saving.
+    Returns ``{ClassName: {fields}}``.
+    """
+    _ensure_registry()
+    result: dict[str, dict] = {}
+    for cls_name, cls in _COMPONENT_REGISTRY.items():
+        if cls_name in STATIC_COMPONENTS:
+            continue
+        comp = world.get(eid, cls)
+        if comp is not None:
+            result[cls_name] = serialise_component(comp)
+    return result
+
+
+def deserialise_entity(world: "World", components_data: dict[str, dict]) -> int:
+    """Create a new entity from serialised component data. Returns eid."""
+    _ensure_registry()
+    eid = world.spawn()
+    for cls_name, fields in components_data.items():
+        cls = _COMPONENT_REGISTRY.get(cls_name)
+        if cls is None:
+            continue
+        comp = deserialise_component(cls, fields)
+        world.add(eid, comp)
+    # Register in zone spatial index if Position present
+    from components import Position
+    pos = world.get(eid, Position)
+    if pos:
+        world.zone_add(eid, pos.zone)
+    return eid
+
+
+# ── Save / Load ──────────────────────────────────────────────────────
 
 def get_save_file(slot: int = 0) -> Path:
     """Get the path for a save slot."""
@@ -37,202 +206,110 @@ def get_save_file(slot: int = 0) -> Path:
     return SAVES_DIR / f"slot{slot}.json"
 
 
-def _save_entity_common(world, eid: int, ent_data: dict[str, Any]) -> None:
-    """Append shared fields (identity, health, hunger, inventory) to ent_data."""
-    from components import Identity, Health, Hunger, Inventory, Equipment, Lod
-    from components import Task
-
-    if world.has(eid, Identity):
-        ident = world.get(eid, Identity)
-        ent_data["name"] = ident.name
-        ent_data["kind"] = ident.kind
-
-    lod_level = "low"
-    if world.has(eid, Lod):
-        lod_level = world.get(eid, Lod).level
-    ent_data["lod"] = lod_level
-
-    if world.has(eid, Health):
-        h = world.get(eid, Health)
-        ent_data["health"] = {"current": float(h.current), "maximum": float(h.maximum)}
-    if world.has(eid, Hunger):
-        hu = world.get(eid, Hunger)
-        ent_data["hunger"] = {"current": float(hu.current), "rate": float(hu.rate)}
-    if world.has(eid, Inventory):
-        inv = world.get(eid, Inventory)
-        if inv.items:
-            ent_data["inventory"] = dict(inv.items)
-    if world.has(eid, Equipment):
-        eq = world.get(eid, Equipment)
-        ent_data["equipment"] = {"weapon": eq.weapon, "armor": eq.armor}
-    if lod_level == "low" and world.has(eid, Task):
-        task = world.get(eid, Task)
-        ent_data["task"] = {"type": task.type, "progress": float(task.progress)}
-    # Save crime record (player only)
-    from components.social import CrimeRecord, Locked
-    if world.has(eid, CrimeRecord):
-        cr = world.get(eid, CrimeRecord)
-        ent_data["crime_record"] = {
-            "offenses": dict(cr.offenses),
-            "total_witnessed": cr.total_witnessed,
-            "decay_timer": float(cr.decay_timer),
-        }
-    # Save lock state (containers)
-    if world.has(eid, Locked):
-        lock = world.get(eid, Locked)
-        ent_data["locked"] = {
-            "faction_access": lock.faction_access,
-            "difficulty": lock.difficulty,
-        }
-
-
 def save_game_state(app: "App", slot: int = 0) -> Path:
-    """Save current game state (not zone template).
-    
-    Saves:
-    - Player position, inventory, resources
-    - All entities (position, health, hunger, state)
-    - Zone state (opened containers, flags, etc.)
-    - Metadata (timestamp, playtime)
-    
-    Returns path to save file.
+    """Save current game state to disk.
+
+    Iterates all entities with a ``Persist`` component and serialises
+    every component attached to them.
     """
-    from components import (
-        Position, Inventory, Health, Hunger, Identity,
-        Player, Lod, Equipment,
-        SubzonePos, Home, WorldMemory,
-    )
-    
-    from components import Task
-    
+    from components import Persist, GameClock
+
     save_path = get_save_file(slot)
-    
-    # Build player data
-    player_data = None
-    res = app.world.query_one(Player, Position)
-    if res:
-        _, _, pos = res
-        player_data = {
-            "zone": pos.zone,
-            "x": float(pos.x),
-            "y": float(pos.y),
-        }
-        # Add inventory if exists
-        inv_res = app.world.query_one(Player, Inventory)
-        if inv_res:
-            _, _, inv = inv_res
-            if inv.items:
-                player_data["inventory"] = dict(inv.items)
-        # Add equipment if exists
-        eq_res = app.world.query_one(Player, Equipment)
-        if eq_res:
-            _, _, eq = eq_res
-            player_data["equipment"] = {"weapon": eq.weapon, "armor": eq.armor}
-        # Add health/hunger
-        health_res = app.world.query_one(Player, Health)
-        if health_res:
-            _, _, health = health_res
-            player_data["health"] = {"current": float(health.current), "maximum": float(health.maximum)}
-        hunger_res = app.world.query_one(Player, Hunger)
-        if hunger_res:
-            _, _, hunger = hunger_res
-            player_data["hunger"] = {"current": float(hunger.current), "rate": float(hunger.rate)}
-    
-    # Build entity data (for non-player entities)
-    entities_data = {}
-    # Collect all entities that have Position OR SubzonePos
-    seen_eids: set[int] = set()
 
-    for eid, pos in app.world.all_of(Position):
-        if app.world.has(eid, Player):
-            continue  # Skip player, already saved above
-        seen_eids.add(eid)
-        
-        ent_data: dict[str, Any] = {
-            "zone": pos.zone,
-            "x": float(pos.x),
-            "y": float(pos.y),
-            "sim_mode": "high",
-        }
-        _save_entity_common(app.world, eid, ent_data)
-        entities_data[str(eid)] = ent_data
+    # Determine current zone from the active scene
+    current_zone = "playground"
+    if getattr(app, "_scenes", None):
+        scene = app._scenes[-1]
+        if hasattr(scene, "zone"):
+            current_zone = scene.zone
 
-    # Low-LOD entities (have SubzonePos but NOT Position)
-    for eid, sp in app.world.all_of(SubzonePos):
-        if eid in seen_eids or app.world.has(eid, Player):
+    # Serialise all persistent entities
+    entities_data: dict[str, dict] = {}
+    for eid, persist in app.world.all_of(Persist):
+        if not persist.uid:
             continue
-        seen_eids.add(eid)
-        ent_data = {
-            "sim_mode": "low",
-            "subzone_pos": {"zone": sp.zone, "subzone": sp.subzone},
-        }
-        _save_entity_common(app.world, eid, ent_data)
-        # Home
-        if app.world.has(eid, Home):
-            h = app.world.get(eid, Home)
-            ent_data["home"] = {"zone": h.zone, "subzone": h.subzone}
-        # WorldMemory
-        if app.world.has(eid, WorldMemory):
-            wm = app.world.get(eid, WorldMemory)
-            ent_data["world_memory"] = [
-                {"key": e.key, "data": e.data, "timestamp": e.timestamp, "ttl": e.ttl}
-                for e in wm.entries.values()
-            ]
-        entities_data[str(eid)] = ent_data
-    
-    # Build zone state (container flags, etc.)
-    zone_state = {}
-    # Placeholder: can expand this to track which containers have been opened
-    # For now, just store basic per-zone data
-    
-    # Scheduler event queue
-    scheduler_data: list[dict] = []
-    try:
-        from systems.offscreen.manager import WorldSim
-        # Grab the live WorldSim from the active scene
-        scene = app._scenes[-1] if app._scenes else None
-        if scene and hasattr(scene, "world_sim") and scene.world_sim:
-            scheduler_data = scene.world_sim.scheduler.to_list()
-    except Exception:
-        pass  # simulation package not available
+        entities_data[persist.uid] = serialise_entity(app.world, eid)
 
     save_data = {
-        "format_version": 2,
-        "player": player_data,
+        "format_version": FORMAT_VERSION,
+        "current_zone": current_zone,
         "entities": entities_data,
-        "zone_state": zone_state,
-        "scheduler_queue": scheduler_data,
     }
-    
-    with open(save_path, 'w') as f:
+
+    with open(save_path, "w") as f:
         json.dump(save_data, f, indent=2)
-    
+        f.write("\n")
+
     return save_path
 
 
-def load_game_state(app: "App" | None = None, slot: int = 0) -> dict[str, Any] | None:
-    """Load game state from save file.
-    
-    Args:
-        app: App instance (optional, not used for file load)
-        slot: Save slot number (default 0)
-    
-    Returns dict with keys: player, entities, zone_state.
-    Returns None if save file doesn't exist.
-    
-    Caller is responsible for:
-    1. Loading the zone template (NBT)
-    2. Calling this function to get saved state
-    3. Merging them (update entity positions from save, spawn any missing from template)
+def load_game_state(app: "App | None" = None, slot: int = 0) -> dict[str, Any] | None:
+    """Load game state from a save file.
+
+    Returns the raw dict or ``None`` if no save exists.
     """
     save_path = get_save_file(slot)
     if not save_path.exists():
         return None
-    
     try:
-        with open(save_path, 'r') as f:
-            data = json.load(f)
-        return data
+        with open(save_path) as f:
+            return json.load(f)
     except Exception as ex:
-        print(f"[SAVE] Error loading save file: {ex}")
+        print(f"[SAVE] Error loading save: {ex}")
         return None
+
+
+def restore_entities(world: "World", save_data: dict[str, Any]) -> dict[str, int]:
+    """Recreate all entities from a save dict.
+
+    Returns ``{uid: eid}`` mapping for caller convenience.
+    """
+    uid_to_eid: dict[str, int] = {}
+    for uid, comp_data in save_data.get("entities", {}).items():
+        eid = deserialise_entity(world, comp_data)
+        uid_to_eid[uid] = eid
+    return uid_to_eid
+
+
+def apply_zone_saves(world: "World", save_data: dict[str, Any] | None) -> int:
+    """Overlay saved dynamic data onto zone-spawned entities.
+
+    After ``spawn_zone_entities`` creates entities from templates, call
+    this to restore any saved mutable state (position, health, etc.).
+
+    Only touches non-player ``Persist``-tagged entities whose uid
+    appears in *save_data*.  Returns the number of entities updated.
+    """
+    if not save_data:
+        return 0
+    _ensure_registry()
+    entities = save_data.get("entities", {})
+    if not entities:
+        return 0
+
+    from components import Persist, Position
+
+    count = 0
+    for eid, persist in world.all_of(Persist):
+        if not persist.uid or persist.uid == "player":
+            continue
+        saved = entities.get(persist.uid)
+        if not saved:
+            continue
+        # Overlay each saved dynamic component onto the template entity
+        for cls_name, fields in saved.items():
+            if cls_name in STATIC_COMPONENTS:
+                continue  # template data — don't touch
+            cls = _COMPONENT_REGISTRY.get(cls_name)
+            if cls is None:
+                continue
+            comp = deserialise_component(cls, fields)
+            if world.has(eid, cls):
+                world.remove(eid, cls)
+            world.add(eid, comp)
+        # Update zone spatial index if Position was changed
+        pos = world.get(eid, Position)
+        if pos:
+            world.zone_set(eid, pos.zone)
+        count += 1
+    return count

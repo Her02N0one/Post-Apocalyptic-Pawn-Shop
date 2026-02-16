@@ -120,16 +120,13 @@ def mouse_world_pos(app, scene=None, screen_pos: tuple[int, int] | None = None) 
 
 
 def _facing_from_angle(angle: float) -> str:
-    """Convert a radian angle to one of four cardinal directions."""
-    deg = math.degrees(angle) % 360
-    if 45 <= deg < 135:
-        return "down"
-    elif 135 <= deg < 225:
-        return "left"
-    elif 225 <= deg < 315:
-        return "up"
-    else:
-        return "right"
+    """Convert a radian angle to one of four cardinal directions.
+
+    Thin wrapper around :func:`core.geometry.angle_to_facing`.
+    Kept for backward compatibility with in-package imports.
+    """
+    from core.geometry import angle_to_facing
+    return angle_to_facing(angle)
 
 
 # ── Re-exports from submodules ───────────────────────────────────────

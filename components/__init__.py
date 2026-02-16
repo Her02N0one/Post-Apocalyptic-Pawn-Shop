@@ -16,7 +16,7 @@ All public names are re-exported here so existing code that does
 """
 
 # ── Spatial ──────────────────────────────────────────────────────────
-from components.spatial import Position, Velocity, Collider, Facing, Hurtbox
+from components.spatial import Position, Velocity, Collider, Facing, Hurtbox, Pushable, Persist
 
 # ── Rendering ────────────────────────────────────────────────────────
 from components.rendering import Identity, Sprite, HitFlash

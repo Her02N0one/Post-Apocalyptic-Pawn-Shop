@@ -25,10 +25,13 @@ No gameplay code should reference pixels — only the renderer.
 
 Game Time Scale
 ~~~~~~~~~~~~~~~
+``GameClock.time`` is in **real seconds** (incremented by ``dt``
+each frame).  This is the single canonical time base for ALL systems:
+per-frame brains, the off-screen scheduler, scheduled activities,
+and hunger prediction.
+
 ``DAY_LENGTH`` real seconds = 1 in-game day.
-``SECONDS_PER_GAME_MINUTE`` converts between the two clocks.
-The simulation layer (travel, stat-combat) uses game-minutes;
-the real-time layer (brains, engagement) uses real seconds.
+``SECONDS_PER_GAME_MINUTE`` converts for display only (HUD clock).
 
 Reference speeds (real-world → game):
     Walk        1.2–1.5 m/s (patrol_speed = 2.0 m/s — brisk walk)
@@ -66,6 +69,8 @@ TILE_STONE      = 3
 TILE_WATER      = 4
 TILE_WOOD_FLOOR = 5
 TILE_WALL       = 6
+TILE_SAND       = 7
+TILE_RUBBLE     = 8
 TILE_TELEPORTER = 9
 
 # Render
@@ -80,5 +85,7 @@ TILE_COLORS = {
     4: (30, 60, 90),       # water
     5: (70, 50, 35),       # wood floor
     6: (90, 90, 90),       # wall
+    7: (140, 130, 90),     # sand
+    8: (100, 85, 70),      # rubble
     9: (180, 20, 180),     # teleporter
 }

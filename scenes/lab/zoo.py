@@ -1,4 +1,4 @@
-"""scenes/zoo_scene.py — Entity Zoo / Bestiary.
+"""scenes/lab/zoo.py — Entity Zoo / Bestiary.
 
 Auto-scans characters.toml and items.toml.  Spawns each entry in a
 labeled grid cell so you can inspect every entity's stats at a glance.
@@ -32,7 +32,7 @@ from components.ai import HomeRange, Threat, AttackConfig, VisionCone
 from components.social import Faction, Dialogue
 from components.combat import CombatStats, Loot, LootTableRef
 from systems.engine.entity_factory import spawn_from_descriptor
-from scenes.test_scene_base import TestScene
+from scenes.lab.base import TestScene
 
 try:
     import tomllib

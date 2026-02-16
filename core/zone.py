@@ -1,9 +1,8 @@
-"""core/zone.py — NBT-backed zone maps, anchors, portals, and helpers.
+"""core/zone.py — Zone maps, anchors, portals, and helpers.
 
-This loader uses .nbt files placed in `zones/` for tile-maps and
-`data/portals.toml` for interzone portal definitions.  Portals are
-bidirectional links that the player (and abstract NPCs) use to
-travel between zones.
+Supports both **JSON** zone files (primary) and legacy **.nbt** files
+(fallback).  Portals may come from the zone JSON itself *or* from the
+separate ``data/portals.toml`` file.
 """
 from __future__ import annotations
 import random
@@ -19,6 +18,8 @@ try:
     from core.nbt import load_zone_nbt
 except Exception:
     load_zone_nbt = None
+
+from core.zone_io import load_zone_json, discover_zone_files, extract_portals
 
 
 ZONES_DIR = Path("zones")
@@ -98,9 +99,10 @@ def _load_nbt_file(path: Path):
 
 
 def load_zones_from_disk(dir_path: Optional[Path] = None):
-    """Load all .nbt zone files from `zones/` into memory.
+    """Load all zone files from ``zones/`` into memory.
 
-    This intentionally ignores JSON files; the editor should write NBT.
+    Loads ``.json`` files first (primary), then ``.nbt`` files as
+    fallback for any zones not already loaded.
     """
     if dir_path is None:
         dir_path = ZONES_DIR
@@ -109,7 +111,34 @@ def load_zones_from_disk(dir_path: Optional[Path] = None):
         dir_path.mkdir(parents=True, exist_ok=True)
         return
 
+    # ── JSON zones (primary) ─────────────────────────────────────────
+    json_zones = discover_zone_files(dir_path)
+    for name, path in json_zones.items():
+        try:
+            data = load_zone_json(path)
+        except Exception as ex:
+            print(f"[ZONE] Error loading {path}: {ex}")
+            continue
+        tiles = data.get("tiles")
+        if tiles:
+            ZONE_MAPS[name] = tiles
+        anchor = data.get("anchor")
+        if isinstance(anchor, (list, tuple)) and len(anchor) == 2:
+            ZONE_ANCHORS[name] = (float(anchor[0]), float(anchor[1]))
+        # Entities are stored for spawn_zone_entities to pick up
+        entities = data.get("entities")
+        if isinstance(entities, list) and entities:
+            ZONE_SPAWNS[name] = entities
+        # Portals embedded in the zone JSON
+        zone_portals = extract_portals(data)
+        if zone_portals:
+            ZONE_TELEPORTERS.setdefault(name, {}).update(zone_portals)
+
+    # ── NBT zones (fallback) ─────────────────────────────────────────
     for p in sorted(dir_path.glob("*.nbt")):
+        stem = p.stem
+        if stem in ZONE_MAPS:
+            continue  # JSON already loaded this zone
         _load_nbt_file(p)
 
 

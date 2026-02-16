@@ -43,12 +43,17 @@ class Lod:
     ``transition_until`` is the absolute GameClock time at which an
     entity that just transitioned to high LOD finishes its "orienting"
     grace period and starts normal brain execution.
+    ``origin_subzone`` — the subzone the entity was in before being
+    promoted; used on demotion to prevent containers drifting to the
+    wrong subzone when they sit near an anchor boundary.
     """
     level: str = "low"
     # chunk coordinate the entity currently belongs to (for medium/high LOD calc)
     chunk: tuple[int, int] = (0, 0)
     # Grace period: entity is "orienting" until this game-time
     transition_until: float = 0.0
+    # Subzone the entity was in before promotion → restored on demotion
+    origin_subzone: str = ""
 
 
 @dataclass

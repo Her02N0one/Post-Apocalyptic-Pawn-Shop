@@ -5,9 +5,13 @@ NPCs, system transitions, combat events, and errors.  Read by the
 DevTools scene to give the developer a live feed of what every NPC
 is doing and why.
 
-Usage:
+Usage (structured):
     log = world.res(DevLog)
     log.record(eid, "combat", "mode → chase", details={"dist": 5.2})
+
+Usage (convenience — writes to DevLog AND prints to stdout):
+    from components.dev_log import log_event
+    log_event(world, eid, "combat", "mode → chase", name="Guard")
 
 Each entry is a dict:
     {"t": float, "eid": int, "name": str, "cat": str,
@@ -16,6 +20,7 @@ Each entry is a dict:
 
 from __future__ import annotations
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -74,3 +79,47 @@ class DevLog:
     def for_cat(self, cat: str, n: int = 50) -> list[dict]:
         """Return last *n* entries in a category."""
         return [e for e in self.entries if e["cat"] == cat][-n:]
+
+
+# ── Module-level convenience function ────────────────────────────────
+
+def log_event(world: Any, eid: int, cat: str, msg: str, *,
+              name: str = "", details: dict | None = None) -> None:
+    """Write to DevLog (if it exists) and print to stdout.
+
+    This is the preferred replacement for bare ``print()`` calls in
+    systems.  The DevLog captures events for the debug scene's event
+    log, while stdout preserves the console output developers are used
+    to reading.
+
+    Parameters
+    ----------
+    world : World
+        The ECS world (used to look up the DevLog resource and clock).
+    eid : int
+        Entity ID (use -1 for system-level messages).
+    cat : str
+        Category tag (e.g. "combat", "lod", "sim", "econ", "crime").
+    msg : str
+        Human-readable message (what happened).
+    name : str
+        Entity display name (optional — for readability).
+    details : dict | None
+        Optional structured data for programmatic inspection.
+    """
+    from components import GameClock
+    t = 0.0
+    try:
+        clock = world.res(GameClock)
+        if clock:
+            t = clock.time
+    except Exception:
+        pass
+
+    log = world.res(DevLog) if hasattr(world, 'res') else None
+    if log is not None:
+        log.record(eid, cat, msg, name=name, t=t, details=details)
+
+    # Also print (with category tag) for console visibility
+    tag = cat.upper()
+    print(f"[{tag}] {name}{': ' if name else ''}{msg}")

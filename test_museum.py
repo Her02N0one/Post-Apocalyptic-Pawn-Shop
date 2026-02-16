@@ -80,30 +80,19 @@ def spawn_npc(w: World, name: str, brain_kind: str,
               color: tuple = (200, 200, 200),
               faction_group: str = "neutral",
               disposition: str = "neutral") -> int:
-    """Mirror of MuseumScene._spawn_npc."""
-    eid = w.spawn()
-    w.add(eid, Position(x=x, y=y, zone=ZONE))
-    w.add(eid, Velocity())
-    w.add(eid, Sprite(char=name[0], color=color))
-    w.add(eid, Identity(name=name, kind="npc"))
-    w.add(eid, Collider())
-    w.add(eid, Hurtbox())
-    w.add(eid, Facing())
-    w.add(eid, Health(current=100, maximum=100))
-    w.add(eid, CombatStats(damage=10, defense=2))
-    w.add(eid, Lod(level="high"))
-    w.add(eid, Brain(kind=brain_kind, active=True))
-    w.add(eid, HomeRange(origin_x=x, origin_y=y, radius=6.0, speed=2.0))
-    w.add(eid, Faction(group=faction_group, disposition=disposition,
-                       home_disposition=disposition))
-    if brain_kind in ("guard", "hostile_melee"):
-        w.add(eid, Threat(aggro_radius=10.0, leash_radius=25.0))
-        w.add(eid, AttackConfig(attack_type="melee", range=1.2, cooldown=0.5))
-    elif brain_kind == "hostile_ranged":
-        w.add(eid, Threat(aggro_radius=12.0, leash_radius=25.0))
-        w.add(eid, AttackConfig(attack_type="ranged", range=8.0, cooldown=0.6))
-    w.zone_add(eid, ZONE)
-    return eid
+    """Spawn a basic NPC via descriptor + prefab."""
+    from systems.engine.entity_factory import spawn_from_descriptor
+    desc: dict = {
+        "prefab": "creature",
+        "identity": {"name": name},
+        "position": {"x": x, "y": y},
+        "sprite": {"char": name[0], "color": list(color)},
+        "combat_stats": {"damage": 10, "defense": 2},
+        "brain": {"kind": brain_kind, "active": True},
+        "faction": {"group": faction_group, "disposition": disposition},
+        "lod": {"level": "high"},
+    }
+    return spawn_from_descriptor(w, desc, ZONE)
 
 
 def spawn_combat_npc(w: World, name: str, brain_kind: str,
@@ -121,32 +110,30 @@ def spawn_combat_npc(w: World, name: str, brain_kind: str,
                      view_distance: float = 18.0,
                      peripheral_range: float = 3.0,
                      initial_facing: str = "down") -> int:
-    """Mirror of MuseumScene._spawn_combat_npc."""
-    eid = w.spawn()
-    w.add(eid, Position(x=x, y=y, zone=ZONE))
-    w.add(eid, Velocity())
-    w.add(eid, Sprite(char=name[0], color=color))
-    w.add(eid, Identity(name=name, kind="npc"))
-    w.add(eid, Collider())
-    w.add(eid, Hurtbox())
-    w.add(eid, Facing(direction=initial_facing))
-    w.add(eid, Health(current=hp, maximum=hp))
-    w.add(eid, CombatStats(damage=damage, defense=defense))
-    w.add(eid, Lod(level="high"))
-    w.add(eid, Brain(kind=brain_kind, active=True))
-    w.add(eid, HomeRange(origin_x=x, origin_y=y, radius=12.0, speed=speed))
-    w.add(eid, Faction(group=faction_group, disposition="hostile",
-                       home_disposition="hostile"))
-    w.add(eid, Threat(aggro_radius=aggro, leash_radius=30.0,
-                      flee_threshold=flee_threshold))
-    w.add(eid, AttackConfig(attack_type=attack_type, range=atk_range,
-                            cooldown=cooldown, accuracy=accuracy,
-                            proj_speed=proj_speed))
-    w.add(eid, VisionCone(fov_degrees=fov_degrees,
-                          view_distance=view_distance,
-                          peripheral_range=peripheral_range))
-    w.zone_add(eid, ZONE)
-    return eid
+    """Spawn a combat-ready NPC via descriptor + prefab."""
+    from systems.engine.entity_factory import spawn_from_descriptor
+    desc: dict = {
+        "prefab": "creature",
+        "identity": {"name": name},
+        "position": {"x": x, "y": y},
+        "sprite": {"char": name[0], "color": list(color)},
+        "health": {"current": hp, "maximum": hp},
+        "combat_stats": {"damage": damage, "defense": defense},
+        "brain": {"kind": brain_kind, "active": True},
+        "home_range": {"radius": 12.0, "speed": speed},
+        "faction": {"group": faction_group, "disposition": "hostile"},
+        "threat": {"aggro_radius": aggro, "leash_radius": 30.0,
+                   "flee_threshold": flee_threshold},
+        "attack_config": {"attack_type": attack_type, "range": atk_range,
+                          "cooldown": cooldown, "accuracy": accuracy,
+                          "proj_speed": proj_speed},
+        "vision_cone": {"fov_degrees": fov_degrees,
+                        "view_distance": view_distance,
+                        "peripheral_range": peripheral_range},
+        "facing": {"direction": initial_facing},
+        "lod": {"level": "high"},
+    }
+    return spawn_from_descriptor(w, desc, ZONE)
 
 
 def wire_combat(w: World):

@@ -1,5 +1,5 @@
 """
-scenes/debug_scene.py — Developer Tools (F1)
+scenes/lab/debug.py — Developer Tools (F1)
 
 A tabbed fullscreen overlay for inspecting, observing, and live-editing
 the game state.  Tabs:

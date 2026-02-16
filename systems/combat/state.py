@@ -89,6 +89,9 @@ class CombatState:
     _wall_blocked: bool = False
     """Target is behind a wall on the current frame."""
 
+    _wall_blocked_since: float = 0.0
+    """Timestamp when continuous wall-block began (0 = not blocked)."""
+
     _los_blocked: bool = False
     """A *friendly* entity is blocking line-of-sight."""
 

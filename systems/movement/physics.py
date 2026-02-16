@@ -2,11 +2,12 @@
 
 Moves entities with Position+Velocity, resolves tile collisions
 (wall-sliding) and simple entity-vs-entity overlap rejection.
+Entities marked ``Pushable`` slide when bumped by the player.
 """
 
 from __future__ import annotations
 from core.ecs import World
-from components import Position, Velocity, Player, Collider, Lod, HitFlash
+from components import Position, Velocity, Player, Collider, Lod, HitFlash, Pushable
 from core.collision import aabb_hits_wall, HITBOX_W, HITBOX_H
 
 
@@ -46,6 +47,9 @@ def movement_system(world: World, dt: float, tiles: list[list[int]]):
             vel.y = 0.0
 
         # Entity collisions — soft separation (nudge apart)
+        # If the mover is the player and the other is Pushable, transfer
+        # velocity to the pushable entity instead.
+        is_player = world.has(eid, Player)
         if eid in colliders:
             mypos, mycol = colliders[eid]
             for oid, (opos, oc) in colliders.items():
@@ -62,13 +66,28 @@ def movement_system(world: World, dt: float, tiles: list[list[int]]):
                 if dist_sq < min_dist * min_dist and dist_sq > 0.0001:
                     dist = dist_sq ** 0.5
                     overlap = min_dist - dist
-                    # Gentle push — 40% of overlap per frame, enough to
-                    # slide past without hard-stopping
-                    push = overlap * 0.4
                     ndx = ddx / dist
                     ndy = ddy / dist
-                    nx += ndx * push
-                    ny += ndy * push
+
+                    # Push: if mover is player and target is Pushable,
+                    # transfer momentum to the pushable entity
+                    push_comp = world.get(oid, Pushable)
+                    if is_player and push_comp is not None:
+                        push_speed = max(abs(vel.x), abs(vel.y), 2.0)
+                        ovel = world.get(oid, Velocity)
+                        if ovel is None:
+                            world.add(oid, Velocity())
+                            ovel = world.get(oid, Velocity)
+                        ovel.x = -ndx * push_speed
+                        ovel.y = -ndy * push_speed
+                        # Small nudge to unstick this frame
+                        nx += ndx * overlap * 0.2
+                        ny += ndy * overlap * 0.2
+                    else:
+                        # Gentle push — 40% of overlap per frame
+                        push = overlap * 0.4
+                        nx += ndx * push
+                        ny += ndy * push
 
         # Commit movement
         pos.x = nx
@@ -84,3 +103,16 @@ def movement_system(world: World, dt: float, tiles: list[list[int]]):
                     vel.x = 0.0
                 if abs(vel.y) < 0.05:
                     vel.y = 0.0
+
+            # Pushable deceleration — friction slows pushed entities
+            push_comp = world.get(eid, Pushable)
+            if push_comp is not None and (vel.x != 0 or vel.y != 0):
+                friction = push_comp.friction * dt
+                speed = (vel.x ** 2 + vel.y ** 2) ** 0.5
+                if speed <= friction:
+                    vel.x = 0.0
+                    vel.y = 0.0
+                else:
+                    scale = (speed - friction) / speed
+                    vel.x *= scale
+                    vel.y *= scale

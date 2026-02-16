@@ -76,8 +76,7 @@ class WorldSim:
     def tick(self, world: Any, game_time: float) -> int:
         """Process simulation events up to ``game_time``.
 
-        ``game_time`` is in game-minutes (typically GameClock.time
-        converted to minutes).
+        ``game_time`` is in **real seconds** (= ``GameClock.time``).
 
         Returns the number of events processed.
         """

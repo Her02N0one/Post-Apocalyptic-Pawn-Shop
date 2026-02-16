@@ -1,4 +1,4 @@
-"""scenes/test_scene_base.py — Shared base class for test benches.
+"""scenes/lab/base.py — Shared base class for lab scenes.
 
 All test scenes (Gym, Zoo, Museum) inherit from this instead of raw
 Scene.  It handles the boilerplate that was copy-pasted across all
@@ -85,10 +85,10 @@ class TestScene(Scene):
             return
 
         if event.key == pygame.K_F1:
-            from scenes.debug_scene import DebugScene
+            from scenes.lab.debug import DebugScene
             app.push_scene(DebugScene())
         elif event.key == pygame.K_F3:
-            from scenes.scene_picker import ScenePickerScene
+            from scenes.lab.picker import ScenePickerScene
             app.push_scene(ScenePickerScene())
         elif event.key == pygame.K_F4:
             from core import tuning as _tun_mod

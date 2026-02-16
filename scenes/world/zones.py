@@ -2,8 +2,8 @@
 
 Stand-alone functions that operate on a WorldScene instance.  The
 primary interzone travel mechanism is the **portal system** defined
-in ``data/portals.toml`` (see :pymod:`core.zone`).  Legacy per-zone
-teleporters in NBT files are kept as a fallback.
+either inline in zone JSON files or in ``data/portals.toml``.
+Legacy per-zone teleporters in NBT files are kept as a fallback.
 """
 
 from __future__ import annotations

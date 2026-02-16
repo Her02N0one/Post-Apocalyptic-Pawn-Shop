@@ -9,6 +9,7 @@ from __future__ import annotations
 import random
 import math
 from core.ecs import World
+from core.geometry import direction_from_delta
 from components import Position, Velocity, Facing, HomeRange
 from core.zone import is_passable
 from systems.movement.pathfinding import find_path, path_next_waypoint
@@ -159,10 +160,7 @@ def face_toward(world: World, eid: int, target_pos):
         return
     dx = target_pos.x - pos.x
     dy = target_pos.y - pos.y
-    if abs(dx) >= abs(dy):
-        facing.direction = "right" if dx > 0 else "left"
-    else:
-        facing.direction = "down" if dy > 0 else "up"
+    facing.direction = direction_from_delta(dx, dy)
 
 
 def face_from_velocity(world: World, eid: int, vel) -> None:
@@ -172,10 +170,7 @@ def face_from_velocity(world: World, eid: int, vel) -> None:
     facing = world.get(eid, Facing)
     if facing is None:
         return
-    if abs(vel.x) >= abs(vel.y):
-        facing.direction = "right" if vel.x > 0 else "left"
-    else:
-        facing.direction = "down" if vel.y > 0 else "up"
+    facing.direction = direction_from_delta(vel.x, vel.y)
 
 
 def run_idle(patrol, pos, vel, s: dict, dt: float):

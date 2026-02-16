@@ -23,7 +23,7 @@ from systems.engine.tick import tick_systems, input_system, item_pickup_system
 from systems.actions import mouse_world_pos
 from systems.engine.particles import ParticleManager
 from systems.engine.input_manager import InputManager, InputContext
-from systems.engine.entity_factory import spawn_zone_entities, spawn_test_entities
+from systems.engine.entity_factory import spawn_zone_entities
 from systems.engine.tick import tick_systems
 from ui import ModalStack
 from scenes.world.editor import EditorController
@@ -193,11 +193,21 @@ class WorldScene(Scene):
                 cam.x = cx
                 cam.y = cy
 
-        if self.npcs_enabled:
-            try:
-                spawn_zone_entities(app.world, self.zone, npcs_enabled=True)
-            except Exception as ex:
-                print(f"[ZONE] spawn error: {ex}")
+        # Spawn zone-file entities (NPCs, dummies, objects, etc.)
+        try:
+            spawned = spawn_zone_entities(app.world, self.zone)
+        except Exception as ex:
+            print(f"[ZONE] spawn error: {ex}")
+            spawned = []
+
+        # Overlay any saved dynamic data (positions, health, etc.)
+        if spawned:
+            from core.save import load_game_state, apply_zone_saves
+            save_data = load_game_state()
+            if save_data:
+                n = apply_zone_saves(app.world, save_data)
+                if n:
+                    print(f"[SAVE] Restored {n} entities from save")
 
         # Initialise off-screen world simulation
         self._init_world_sim(app)
@@ -240,7 +250,8 @@ class WorldScene(Scene):
 
             clock = app.world.res(GameClock)
             game_time = clock.time if clock else 0.0
-            # clock.time IS game-minutes (1 real sec = 1 game min)
+            # clock.time is in real seconds (incremented by dt each frame).
+            # All scheduler and activity times use the same real-second base.
             self.world_sim.bootstrap(app.world, game_time)
 
             # Promote entities in the player's starting zone to high-LOD

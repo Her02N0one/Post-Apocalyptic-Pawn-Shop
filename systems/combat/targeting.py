@@ -52,30 +52,44 @@ class TargetInfo:
 
 def acquire_target(world: World, eid: int, pos,
                    aggro_radius: float) -> TargetInfo:
-    """Find the best combat target (player first, then nearest enemy).
+    """Find the best combat target by distance among all hostiles.
+
+    Considers both the player and NPC enemies in the same zone,
+    picking whichever hostile is nearest.  This allows NPC-vs-NPC
+    combat to occur in the player's presence (e.g. raiders vs guards).
 
     Wall-LOS and ally-in-fire are computed eagerly so callers never
     need to re-check.
     """
     info = TargetInfo()
+    search_range = aggro_radius * 3
 
+    # --- Gather all candidate targets with distances ----------------
+    candidates: list[tuple[int, float, float, float]] = []  # (eid, x, y, dist)
+
+    # Player is a candidate if in the same zone
     p_eid, p_pos = find_player(world)
     if p_pos is not None and p_pos.zone == pos.zone:
-        info.eid = p_eid
-        info.x = p_pos.x
-        info.y = p_pos.y
-    else:
-        e_eid, e_pos = find_nearest_enemy(world, eid,
-                                          max_range=aggro_radius * 3)
-        if e_pos is not None and e_pos.zone == pos.zone:
-            info.eid = e_eid
-            info.x = e_pos.x
-            info.y = e_pos.y
+        d = math.hypot(pos.x - p_pos.x, pos.y - p_pos.y)
+        if d <= search_range:
+            candidates.append((p_eid, p_pos.x, p_pos.y, d))
 
-    if info.eid is None:
+    # All hostile NPCs in zone are candidates
+    e_eid, e_pos = find_nearest_enemy(world, eid, max_range=search_range)
+    if e_pos is not None and e_pos.zone == pos.zone:
+        d = math.hypot(pos.x - e_pos.x, pos.y - e_pos.y)
+        candidates.append((e_eid, e_pos.x, e_pos.y, d))
+
+    if not candidates:
         return info
 
-    info.dist = math.hypot(pos.x - info.x, pos.y - info.y)
+    # Pick the nearest hostile target
+    best = min(candidates, key=lambda c: c[3])
+    info.eid = best[0]
+    info.x = best[1]
+    info.y = best[2]
+    info.dist = best[3]
+
     info.wall_los = has_line_of_sight(
         pos.zone, pos.x + 0.4, pos.y + 0.4,
         info.x + 0.4, info.y + 0.4,

@@ -6,6 +6,7 @@ Used by brain implementations to find and evaluate targets.
 from __future__ import annotations
 import math
 from core.ecs import World
+from core.geometry import facing_to_angle, angle_diff  # canonical home
 from components import (
     Position, Health, Player, Facing, HitFlash, Faction,
 )
@@ -13,21 +14,6 @@ from components.ai import VisionCone
 
 
 # ── Vision cone utilities ────────────────────────────────────────────
-
-_FACING_ANGLES: dict[str, float] = {
-    "right": 0.0,
-    "down":  math.pi / 2,
-    "left":  math.pi,
-    "up":    -math.pi / 2,
-}
-
-
-def facing_to_angle(direction: str) -> float:
-    """Convert a cardinal Facing.direction string to radians.
-
-    right → 0, down → π/2, left → π, up → −π/2
-    """
-    return _FACING_ANGLES.get(direction, 0.0)
 
 
 def in_vision_cone(pos, facing_dir: str, target_pos,
@@ -50,8 +36,7 @@ def in_vision_cone(pos, facing_dir: str, target_pos,
     # Angle check
     angle_to_target = math.atan2(dy, dx)
     face_angle = facing_to_angle(facing_dir)
-    diff = abs(math.atan2(math.sin(angle_to_target - face_angle),
-                          math.cos(angle_to_target - face_angle)))
+    diff = abs(angle_diff(face_angle, angle_to_target))
     half_fov = math.radians(cone.fov_degrees / 2.0)
     return diff <= half_fov
 

@@ -14,6 +14,7 @@ from components import (
     HitFlash, Lod, Facing, Hurtbox, Equipment, Projectile, Identity,
     ItemRegistry,
 )
+from ui.primitives import draw_circle_alpha, draw_diamond
 from systems.actions import weapon_rect_for
 
 
@@ -523,7 +524,7 @@ def draw_debug_overlay(surface: pygame.Surface, app: App, scene, cam: Camera):
         # Aggro radius (yellow ring)
         if threat:
             aggro_px = int(threat.aggro_radius * TILE_SIZE)
-            _draw_circle_alpha(surface, (255, 200, 50, 25), cx, cy, aggro_px)
+            draw_circle_alpha(surface, (255, 200, 50, 25), cx, cy, aggro_px)
             pygame.draw.circle(surface, (255, 200, 50, 80), (cx, cy), aggro_px, 1)
 
             # Leash radius (red ring, only if in combat)
@@ -589,7 +590,7 @@ def draw_debug_overlay(surface: pygame.Surface, app: App, scene, cam: Camera):
                     gx, gy = apath[-1]
                     gpx = ox + int(gx * TILE_SIZE) + TILE_SIZE // 2
                     gpy = oy + int(gy * TILE_SIZE) + TILE_SIZE // 2
-                    _draw_diamond(surface, path_color, gpx, gpy, 5)
+                    draw_diamond(surface, path_color, gpx, gpy, 5)
                 break  # only show the first active path per NPC
 
     # ── Simulation debug info (bottom of left panel) ─────────────────
@@ -638,17 +639,6 @@ def draw_debug_overlay(surface: pygame.Surface, app: App, scene, cam: Camera):
     app.draw_text(surface, "[Tab] debug  [G] grid  [F] fast-fwd  [F1] inspector  [F2] dump  [F5] scenes  [F6] reload", 8, y, (100, 100, 100))
 
 
-def _draw_circle_alpha(surface: pygame.Surface, color: tuple, cx: int, cy: int, radius: int):
-    """Draw a filled circle with alpha transparency."""
-    if radius < 2:
-        return
-    r, g, b, a = color
-    d = radius * 2 + 2
-    circle_surf = pygame.Surface((d, d), pygame.SRCALPHA)
-    pygame.draw.circle(circle_surf, (r, g, b, a), (d // 2, d // 2), radius)
-    surface.blit(circle_surf, (cx - d // 2, cy - d // 2))
-
-
 def _draw_dashed_line(surface: pygame.Surface, color: tuple,
                       x1: int, y1: int, x2: int, y2: int,
                       dash_len: int = 6, gap_len: int = 4):
@@ -669,11 +659,3 @@ def _draw_dashed_line(surface: pygame.Surface, color: tuple,
         ey = int(y1 + ny * seg_end)
         pygame.draw.line(surface, color, (sx, sy), (ex, ey), 1)
         drawn = seg_end + gap_len
-
-
-def _draw_diamond(surface: pygame.Surface, color: tuple,
-                  cx: int, cy: int, size: int):
-    """Draw a small diamond marker."""
-    points = [(cx, cy - size), (cx + size, cy),
-              (cx, cy + size), (cx - size, cy)]
-    pygame.draw.polygon(surface, color, points, 2)

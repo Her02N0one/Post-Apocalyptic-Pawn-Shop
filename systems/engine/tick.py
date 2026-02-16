@@ -92,7 +92,8 @@ def tick_systems(world: "World", dt: float, tiles: list[list[int]],
     skip_brains : bool
         Skip AI brain ticks.
     """
-    # Advance game clock
+    # Advance game clock (real seconds — the canonical time base for
+    # all systems including the scheduler and scheduled activities).
     clock = world.res(GameClock)
     if clock:
         clock.time += dt

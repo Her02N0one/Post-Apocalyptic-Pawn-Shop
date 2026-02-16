@@ -169,12 +169,13 @@ systems/                 All game mechanics
 
 scenes/                  Game screens
   world/                 Main gameplay scene (tile map, HUD, modals, editor)
-  museum_scene.py        Interactive exhibit museum (12 system demos)
-  zoo_scene.py           Auto-populated entity bestiary
-  gym_scene.py           Movement & pathfinding test arena
-  debug_scene.py         Developer tools (AI observer, ECS browser, event log)
-  scene_picker.py        Jump between test scenes (F3)
-  exhibits/              12 self-contained system exhibits
+  lab/                   Developer lab scenes and debug tools
+    museum.py            Interactive exhibit museum (12 system demos)
+    zoo.py               Auto-populated entity bestiary
+    gym.py               Movement & pathfinding test arena
+    debug.py             Developer tools (AI observer, ECS browser, event log)
+    picker.py            Jump between test scenes (F3)
+    exhibits/            Self-contained system exhibits
 
 ui/                      Modal UI framework
   modal.py               Base modal + modal stack

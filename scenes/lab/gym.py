@@ -1,4 +1,4 @@
-"""scenes/gym_scene.py — Movement & Pathfinding Gym.
+"""scenes/lab/gym.py — Movement & Pathfinding Gym.
 
 A flat arena with a controllable test entity and real-time metrics.
 Use this to test A*, collision, and movement systems in isolation.
@@ -31,7 +31,7 @@ from components import (
 from components.ai import HomeRange
 from systems.movement.pathfinding import find_path
 from systems.engine.tick import tick_systems
-from scenes.test_scene_base import TestScene
+from scenes.lab.base import TestScene
 
 
 # ── Arena presets ────────────────────────────────────────────────────
@@ -290,8 +290,8 @@ class GymScene(TestScene):
         if self.goal:
             gx = ox + int(self.goal[0] * TILE_SIZE)
             gy = oy + int(self.goal[1] * TILE_SIZE)
-            from scenes.world.draw import _draw_diamond
-            _draw_diamond(surface, (255, 50, 50), gx, gy, 6)
+            from ui.primitives import draw_diamond
+            draw_diamond(surface, (255, 50, 50), gx, gy, 6)
 
         # A* path from player
         if self.show_path and self.astar_path:

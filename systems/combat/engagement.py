@@ -131,8 +131,9 @@ def _run_sensor_tick(world, eid, brain, pos, vel, patrol, threat, atk_cfg,
     if is_ranged:
         c._wall_blocked = not target.wall_los
         if target.wall_los:
-            # LOS regained — find a good firing spot for next time
+            # LOS regained — clear reposition & wall-block timer
             c._repos_target = None
+            c._wall_blocked_since = 0.0
 
     # ── Chase wall-block: find a tile with LOS instead of charging
     #    blindly at a wall the NPC can't see through. ─────────────
@@ -248,6 +249,20 @@ def _update_fsm(world, eid, pos, threat, atk_cfg, c, target,
             c.mode = "chase"
             _log(world, eid, "combat",
                  "attack → chase (too far)", game_time)
+        elif is_ranged and c._wall_blocked:
+            # Wall-blocked too long in attack — drop to chase to find LOS
+            wbs = getattr(c, "_wall_blocked_since", 0.0)
+            if wbs <= 0.0:
+                c._wall_blocked_since = game_time
+            elif game_time - wbs > _tun(
+                    "combat.engagement",
+                    "wall_blocked_attack_patience", 1.5):
+                c.mode = "chase"
+                c._wall_blocked_since = 0.0
+                c._repos_target = None
+                _log(world, eid, "combat",
+                     "attack → chase (wall-blocked too long)",
+                     game_time)
         elif not is_ranged and dist > atk_cfg.range * _tun(
                 "combat.engagement", "melee_attack_to_chase", 1.6):
             c.mode = "chase"
@@ -508,6 +523,13 @@ def _run_movement(world, eid, pos, vel, patrol, atk_cfg,
 
             # When wall-blocked, find a flanking position with LOS
             wall_blk = c._wall_blocked
+
+            # Clear stale repos_target if we arrived but are still blocked
+            if wall_blk and c._repos_target:
+                rr = c._repos_target
+                if math.hypot(pos.x - rr[0], pos.y - rr[1]) < 1.0:
+                    c._repos_target = None
+
             if wall_blk and not c._repos_target:
                 fire_lines = c._fire_lines
                 ally_positions = sense.get_ally_positions(

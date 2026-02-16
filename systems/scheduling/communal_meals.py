@@ -8,25 +8,32 @@ Twice per game-day (morning + evening), settlers gather at the communal
 area (``sett_well``) to eat together.  Guards eat later — they stay on
 post until the main group has finished.
 
-Day length: 1440 game-minutes (= 24 real minutes)
-Breakfast:  360  (06:00 game-time)
-Dinner:    1080  (18:00 game-time)
-Guard delay: 30 game-minutes after each communal meal.
+Time base
+~~~~~~~~~
+All times are in **real seconds** (the same units as ``GameClock.time``,
+which advances by ``dt`` each frame).  One in-game day = ``DAY_LENGTH``
+real seconds (default 300 s = 5 real minutes).
+
+Breakfast:  25% of day  (75 s  — corresponds to ~06:00 game-time)
+Dinner:     75% of day  (225 s — corresponds to ~18:00 game-time)
+Guard delay: ~2% of day (6.25 s — guards eat after civilians)
 """
 
 from __future__ import annotations
 from typing import Any
 
 from components import Hunger
+from core.constants import DAY_LENGTH  # 300.0 real seconds per in-game day
 from systems.scheduling.scheduled_activities import ScheduledActivity
 
 
-# ── Constants (kept public for backward compat) ──────────────────────
+# ── Constants (real seconds, derived from canonical DAY_LENGTH) ──────
+# Kept as module-level names for backward compat; all derived from
+# the single source of truth in core.constants.
 
-DAY_LENGTH    = 1440.0
-MEAL_TIMES    = [360.0, 1080.0]
-MEAL_DURATION = 10.0
-GUARD_DELAY   = 30.0
+MEAL_TIMES    = [DAY_LENGTH * 0.25, DAY_LENGTH * 0.75]  # breakfast, dinner
+MEAL_DURATION = DAY_LENGTH / 30.0   # ~10 s at default 300 s day
+GUARD_DELAY   = DAY_LENGTH / 48.0   # ~6.25 s — guards eat after civilians
 COMMUNAL_NODE = "sett_well"
 
 
@@ -69,7 +76,7 @@ COMMUNAL_MEAL_ACTIVITY = ScheduledActivity(
     gathering_node=COMMUNAL_NODE,
     times=MEAL_TIMES,
     duration=MEAL_DURATION,
-    day_length=DAY_LENGTH,
+    day_length=DAY_LENGTH,       # real seconds (core.constants.DAY_LENGTH)
     group_filter="settlers",
     delay_check=_is_guard,
     delay_amount=GUARD_DELAY,
