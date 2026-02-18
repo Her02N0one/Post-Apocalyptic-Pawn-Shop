@@ -81,10 +81,16 @@ class EventBus:
         """Call all handlers for *event*'s type."""
         et = type(event)
         for h in self._handlers.get(et, []):
-            h(event)
+            try:
+                h(event)
+            except Exception as exc:
+                print(f"[EVENTS] Handler {h!r} raised {exc!r}")
         once_list = self._once.pop(et, [])
         for h in once_list:
-            h(event)
+            try:
+                h(event)
+            except Exception as exc:
+                print(f"[EVENTS] Once-handler {h!r} raised {exc!r}")
 
     def clear(self) -> None:
         """Remove all handlers and queued events."""

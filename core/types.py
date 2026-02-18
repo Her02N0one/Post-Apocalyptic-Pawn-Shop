@@ -25,3 +25,5 @@ class EntityKind(Enum):
     CONTAINER = auto()
     DUMMY = auto()
     BEAST = auto()
+    GROUND_ITEM = auto()
+    CROP = auto()

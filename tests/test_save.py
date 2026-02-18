@@ -5,7 +5,7 @@ from core.ecs import World
 from core.save import save_game, load_game, restore_entity, has_save, delete_save
 from components import (
     Position, Velocity, Health, Inventory, Player, Sprite,
-    Identity, Facing, GameClock,
+    Identity, Facing, GameClock, TileEntity,
 )
 from core.types import Direction, EntityKind
 
@@ -139,3 +139,77 @@ class TestSlotManagement:
 
     def test_load_missing_returns_none(self):
         assert load_game(TEST_SLOT) is None
+
+
+class TestTileEntity:
+    """TileEntity component persistence tests."""
+
+    def test_tile_entity_round_trip(self):
+        w = World()
+        e = w.spawn()
+        w.add(e, Position(x=5.0, y=3.0, zone="test"))
+        w.add(e, TileEntity(
+            tile_type="container",
+            item_id="",
+            item_qty=0,
+            tiles=[(3, 5)],
+            loot_table="basic_chest",
+            looted=False,
+        ))
+        save_game(w, "test", slot=TEST_SLOT)
+        data = load_game(TEST_SLOT)
+        assert data is not None
+        w2 = World()
+        for ent in data["entities"]:
+            restore_entity(w2, ent)
+        for eid, te in w2.all_of(TileEntity):
+            assert te.tile_type == "container"
+            assert te.loot_table == "basic_chest"
+            assert te.tiles == [(3, 5)] or te.tiles == [[3, 5]]
+
+    def test_ground_item_round_trip(self):
+        w = World()
+        e = w.spawn()
+        w.add(e, Position(x=7.0, y=4.0, zone="test"))
+        w.add(e, TileEntity(
+            tile_type="ground_item",
+            item_id="knife",
+            item_qty=3,
+        ))
+        save_game(w, "test", slot=TEST_SLOT)
+        data = load_game(TEST_SLOT)
+        assert data is not None
+        w2 = World()
+        for ent in data["entities"]:
+            restore_entity(w2, ent)
+        for eid, te in w2.all_of(TileEntity):
+            assert te.tile_type == "ground_item"
+            assert te.item_id == "knife"
+            assert te.item_qty == 3
+
+    def test_tile_entity_spawner(self):
+        from systems.spawner import spawn_from_descriptor
+        w = World()
+        eid = spawn_from_descriptor(w, {
+            "id": "chest_1",
+            "prefab": "container",
+            "position": {"x": 5.0, "y": 3.0},
+            "tile_entity": {"loot_table": "treasure_chest"},
+        }, "test_zone")
+        te = w.get(eid, TileEntity)
+        assert te is not None
+        assert te.tile_type == "container"
+        assert te.loot_table == "treasure_chest"
+
+    def test_ground_item_spawner(self):
+        from systems.spawner import spawn_from_descriptor
+        w = World()
+        eid = spawn_from_descriptor(w, {
+            "prefab": "ground_item",
+            "position": {"x": 1.0, "y": 2.0},
+            "tile_entity": {"item_id": "pistol", "item_qty": 1},
+        }, "test_zone")
+        te = w.get(eid, TileEntity)
+        assert te is not None
+        assert te.tile_type == "ground_item"
+        assert te.item_id == "pistol"

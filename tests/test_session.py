@@ -286,6 +286,19 @@ class TestFirstPersonFlag:
 class TestPortals:
     """Session.check_portals teleports the player between zones."""
 
+    @staticmethod
+    def _complete_transition(s):
+        """Tick the session transition until the teleport executes."""
+        # Fade out (alpha 0→1 at speed 4.0): 0.25s worth of ticks
+        for _ in range(30):
+            s.update_transition(0.02)
+        # Fade in starts after teleport — tick a bit more
+        for _ in range(30):
+            s.update_transition(0.02)
+        # Reset auto-walk so portal suppression can be cleared
+        s.auto_walk_active = False
+        s.auto_walk_timer = 0.0
+
     def test_portal_changes_zone(self):
         """Walking onto a portal tile switches the zone."""
         w = World()
@@ -299,6 +312,7 @@ class TestPortals:
         pos.y = 6.0
         changed = s.check_portals()
         assert changed is True
+        self._complete_transition(s)
         assert s.zone_name == "house_interior"
         assert s.first_person is True
 
@@ -312,10 +326,15 @@ class TestPortals:
         # Enter house
         pos.x, pos.y = 24.0, 6.0
         s.check_portals()
+        self._complete_transition(s)
         assert s.zone_name == "house_interior"
-        # Exit house (portal at row=8, col=5)
-        pos.x, pos.y = 5.0, 8.0
+        # Step off the arrival tile first (anti-bounce guard)
+        pos.x, pos.y = 5.0, 5.0
         s.check_portals()
+        # Exit house (portal at row=9, col=5)
+        pos.x, pos.y = 5.0, 9.0
+        s.check_portals()
+        self._complete_transition(s)
         assert s.zone_name == "playground"
 
     def test_no_portal_no_change(self):

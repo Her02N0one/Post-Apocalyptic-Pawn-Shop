@@ -61,7 +61,24 @@ TILE_METRES = 1.0  # 1 tile = 1 metre (canonical scale)
 DAY_LENGTH: float = 300.0              # real seconds per in-game day
 SECONDS_PER_GAME_MINUTE: float = DAY_LENGTH / (24.0 * 60.0)  # ~0.2083 s
 
-# Tile IDs  (must match TILE_COLORS and data in *.nbt files)
+# Render
+TILE_SIZE = 32
+
+# ── Tile definitions ────────────────────────────────────────────────
+# The canonical source for tile IDs, names, colours, and flags is
+# ``core.tiles``.  We re-export the most commonly-used symbols here
+# for backward compatibility.
+from core.tiles import (                          # noqa: E402
+    TF,
+    TILE_COLORS,
+    TILE_REGISTRY,
+    SOLID_IDS,
+    WALL_IDS,
+    HALF_WALL_IDS,
+    tile_def,
+)
+
+# Legacy scalar aliases (prefer ``tile_def(id)`` for new code)
 TILE_VOID       = 0
 TILE_GRASS      = 1
 TILE_DIRT       = 2
@@ -71,23 +88,18 @@ TILE_WOOD_FLOOR = 5
 TILE_WALL       = 6
 TILE_SAND       = 7
 TILE_RUBBLE     = 8
-TILE_TELEPORTER = 9
-TILE_WINDOW     = 10  # transparent from interior side
+TILE_DOOR       = 9   # was TILE_TELEPORTER
+TILE_WINDOW     = 10
+TILE_FARMLAND   = 11
+TILE_GATEWAY    = 12
+TILE_CONCRETE   = 13
+TILE_TILE_FLOOR = 14
+TILE_METAL_WALL = 15
+TILE_HALF_WALL  = 16
+TILE_LOW_WALL   = 17
+TILE_PILLAR     = 18
+TILE_COUNTER_TOP = 19
+TILE_RAILING    = 20
 
-# Render
-TILE_SIZE = 32
-
-# Simple tile palette — index → color
-TILE_COLORS = {
-    0: (40, 40, 40),       # void
-    1: (50, 80, 40),       # grass
-    2: (80, 70, 50),       # dirt
-    3: (60, 60, 70),       # stone
-    4: (30, 60, 90),       # water
-    5: (70, 50, 35),       # wood floor
-    6: (90, 90, 90),       # wall
-    7: (140, 130, 90),     # sand
-    8: (100, 85, 70),      # rubble
-    9: (180, 20, 180),     # teleporter
-    10: (100, 140, 180),    # window
-}
+# Backward-compat alias
+TILE_TELEPORTER = TILE_DOOR

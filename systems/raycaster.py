@@ -1,7 +1,7 @@
 """systems/raycaster.py — Wolfenstein-style DDA raycaster.
 
 Pure functions that read the tile grid and produce rendering data.
-No pygame dependency — only math + dataclasses.
+No pygame dependency — only math.
 
 Usage::
 
@@ -14,48 +14,48 @@ The renderer (FirstPerson) converts these to draw calls.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from collections import namedtuple
 
-from core.constants import TILE_WALL, TILE_WINDOW
+from core.tiles import WALL_IDS, HALF_WALL_IDS, tile_def
 
 
 # ═════════════════════════════════════════════════════════════════════
-#  Data types
+#  Data types  —  namedtuple for fast C-level construction
 # ═════════════════════════════════════════════════════════════════════
 
-@dataclass
-class WallSlice:
-    """One vertical column of a rendered wall."""
-    screen_x: int
-    distance: float   # perpendicular distance (fisheye-corrected)
-    height: int       # pixel height on screen
-    tile_id: int      # which tile was hit (for colour lookup)
-    side: int         # 0 = hit a vertical (E/W) face, 1 = horizontal (N/S)
-    tex_x: float      # 0..1 position along the wall face
-    # For textured floor/ceiling casting
-    ray_dir_x: float = 0.0
-    ray_dir_y: float = 0.0
-    wall_x: float = 0.0  # exact fractional hit position (before floor())
+WallSlice = namedtuple('WallSlice', [
+    'screen_x', 'distance', 'height', 'tile_id', 'side',
+    'tex_x', 'height_scale', 'ray_dir_x', 'ray_dir_y', 'wall_x',
+], defaults=[0, 0.0, 0, 0, 0, 0.0, 1.0, 0.0, 0.0, 0.0])
+WallSlice.__doc__ = """One vertical column of a rendered wall."""
 
-
-@dataclass
-class BillboardSprite:
-    """An entity projected into screen space."""
-    eid: int
-    screen_x: float
-    screen_y: float
-    height: int       # pixel height
-    distance: float
-    char: str
-    color: tuple[int, int, int]
+BillboardSprite = namedtuple('BillboardSprite', [
+    'eid', 'screen_x', 'screen_y', 'height', 'distance',
+    'char', 'color', 'width',
+], defaults=[0, 0.0, 0.0, 0, 0.0, '', (0, 0, 0), 0])
+BillboardSprite.__doc__ = """An entity projected into screen space."""
 
 
 # ═════════════════════════════════════════════════════════════════════
 #  Wall raycasting (DDA)
 # ═════════════════════════════════════════════════════════════════════
 
-_WALL_TILES: frozenset[int] = frozenset({TILE_WALL, TILE_WINDOW})
+_WALL_TILES: frozenset[int] = WALL_IDS
+_HALF_TILES: frozenset[int] = HALF_WALL_IDS
 _MAX_STEPS = 64
+
+# Height-scale cache — avoids repeated tile_def() lookups per frame
+_HS_CACHE: dict[int, float] = {}
+
+
+def _get_hs(tid: int) -> float:
+    """Get height_scale for a tile id, cached."""
+    hs = _HS_CACHE.get(tid)
+    if hs is None:
+        td = tile_def(tid)
+        hs = td.height_scale if td else 1.0
+        _HS_CACHE[tid] = hs
+    return hs
 
 
 def cast_walls(
@@ -90,24 +90,40 @@ def cast_walls(
     map_h = len(tiles)
     map_w = len(tiles[0]) if map_h else 0
     half_fov = fov * 0.5
+    n_rays = (screen_w + step - 1) // step
+
+    # Pre-compute per-ray basics
+    inv_sw = 2.0 / screen_w
+    _cos = math.cos
+    _sin = math.sin
+    _abs = abs
+    _floor = math.floor
+    _int = int
+
+    # Local aliases for speed
+    _wall_check = wall_tiles.__contains__
+    _half_check = _HALF_TILES.__contains__
+    _max_steps = _MAX_STEPS
+
     slices: list[WallSlice] = []
+    _append = slices.append
+    _WS = WallSlice
 
-    for x in range(0, screen_w, step):
-        # Camera-space x in [-1, 1]
-        cam_x = 2.0 * x / screen_w - 1.0
+    for col_idx in range(n_rays):
+        x = col_idx * step
+        cam_x = x * inv_sw - 1.0
         ray_a = angle + cam_x * half_fov
-        rd_x = math.cos(ray_a)
-        rd_y = math.sin(ray_a)
+        rd_x = _cos(ray_a)
+        rd_y = _sin(ray_a)
 
-        # Map cell
-        mx = int(px)
-        my = int(py)
+        mx = _int(px)
+        my = _int(py)
 
-        # Delta distances (distance ray must travel for one grid line)
-        dd_x = abs(1.0 / rd_x) if abs(rd_x) > 1e-10 else 1e10
-        dd_y = abs(1.0 / rd_y) if abs(rd_y) > 1e-10 else 1e10
+        ard_x = _abs(rd_x)
+        ard_y = _abs(rd_y)
+        dd_x = (1.0 / ard_x) if ard_x > 1e-10 else 1e10
+        dd_y = (1.0 / ard_y) if ard_y > 1e-10 else 1e10
 
-        # Step direction and initial side distances
         if rd_x < 0:
             sx = -1
             sd_x = (px - mx) * dd_x
@@ -122,10 +138,13 @@ def cast_walls(
             sy = 1
             sd_y = (my + 1.0 - py) * dd_y
 
-        # DDA stepping
+        half_sx = (1 - sx) * 0.5
+        half_sy = (1 - sy) * 0.5
+
         hit = False
         side = 0
-        for _ in range(_MAX_STEPS):
+        half_hit_data = None
+        for _ in range(_max_steps):
             if sd_x < sd_y:
                 sd_x += dd_x
                 mx += sx
@@ -135,53 +154,71 @@ def cast_walls(
                 my += sy
                 side = 1
 
-            # Out-of-bounds → treat as wall
             if mx < 0 or mx >= map_w or my < 0 or my >= map_h:
+                # Out of bounds — only treat as a wall hit if there's
+                # no half-wall recorded.  Otherwise the half-wall
+                # stands alone and the player can see over/through it.
+                if half_hit_data is None:
+                    hit = True
+                break
+
+            tid = tiles[my][mx]
+            if _wall_check(tid):
+                if _half_check(tid):
+                    if half_hit_data is None:
+                        if side == 0:
+                            _perp = (mx - px + half_sx) / rd_x if ard_x > 1e-10 else 1e10
+                        else:
+                            _perp = (my - py + half_sy) / rd_y if ard_y > 1e-10 else 1e10
+                        if _perp < 0.01:
+                            _perp = 0.01
+                        _line_h = _int(screen_h / _perp)
+                        if side == 0:
+                            _wx = py + _perp * rd_y
+                        else:
+                            _wx = px + _perp * rd_x
+                        half_hit_data = (
+                            x, _perp, _line_h, tid, side,
+                            _wx - _floor(_wx), _get_hs(tid),
+                            rd_x, rd_y, _wx,
+                        )
+                    # Always skip half-walls (record only the nearest one)
+                    # so the ray keeps going until a full wall or map edge.
+                    continue
                 hit = True
                 break
 
-            if tiles[my][mx] in wall_tiles:
-                hit = True
-                break
-
-        if not hit:
+        if not hit and half_hit_data is None:
             continue
 
-        # Perpendicular distance (corrects fisheye)
+        if not hit:
+            _append(_WS(*half_hit_data))
+            continue
+
         if side == 0:
-            perp = (mx - px + (1 - sx) * 0.5) / rd_x if abs(rd_x) > 1e-10 else 1e10
+            perp = (mx - px + half_sx) / rd_x if ard_x > 1e-10 else 1e10
         else:
-            perp = (my - py + (1 - sy) * 0.5) / rd_y if abs(rd_y) > 1e-10 else 1e10
-        perp = max(perp, 0.01)
+            perp = (my - py + half_sy) / rd_y if ard_y > 1e-10 else 1e10
+        if perp < 0.01:
+            perp = 0.01
 
-        line_h = int(screen_h / perp)
+        line_h = _int(screen_h / perp)
 
-        # Where on the wall face the ray hit (0..1 texture coord)
         if side == 0:
             wx = py + perp * rd_y
         else:
             wx = px + perp * rd_x
-        wx -= math.floor(wx)
+        wx_frac = wx - _floor(wx)
 
-        tid = tiles[my][mx] if (0 <= my < map_h and 0 <= mx < map_w) else 0
+        tid_hit = tiles[my][mx] if (0 <= my < map_h and 0 <= mx < map_w) else 0
 
-        # Exact wall hit position (for floor casting)
-        if side == 0:
-            wall_exact = py + perp * rd_y
-        else:
-            wall_exact = px + perp * rd_x
+        # Emit background (full) wall FIRST so that the closer
+        # half-wall can paint over its lower portion (painter's order).
+        _append(_WS(x, perp, line_h, tid_hit, side, wx_frac,
+                     _get_hs(tid_hit), rd_x, rd_y, wx))
 
-        slices.append(WallSlice(
-            screen_x=x,
-            distance=perp,
-            height=line_h,
-            tile_id=tid,
-            side=side,
-            tex_x=wx,
-            ray_dir_x=rd_x,
-            ray_dir_y=rd_y,
-            wall_x=wall_exact,
-        ))
+        if half_hit_data is not None:
+            _append(_WS(*half_hit_data))
 
     return slices
 
@@ -195,56 +232,54 @@ def project_entities(
     angle: float,
     fov: float,
     screen_w: int, screen_h: int,
-    entities: list[tuple[int, float, float, str, tuple[int, int, int]]],
+    entities: list[tuple[int, float, float, str, tuple[int, int, int], float, float]],
 ) -> list[BillboardSprite]:
     """Project world entities into screen-space billboards.
 
     Parameters
     ----------
-    entities : list of (eid, ex, ey, char, color)
-        The entity data to project (pre-filtered to current zone).
+    entities : list of (eid, ex, ey, char, color, height_scale, width_scale)
 
     Returns a list sorted by distance (far → near) for painter's-algo
     draw order.
     """
     dir_x = math.cos(angle)
     dir_y = math.sin(angle)
-    # Camera plane (perpendicular, scaled by half-FOV tangent)
     plane_scale = math.tan(fov * 0.5)
     plane_x = -dir_y * plane_scale
     plane_y = dir_x * plane_scale
 
     inv_det = 1.0 / (plane_x * dir_y - dir_x * plane_y + 1e-10)
 
-    result: list[BillboardSprite] = []
+    half_sw = screen_w * 0.5
+    _int = int
+    _max = max
+    _BB = BillboardSprite
 
-    for eid, ex, ey, char, color in entities:
+    result: list[BillboardSprite] = []
+    _append = result.append
+
+    for eid, ex, ey, char, color, h_scale, w_scale in entities:
         dx = ex - px
         dy = ey - py
 
-        # Transform to camera space
         tx = inv_det * (dir_y * dx - dir_x * dy)
-        ty = inv_det * (-plane_y * dx + plane_x * dy)  # depth
+        ty = inv_det * (-plane_y * dx + plane_x * dy)
 
         if ty <= 0.1:
-            continue  # behind camera
+            continue
 
-        # Screen projection
-        sprite_sx = (screen_w * 0.5) * (1.0 + tx / ty)
-        sprite_h = int(screen_h / ty)
-        sprite_sy = (screen_h - sprite_h) * 0.5
+        sprite_sx = half_sw * (1.0 + tx / ty)
+        wall_h = screen_h / ty
+        sprite_h = _max(1, _int(wall_h * h_scale))
+        sprite_w = _max(1, _int(wall_h * w_scale))
 
-        result.append(BillboardSprite(
-            eid=eid,
-            screen_x=sprite_sx,
-            screen_y=sprite_sy,
-            height=sprite_h,
-            distance=ty,
-            char=char,
-            color=color,
-        ))
+        floor_y = (screen_h + wall_h) * 0.5
+        sprite_sy = floor_y - sprite_h
 
-    # Sort far-to-near for painter's algorithm
+        _append(_BB(eid, sprite_sx, sprite_sy, sprite_h, ty,
+                     char, color, sprite_w))
+
     result.sort(key=lambda s: s.distance, reverse=True)
     return result
 
@@ -255,12 +290,22 @@ def project_entities(
 
 def build_zbuffer(slices: list[WallSlice], screen_w: int,
                   step: int = 1) -> list[float]:
-    """Build a per-column depth buffer from wall slices.
-
-    Used to occlude sprite columns that are behind walls.
-    """
+    """Build a per-column depth buffer from wall slices."""
     zbuf = [1e10] * screen_w
     for ws in slices:
-        for c in range(ws.screen_x, min(ws.screen_x + step, screen_w)):
-            zbuf[c] = ws.distance
+        d = ws.distance
+        sx = ws.screen_x
+        end = min(sx + step, screen_w)
+        # For the common case step <= 4, unrolled is faster than range()
+        if step <= 2:
+            if d < zbuf[sx]:
+                zbuf[sx] = d
+            if step == 2 and end > sx + 1:
+                c1 = sx + 1
+                if d < zbuf[c1]:
+                    zbuf[c1] = d
+        else:
+            for c in range(sx, end):
+                if d < zbuf[c]:
+                    zbuf[c] = d
     return zbuf

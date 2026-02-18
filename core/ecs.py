@@ -74,10 +74,9 @@ class Resources:
 
     def get(self, res_type: type[R]) -> R:
         """Retrieve a resource.  Raises ``KeyError`` if missing."""
-        val = self._data.get(res_type)
-        if val is None:
+        if res_type not in self._data:
             raise KeyError(f"Resource {res_type.__name__} not set")
-        return val  # type: ignore[return-value]
+        return self._data[res_type]  # type: ignore[return-value]
 
     def try_get(self, res_type: type[R]) -> R | None:
         """Retrieve a resource, returning ``None`` if unset."""

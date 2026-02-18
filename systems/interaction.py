@@ -23,6 +23,16 @@ if TYPE_CHECKING:
 # How far (tiles) the player can reach
 INTERACT_RANGE = 1.8
 
+# Optional camera-angle override — set by FirstPerson scene so
+# interaction uses the look direction instead of the Facing component.
+_camera_angle: float | None = None
+
+
+def set_camera_angle(angle: float | None) -> None:
+    """Set (or clear) the FP camera angle for interaction direction."""
+    global _camera_angle
+    _camera_angle = angle
+
 
 def _facing_offset(d: Direction) -> tuple[float, float]:
     """Return a unit-ish offset vector for the given facing."""
@@ -37,6 +47,10 @@ def _facing_offset(d: Direction) -> tuple[float, float]:
 def nearest_interactable(world: "World") -> tuple[int, float] | None:
     """Find the nearest interactable entity in front of the player.
 
+    When ``_camera_angle`` is set (first-person mode) the look
+    direction comes from the camera instead of the Facing component,
+    so the player can interact with whatever they're looking at.
+
     Returns ``(entity_id, distance)`` or ``None``.
     """
     result = world.query_one(Player, Position, Facing)
@@ -44,7 +58,11 @@ def nearest_interactable(world: "World") -> tuple[int, float] | None:
         return None
     p_eid, _, p_pos, p_face = result
 
-    fdx, fdy = _facing_offset(p_face.direction)
+    if _camera_angle is not None:
+        fdx = math.cos(_camera_angle)
+        fdy = math.sin(_camera_angle)
+    else:
+        fdx, fdy = _facing_offset(p_face.direction)
 
     best_eid: int | None = None
     best_dist = INTERACT_RANGE + 1.0

@@ -1,27 +1,17 @@
 """main.py — Bootstrap.
 
 1. Create the app
-2. Create a Session and start a new game
-3. Push the scene (presentation only — reads from session)
-4. Run
+2. Push the main menu scene
+3. Run — the main menu handles new game / load / settings / quit
 """
 
 from core.app import App
-from core.session import Session
-from scenes.world import TopDown
-
-START_ZONE = "playground"
+from scenes.main_menu import MainMenu
 
 
 def main():
     app = App(title="Shopkeeper", width=960, height=640)
-
-    # Session owns the data pipeline (zone loading, entity spawning, save/load)
-    session = Session(app.world)
-    session.new_game(START_ZONE)
-
-    # Scene is presentation only — reads tiles/entities from session
-    app.push_scene(TopDown(session))
+    app.push_scene(MainMenu())
     app.run()
 
 

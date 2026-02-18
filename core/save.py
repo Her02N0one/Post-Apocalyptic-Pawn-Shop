@@ -76,7 +76,11 @@ def _component_from_dict(cls: type[Component], data: dict[str, Any]) -> Componen
             # Reconvert enum strings
             enum_cls = enum_map.get(f.name)
             if enum_cls is not None and isinstance(val, str):
-                val = enum_cls[val]
+                try:
+                    val = enum_cls[val]
+                except KeyError:
+                    print(f"[SAVE] Unknown enum '{val}' for {f.name}, skipping")
+                    continue
             kwargs[f.name] = val
     return cls(**kwargs)
 
@@ -89,13 +93,24 @@ def save_game(world: "World", zone: str, slot: int = 0, *,
 
     Returns the path written.
     """
-    from components import GameClock
+    from components import GameClock, WorldClock
 
     SAVES_DIR.mkdir(parents=True, exist_ok=True)
     _ensure_registry()
 
     clock = world.resources.try_get(GameClock)
     clock_time = clock.time if clock else 0.0
+
+    # WorldClock data
+    wc = world.resources.try_get(WorldClock)
+    wc_data = None
+    if wc:
+        wc_data = {
+            "real_time": wc.real_time,
+            "world_time": wc.world_time,
+            "day": wc.day,
+            "day_phase": wc.day_phase,
+        }
 
     entities: list[dict[str, Any]] = []
 
@@ -122,13 +137,18 @@ def save_game(world: "World", zone: str, slot: int = 0, *,
     save_data = {
         "zone": zone,
         "clock": clock_time,
+        "world_clock": wc_data,
         "visited_zones": sorted(visited_zones) if visited_zones else [zone],
         "entities": entities,
     }
 
     path = SAVES_DIR / f"slot_{slot}.json"
-    with open(path, "w") as f:
-        json.dump(save_data, f, indent=2)
+    try:
+        with open(path, "w") as f:
+            json.dump(save_data, f, indent=2)
+    except OSError as exc:
+        print(f"[SAVE] Failed to write {path.name}: {exc}")
+        return path  # return path even on failure so caller has it
 
     return path
 
@@ -140,8 +160,16 @@ def load_game(slot: int = 0) -> dict[str, Any] | None:
     path = SAVES_DIR / f"slot_{slot}.json"
     if not path.exists():
         return None
-    with open(path) as f:
-        return json.load(f)
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"[SAVE] Failed to load {path.name}: {exc}")
+        return None
+    if not isinstance(data, dict):
+        print(f"[SAVE] Corrupt save: expected dict, got {type(data).__name__}")
+        return None
+    return data
 
 
 def restore_entity(world: "World", entry: dict[str, Any]) -> int:

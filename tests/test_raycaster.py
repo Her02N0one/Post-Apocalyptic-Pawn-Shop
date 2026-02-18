@@ -66,7 +66,7 @@ class TestCastWalls:
 class TestProjectEntities:
     def test_entity_in_front(self):
         # Player at (5,5) facing east, entity at (8,5)
-        ents = [(1, 8.0, 5.0, "D", (200, 200, 200))]
+        ents = [(1, 8.0, 5.0, "D", (200, 200, 200), 1.0, 1.0)]
         bbs = project_entities(5.0, 5.0, 0.0, math.pi / 3, 80, 60, ents)
         assert len(bbs) == 1
         assert bbs[0].distance > 0
@@ -75,14 +75,14 @@ class TestProjectEntities:
 
     def test_entity_behind_excluded(self):
         # Player at (5,5) facing east, entity at (2,5) — behind
-        ents = [(1, 2.0, 5.0, "D", (200, 200, 200))]
+        ents = [(1, 2.0, 5.0, "D", (200, 200, 200), 1.0, 1.0)]
         bbs = project_entities(5.0, 5.0, 0.0, math.pi / 3, 80, 60, ents)
         assert len(bbs) == 0
 
     def test_sorted_far_to_near(self):
         ents = [
-            (1, 8.0, 5.0, "A", (200, 200, 200)),
-            (2, 6.0, 5.0, "B", (200, 200, 200)),
+            (1, 8.0, 5.0, "A", (200, 200, 200), 1.0, 1.0),
+            (2, 6.0, 5.0, "B", (200, 200, 200), 1.0, 1.0),
         ]
         bbs = project_entities(5.0, 5.0, 0.0, math.pi / 3, 80, 60, ents)
         assert len(bbs) == 2

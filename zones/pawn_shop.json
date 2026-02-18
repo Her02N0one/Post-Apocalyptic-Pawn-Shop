@@ -1,34 +1,136 @@
 {
   "name": "pawn_shop",
-  "width": 12,
-  "height": 10,
-  "interior": true,
-  "first_person": true,
-  "anchor": [5.0, 6.0],
+  "width": 14,
+  "height": 12,
+  "anchor": [6.5, 10.5],
   "tiles": [
-    [ 6,  6,  6,  6,  6,  6,  6,  6,  6,  6,  6,  6],
-    [ 6,  5,  5,  5,  5,  5,  5,  5,  5,  5,  5,  6],
-    [ 6,  5,  5,  5,  5,  5,  5,  5,  5,  5,  5, 10],
-    [ 6,  5,  5,  3,  3,  3,  3,  3,  5,  5,  5, 10],
-    [ 6,  5,  5,  5,  5,  5,  5,  5,  5,  5,  5,  6],
-    [ 6,  5,  5,  5,  5,  5,  5,  5,  5,  5,  5,  6],
-    [10,  5,  5,  5,  5,  5,  5,  5,  5,  5,  5,  6],
-    [10,  5,  5,  5,  5,  5,  5,  5,  5,  5,  5,  6],
-    [ 6,  5,  5,  5,  5,  9,  5,  5,  5,  5,  5,  6],
-    [ 6,  6,  6,  6,  6,  6,  6,  6,  6,  6,  6,  6]
+    [22, 22, 26, 26, 22, 22, 23, 22, 22, 26, 26, 22, 22, 22],
+    [22, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 22],
+    [23, 21,  5,  5, 18,  5,  5,  5,  5, 18,  5,  5, 21, 10],
+    [23, 21,  5,  5,  5,  5,  5,  5,  5,  5,  5,  5, 21, 10],
+    [22, 19, 19, 19, 19, 19,  5, 19, 19, 19, 19, 19, 19, 22],
+    [10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 22],
+    [10, 14, 14, 24, 14, 14, 14, 14, 14, 24, 14, 14, 14,  6],
+    [22, 14, 30, 14, 14, 18, 14, 14, 18, 14, 14, 30, 14,  6],
+    [ 6, 14, 14, 14, 27, 14, 14, 14, 14, 27, 14, 14, 14,  6],
+    [ 6, 14, 14, 31, 14, 14, 14, 14, 14, 14, 31, 14, 14, 10],
+    [22, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10],
+    [22, 22, 22, 22, 22, 22,  9, 22, 22, 22, 22, 22, 22, 22]
   ],
   "portals": [
     {
-      "tiles": [[8, 5]],
+      "tiles": [[11, 6]],
       "target_zone": "playground",
-      "target_pos": [15.0, 15.0]
+      "target_pos": [19.0, 15.0],
+      "exit_direction": "up"
     }
   ],
   "entities": [
     {
       "id": "shopkeeper",
       "prefab": "merchant",
-      "position": {"x": 5.5, "y": 3.5}
+      "position": { "x": 6.5, "y": 2.5 },
+      "facing": { "direction": "down" }
+    },
+    {
+      "id": "ps_shelf_1",
+      "prefab": "shelf",
+      "identity": { "name": "Display Shelf", "kind": "container" },
+      "position": { "x": 2.5, "y": 1.5 },
+      "tile_entity": { "tile_type": "container", "loot_table": "basic_chest" },
+      "facing": { "direction": "up" }
+    },
+    {
+      "id": "ps_shelf_2",
+      "prefab": "shelf",
+      "identity": { "name": "Parts Shelf", "kind": "container" },
+      "position": { "x": 10.5, "y": 1.5 },
+      "tile_entity": { "tile_type": "container", "loot_table": "basic_chest" },
+      "facing": { "direction": "up" }
+    },
+    {
+      "id": "ps_safe",
+      "prefab": "safe",
+      "identity": { "name": "Shop Safe", "kind": "container" },
+      "position": { "x": 12.5, "y": 1.5 },
+      "tile_entity": { "tile_type": "container", "loot_table": "treasure_chest" },
+      "facing": { "direction": "up" }
+    },
+    {
+      "id": "ps_crate_1",
+      "prefab": "crate",
+      "identity": { "name": "Supply Crate", "kind": "container" },
+      "position": { "x": 1.5, "y": 2.5 },
+      "tile_entity": { "tile_type": "container", "loot_table": "basic_chest" },
+      "facing": { "direction": "left" }
+    },
+    {
+      "id": "ps_crate_2",
+      "prefab": "crate",
+      "identity": { "name": "Junk Crate", "kind": "container" },
+      "position": { "x": 1.5, "y": 3.5 },
+      "tile_entity": { "tile_type": "container", "loot_table": "basic_chest" },
+      "facing": { "direction": "left" }
+    },
+    {
+      "id": "ps_bookcase",
+      "prefab": "bookcase",
+      "identity": { "name": "Ledger Shelf", "kind": "container" },
+      "position": { "x": 12.5, "y": 3.5 },
+      "tile_entity": { "tile_type": "container", "loot_table": "basic_chest" },
+      "facing": { "direction": "right" }
+    },
+    {
+      "id": "ps_barrel_1",
+      "prefab": "barrel",
+      "identity": { "name": "Water Barrel", "kind": "container" },
+      "position": { "x": 1.5, "y": 8.5 },
+      "tile_entity": { "tile_type": "container", "loot_table": "basic_chest" }
+    },
+    {
+      "id": "ps_mannequin",
+      "prefab": "dummy",
+      "identity": { "name": "Display Mannequin", "kind": "dummy" },
+      "position": { "x": 10.5, "y": 7.5 },
+      "facing": { "direction": "down" }
+    },
+    {
+      "id": "ps_lantern_1",
+      "prefab": "lantern",
+      "position": { "x": 4.5, "y": 1.5 }
+    },
+    {
+      "id": "ps_lantern_2",
+      "prefab": "lantern",
+      "position": { "x": 9.5, "y": 1.5 }
+    },
+    {
+      "id": "ps_lantern_3",
+      "prefab": "lantern",
+      "position": { "x": 6.5, "y": 7.5 }
+    },
+    {
+      "id": "ps_plant_1",
+      "prefab": "potted_plant",
+      "position": { "x": 12.5, "y": 9.5 }
+    },
+    {
+      "id": "ps_plant_2",
+      "prefab": "potted_plant",
+      "position": { "x": 1.5, "y": 5.5 }
+    },
+    {
+      "id": "ps_table",
+      "prefab": "table",
+      "position": { "x": 3.5, "y": 8.5 },
+      "facing": { "direction": "down" }
+    },
+    {
+      "id": "ps_chair",
+      "prefab": "chair",
+      "position": { "x": 4.5, "y": 8.5 },
+      "facing": { "direction": "left" }
     }
-  ]
+  ],
+  "first_person": true
 }

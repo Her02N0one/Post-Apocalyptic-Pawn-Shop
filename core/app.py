@@ -33,6 +33,7 @@ class App:
         self.fullscreen = False
         self.fps = 60
         self.dt = 0.0
+        self._dt_smooth = 1.0 / 60.0  # smoothed dt for jitter reduction
 
         # Scene stack — only the top scene is active
         self._scenes: list[Scene] = []
@@ -64,6 +65,12 @@ class App:
         if self._scenes:
             self._scenes[-1].on_enter(self)
 
+    def clear_scenes(self):
+        """Pop all scenes off the stack."""
+        while self._scenes:
+            self._scenes[-1].on_exit(self)
+            self._scenes.pop()
+
     # -- Coordinate mapping --
 
     def mouse_pos(self) -> tuple[int, int]:
@@ -80,7 +87,13 @@ class App:
 
     def run(self):
         while self.running:
-            self.dt = self.clock.tick(self.fps) / 1000.0
+            raw_dt = self.clock.tick(self.fps) / 1000.0
+            # Cap dt so a single slow frame doesn't cause physics spikes
+            if raw_dt > 0.05:
+                raw_dt = 0.05
+            # Smooth dt with exponential moving average to reduce jitter
+            self._dt_smooth = 0.8 * self._dt_smooth + 0.2 * raw_dt
+            self.dt = self._dt_smooth
 
             # Events
             for event in pygame.event.get():

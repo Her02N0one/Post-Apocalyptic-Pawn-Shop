@@ -1,34 +1,361 @@
 {
   "name": "house_interior",
-  "width": 10,
+  "width": 12,
   "height": 10,
-  "interior": true,
-  "first_person": true,
-  "anchor": [5.0, 5.0],
+  "anchor": [
+    5.5,
+    8.5
+  ],
   "tiles": [
-    [ 6,  6,  6, 10,  6, 10,  6,  6,  6,  6],
-    [ 6,  5,  5,  5,  5,  5,  5,  5,  5,  6],
-    [ 6,  5,  5,  5,  5,  5,  5,  5,  5, 10],
-    [ 6,  5,  5,  3,  3,  5,  5,  5,  5, 10],
-    [ 6,  5,  5,  5,  5,  5,  5,  5,  5,  6],
-    [10,  5,  5,  5,  5,  5,  5,  5,  5,  6],
-    [10,  5,  5,  5,  5,  5,  5,  5,  5,  6],
-    [ 6,  5,  5,  5,  5,  5,  5,  5,  5,  6],
-    [ 6,  5,  5,  5,  5,  9,  5,  5,  5,  6],
-    [ 6,  6,  6,  6,  6,  6,  6,  6,  6,  6]
+    [
+      22,
+      6,
+      10,
+      6,
+      22,
+      10,
+      6,
+      22,
+      6,
+      10,
+      6,
+      22
+    ],
+    [
+      22,
+      21,
+      21,
+      21,
+      21,
+      21,
+      14,
+      25,
+      25,
+      25,
+      25,
+      22
+    ],
+    [
+      10,
+      21,
+      21,
+      21,
+      16,
+      14,
+      14,
+      25,
+      25,
+      25,
+      25,
+      10
+    ],
+    [
+      10,
+      21,
+      21,
+      21,
+      6,
+      14,
+      14,
+      14,
+      25,
+      25,
+      25,
+      10
+    ],
+    [
+      6,
+      21,
+      21,
+      21,
+      6,
+      14,
+      14,
+      14,
+      14,
+      14,
+      14,
+      22
+    ],
+    [
+      6,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      22
+    ],
+    [
+      10,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      20,
+      5,
+      10
+    ],
+    [
+      10,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      10
+    ],
+    [
+      22,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      24,
+      24,
+      5,
+      22
+    ],
+    [
+      22,
+      22,
+      22,
+      22,
+      2,
+      9,
+      2,
+      22,
+      22,
+      22,
+      22,
+      22
+    ]
   ],
   "portals": [
     {
-      "tiles": [[8, 5]],
+      "tiles": [
+        [
+          9,
+          5
+        ]
+      ],
       "target_zone": "playground",
-      "target_pos": [7.0, 24.0]
+      "target_pos": [
+        6.0,
+        24.0
+      ],
+      "exit_direction": "up"
     }
   ],
   "entities": [
     {
       "id": "house_owner",
       "prefab": "villager",
-      "position": {"x": 4.5, "y": 3.5}
+      "position": {
+        "x": 2.5,
+        "y": 2.5
+      },
+      "facing": {
+        "direction": "down"
+      }
+    },
+    {
+      "id": "hi_bed",
+      "prefab": "table",
+      "identity": {
+        "name": "Bed",
+        "kind": "dummy"
+      },
+      "position": {
+        "x": 1.5,
+        "y": 1.5
+      },
+      "facing": {
+        "direction": "up"
+      }
+    },
+    {
+      "id": "hi_table",
+      "prefab": "table",
+      "position": {
+        "x": 3.5,
+        "y": 6.5
+      },
+      "facing": {
+        "direction": "down"
+      }
+    },
+    {
+      "id": "hi_chair_1",
+      "prefab": "chair",
+      "position": {
+        "x": 2.5,
+        "y": 6.5
+      },
+      "facing": {
+        "direction": "right"
+      }
+    },
+    {
+      "id": "hi_chair_2",
+      "prefab": "chair",
+      "position": {
+        "x": 4.5,
+        "y": 6.5
+      },
+      "facing": {
+        "direction": "left"
+      }
+    },
+    {
+      "id": "hi_bookcase",
+      "prefab": "bookcase",
+      "identity": {
+        "name": "Old Bookcase",
+        "kind": "container"
+      },
+      "position": {
+        "x": 3.5,
+        "y": 1.5
+      },
+      "tile_entity": {
+        "tile_type": "container",
+        "loot_table": "basic_chest"
+      },
+      "facing": {
+        "direction": "up"
+      }
+    },
+    {
+      "id": "hi_shelf",
+      "prefab": "shelf",
+      "identity": {
+        "name": "Kitchen Shelf",
+        "kind": "container"
+      },
+      "position": {
+        "x": 5.5,
+        "y": 1.5
+      },
+      "tile_entity": {
+        "tile_type": "container",
+        "loot_table": "basic_chest"
+      },
+      "facing": {
+        "direction": "up"
+      }
+    },
+    {
+      "id": "hi_crate",
+      "prefab": "crate",
+      "identity": {
+        "name": "Storage Crate",
+        "kind": "container"
+      },
+      "position": {
+        "x": 10.5,
+        "y": 1.5
+      },
+      "tile_entity": {
+        "tile_type": "container",
+        "loot_table": "basic_chest"
+      },
+      "facing": {
+        "direction": "right"
+      }
+    },
+    {
+      "id": "hi_barrel",
+      "prefab": "barrel",
+      "identity": {
+        "name": "Rain Barrel",
+        "kind": "container"
+      },
+      "position": {
+        "x": 10.5,
+        "y": 3.5
+      },
+      "tile_entity": {
+        "tile_type": "container",
+        "loot_table": "basic_chest"
+      }
+    },
+    {
+      "id": "hi_lantern_1",
+      "prefab": "lantern",
+      "position": {
+        "x": 2.5,
+        "y": 1.5
+      }
+    },
+    {
+      "id": "hi_lantern_2",
+      "prefab": "lantern",
+      "position": {
+        "x": 8.5,
+        "y": 1.5
+      }
+    },
+    {
+      "id": "hi_lantern_3",
+      "prefab": "lantern",
+      "position": {
+        "x": 5.5,
+        "y": 7.5
+      }
+    },
+    {
+      "id": "hi_plant_1",
+      "prefab": "potted_plant",
+      "position": {
+        "x": 1.5,
+        "y": 7.5
+      }
+    },
+    {
+      "id": "hi_plant_2",
+      "prefab": "potted_plant",
+      "position": {
+        "x": 10.5,
+        "y": 7.5
+      }
+    },
+    {
+      "id": "hi_safe",
+      "prefab": "safe",
+      "identity": {
+        "name": "Lockbox",
+        "kind": "container"
+      },
+      "position": {
+        "x": 1.5,
+        "y": 4.5
+      },
+      "tile_entity": {
+        "tile_type": "container",
+        "loot_table": "treasure_chest"
+      },
+      "facing": {
+        "direction": "left"
+      }
     }
-  ]
+  ],
+  "first_person": true
 }

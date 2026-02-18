@@ -28,6 +28,7 @@ class Portal:
     target_zone: str
     target_row: float
     target_col: float
+    exit_direction: str = "up"  # direction player walks/faces when arriving here
 
 
 @dataclass
@@ -50,9 +51,14 @@ def load_zone(name: str) -> Zone:
     """
     path = ZONES_DIR / f"{name}.json"
     with open(path) as f:
-        data = json.load(f)
+        try:
+            data = json.load(f)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Corrupt zone file '{name}': {exc}") from exc
 
     anchor_raw = data.get("anchor", [15.0, 15.0])
+    if not isinstance(anchor_raw, list) or len(anchor_raw) < 2:
+        anchor_raw = [15.0, 15.0]
     anchor = (float(anchor_raw[0]), float(anchor_raw[1]))
 
     tiles: list[list[int]] = data.get("tiles", [])
@@ -61,13 +67,20 @@ def load_zone(name: str) -> Zone:
 
     portals: list[Portal] = []
     for p in data.get("portals", []):
-        tile_coords = [(int(t[0]), int(t[1])) for t in p.get("tiles", [])]
+        raw_tiles = p.get("tiles", [])
+        tile_coords = []
+        for t in raw_tiles:
+            if isinstance(t, (list, tuple)) and len(t) >= 2:
+                tile_coords.append((int(t[0]), int(t[1])))
         tp = p.get("target_pos", [0, 0])
+        if not isinstance(tp, (list, tuple)) or len(tp) < 2:
+            tp = [0, 0]
         portals.append(Portal(
             tiles=tile_coords,
             target_zone=p.get("target_zone", ""),
             target_row=float(tp[0]),
             target_col=float(tp[1]),
+            exit_direction=p.get("exit_direction", "up"),
         ))
 
     entities: list[dict[str, Any]] = data.get("entities", [])

@@ -21,8 +21,8 @@ from typing import Any, TYPE_CHECKING
 from core.ecs import Component
 from core.types import Direction, EntityKind
 from components import (
-    Position, Velocity, Sprite, Identity, Health,
-    Facing, Collider, PrefabRef, Player,
+    Position, Velocity, Sprite, Identity, Health, Inventory,
+    Facing, Collider, PrefabRef, Player, TileEntity,
 )
 
 if TYPE_CHECKING:
@@ -42,6 +42,8 @@ def _build_position(d: dict, zone: str) -> Position:
 
 def _build_sprite(d: dict) -> Sprite:
     color = d.get("color", [200, 200, 200])
+    if not isinstance(color, (list, tuple)) or len(color) < 3:
+        color = [200, 200, 200]
     return Sprite(
         char=d.get("char", "D"),
         color=(int(color[0]), int(color[1]), int(color[2])),
@@ -56,6 +58,8 @@ _KIND_MAP: dict[str, EntityKind] = {
     "container": EntityKind.CONTAINER,
     "dummy": EntityKind.DUMMY,
     "beast": EntityKind.BEAST,
+    "ground_item": EntityKind.GROUND_ITEM,
+    "crop": EntityKind.CROP,
 }
 
 
@@ -93,6 +97,28 @@ def _build_facing(d: dict) -> Facing:
     return Facing(direction=_DIRECTION_MAP.get(dir_str, Direction.DOWN))
 
 
+def _build_tile_entity(d: dict) -> TileEntity:
+    tiles_raw = d.get("tiles", [])
+    tiles = []
+    for t in tiles_raw:
+        if isinstance(t, (list, tuple)) and len(t) >= 2:
+            tiles.append((int(t[0]), int(t[1])))
+    return TileEntity(
+        tile_type=d.get("tile_type", ""),
+        item_id=d.get("item_id", ""),
+        item_qty=int(d.get("item_qty", 1)),
+        tiles=tiles,
+        loot_table=d.get("loot_table", ""),
+        looted=bool(d.get("looted", False)),
+    )
+
+
+def _build_inventory(d: dict) -> Inventory:
+    items_raw = d.get("items", {})
+    items = {str(k): int(v) for k, v in items_raw.items()}
+    return Inventory(items=items)
+
+
 def _build_player(d: dict) -> Player:
     return Player(speed=float(d.get("speed", 6.0)))
 
@@ -106,23 +132,130 @@ _PREFAB_DEFAULTS: dict[str, dict[str, Any]] = {
         "identity": {"name": "Mannequin", "kind": "dummy"},
         "sprite": {"char": "D", "color": [200, 200, 200], "layer": 5},
         "health": {"current": 100, "maximum": 100},
-        "collider": {"w": 0.8, "h": 0.8, "solid": True},
+        "collider": {"w": 0.6, "h": 0.6, "solid": True},
         "facing": {"direction": "down"},
     },
     "npc": {
         "identity": {"name": "NPC", "kind": "npc"},
         "sprite": {"char": "N", "color": [180, 180, 255], "layer": 5},
         "health": {"current": 100, "maximum": 100},
-        "collider": {"w": 0.8, "h": 0.8, "solid": True},
+        "collider": {"w": 0.6, "h": 0.6, "solid": True},
         "facing": {"direction": "down"},
+    },
+    "merchant": {
+        "identity": {"name": "Shopkeeper", "kind": "npc"},
+        "sprite": {"char": "M", "color": [220, 180, 60], "layer": 5},
+        "health": {"current": 100, "maximum": 100},
+        "collider": {"w": 0.6, "h": 0.6, "solid": True},
+        "facing": {"direction": "down"},
+        "dialogue": {"bark": "Welcome to my shop! Take a look around."},
+    },
+    "villager": {
+        "identity": {"name": "Villager", "kind": "npc"},
+        "sprite": {"char": "V", "color": [160, 200, 160], "layer": 5},
+        "health": {"current": 100, "maximum": 100},
+        "collider": {"w": 0.6, "h": 0.6, "solid": True},
+        "facing": {"direction": "down"},
+        "dialogue": {"bark": "Careful out there, stranger."},
     },
     "player": {
         "identity": {"name": "You", "kind": "player"},
         "sprite": {"char": "@", "color": [255, 255, 100], "layer": 10},
         "health": {"current": 100, "maximum": 100},
-        "collider": {"w": 0.8, "h": 0.8, "solid": True},
+        "collider": {"w": 0.6, "h": 0.6, "solid": True},
         "facing": {"direction": "down"},
         "player": {"speed": 6.0},
+        "inventory": {"items": {"scrap_metal": 5, "cloth": 3, "bottlecap": 10}},
+    },
+    "container": {
+        "identity": {"name": "Container", "kind": "container"},
+        "sprite": {"char": "C", "color": [180, 140, 80], "layer": 3},
+        "collider": {"w": 0.8, "h": 0.8, "solid": True},
+        "tile_entity": {"tile_type": "container"},
+        "inventory": {"items": {}},
+    },
+    "crop": {
+        "identity": {"name": "Crop", "kind": "crop"},
+        "sprite": {"char": "#", "color": [80, 180, 60], "layer": 2},
+        "collider": {"w": 0.8, "h": 0.8, "solid": False},
+        "tile_entity": {"tile_type": "crop"},
+    },
+    "ground_item": {
+        "identity": {"name": "Item", "kind": "ground_item"},
+        "sprite": {"char": "*", "color": [220, 220, 180], "layer": 2},
+        "collider": {"w": 0.4, "h": 0.4, "solid": False},
+        "tile_entity": {"tile_type": "ground_item"},
+    },
+    # ── Props — decorative / interactive furniture ───────────────
+    "shelf": {
+        "identity": {"name": "Shelf", "kind": "container"},
+        "sprite": {"char": "\u2261", "color": [140, 100, 60], "layer": 3},
+        "collider": {"w": 0.8, "h": 0.8, "solid": True},
+        "tile_entity": {"tile_type": "container"},
+        "inventory": {"items": {}},
+        "facing": {"direction": "down"},
+    },
+    "crate": {
+        "identity": {"name": "Crate", "kind": "container"},
+        "sprite": {"char": "\u25a1", "color": [160, 120, 60], "layer": 3},
+        "collider": {"w": 0.7, "h": 0.7, "solid": True},
+        "tile_entity": {"tile_type": "container"},
+        "inventory": {"items": {}},
+        "facing": {"direction": "down"},
+    },
+    "barrel": {
+        "identity": {"name": "Barrel", "kind": "container"},
+        "sprite": {"char": "O", "color": [120, 85, 50], "layer": 3},
+        "collider": {"w": 0.6, "h": 0.6, "solid": True},
+        "tile_entity": {"tile_type": "container"},
+        "inventory": {"items": {}},
+        "facing": {"direction": "down"},
+    },
+    "table": {
+        "identity": {"name": "Table", "kind": "dummy"},
+        "sprite": {"char": "\u2550", "color": [100, 75, 45], "layer": 3},
+        "collider": {"w": 0.8, "h": 0.8, "solid": True},
+        "facing": {"direction": "down"},
+    },
+    "chair": {
+        "identity": {"name": "Chair", "kind": "dummy"},
+        "sprite": {"char": "h", "color": [110, 80, 50], "layer": 3},
+        "collider": {"w": 0.4, "h": 0.4, "solid": True},
+        "facing": {"direction": "down"},
+    },
+    "lantern": {
+        "identity": {"name": "Lantern", "kind": "dummy"},
+        "sprite": {"char": "\u2606", "color": [255, 200, 80], "layer": 4},
+        "collider": {"w": 0.3, "h": 0.3, "solid": False},
+        "facing": {"direction": "down"},
+    },
+    "bookcase": {
+        "identity": {"name": "Bookcase", "kind": "container"},
+        "sprite": {"char": "\u2592", "color": [100, 60, 30], "layer": 3},
+        "collider": {"w": 0.8, "h": 0.8, "solid": True},
+        "tile_entity": {"tile_type": "container"},
+        "inventory": {"items": {}},
+        "facing": {"direction": "down"},
+    },
+    "counter": {
+        "identity": {"name": "Counter", "kind": "dummy"},
+        "sprite": {"char": "\u2500", "color": [130, 110, 80], "layer": 3},
+        "collider": {"w": 0.9, "h": 0.5, "solid": True},
+        "facing": {"direction": "down"},
+    },
+    "safe": {
+        "identity": {"name": "Safe", "kind": "container"},
+        "sprite": {"char": "\u25a0", "color": [70, 70, 80], "layer": 3},
+        "collider": {"w": 0.6, "h": 0.6, "solid": True},
+        "tile_entity": {"tile_type": "container"},
+        "inventory": {"items": {}},
+        "facing": {"direction": "down"},
+    },
+    "potted_plant": {
+        "identity": {"name": "Potted Plant", "kind": "dummy"},
+        "sprite": {"char": "\u2698", "color": [60, 140, 50], "layer": 3},
+        "collider": {"w": 0.4, "h": 0.4, "solid": True},
+        "facing": {"direction": "down"},
     },
 }
 
@@ -197,6 +330,16 @@ def spawn_from_descriptor(world: "World", desc: dict[str, Any],
     if player_data:
         world.add(eid, _build_player(player_data))
 
+    # Inventory
+    inv_data = merged("inventory")
+    if inv_data:
+        world.add(eid, _build_inventory(inv_data))
+
+    # TileEntity (containers, crops, ground items)
+    te_data = merged("tile_entity")
+    if te_data:
+        world.add(eid, _build_tile_entity(te_data))
+
     return eid
 
 
@@ -266,3 +409,13 @@ def rebuild_transients(world: "World",
         player_data = _merged("player")
         if player_data and not world.has(eid, Player):
             world.add(eid, _build_player(player_data))
+
+        # Inventory (only rebuild if missing — normally persisted)
+        inv_data = _merged("inventory")
+        if inv_data and not world.has(eid, Inventory):
+            world.add(eid, _build_inventory(inv_data))
+
+        # TileEntity (containers, crops, ground items)
+        te_data = _merged("tile_entity")
+        if te_data and not world.has(eid, TileEntity):
+            world.add(eid, _build_tile_entity(te_data))
