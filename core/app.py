@@ -31,9 +31,9 @@ class App:
         self.clock = pygame.time.Clock()
         self.running = True
         self.fullscreen = False
-        self.fps = 60
+        self.fps = 100
         self.dt = 0.0
-        self._dt_smooth = 1.0 / 60.0  # smoothed dt for jitter reduction
+        self._dt_smooth = 1.0 / 100.0  # smoothed dt for jitter reduction
 
         # Scene stack — only the top scene is active
         self._scenes: list[Scene] = []

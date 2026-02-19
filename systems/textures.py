@@ -1,41 +1,70 @@
-"""systems/textures.py — Procedural tile texture atlas.
+"""systems/textures.py — Procedural tile texture atlas with disk persistence.
 
 Generates a 64×64 pixel texture Surface for each tile ID.  These are
 used by the first-person renderer for wall columns and floor spans.
 
-To swap in real art later, replace the procedural generation in
-``_generate_*`` functions with ``pygame.image.load()``.
+On first run the textures are procedurally generated; afterwards they
+are packed into a single PNG atlas image and saved to
+``assets/atlas.png``.  On subsequent runs the atlas is loaded from
+disk instead of regenerating (~50× faster startup).
+
+To force a regeneration (e.g. after editing a generator), delete
+``assets/atlas.png`` or call ``TextureAtlas(force_regen=True)``.
 
     from systems.textures import TextureAtlas
-    atlas = TextureAtlas()          # builds once on first call
+    atlas = TextureAtlas()          # loads from disk or generates
     wall_surf = atlas.get(TILE_WALL)  # 64×64 Surface
     pixel = atlas.sample(TILE_WALL, tx, ty)  # (r,g,b) at 0..1 coords
 """
 
 from __future__ import annotations
 
+import logging
 import random
+from pathlib import Path
 
 import pygame
 
-from core.tiles import TILE_COLORS, tile_def
+from core.tiles import TILE_COLORS, TILE_REGISTRY, tile_def
+
+_log = logging.getLogger(__name__)
 
 # Texture resolution — power of two for fast bitwise modulo
 TEX_SIZE = 64
 _TEX_MASK = TEX_SIZE - 1  # for & instead of %
 
+# Atlas layout: pack tile textures in a grid.
+# Columns in the atlas image.
+_ATLAS_COLS = 8
+_ATLAS_PATH = Path(__file__).resolve().parent.parent / "assets" / "atlas.png"
+
 
 class TextureAtlas:
-    """Lazy-built atlas of 64×64 procedural textures, one per tile ID."""
+    """Lazy-built atlas of 64×64 procedural textures, one per tile ID.
 
-    def __init__(self) -> None:
+    When ``force_regen`` is False (the default) the atlas is loaded
+    from ``assets/atlas.png`` if the file exists and contains entries
+    for every tile in TILE_REGISTRY.  Otherwise we generate fresh
+    textures and save a new atlas.
+    """
+
+    def __init__(self, *, force_regen: bool = False) -> None:
         self._surfaces: dict[int, pygame.Surface] = {}
         self._pixels: dict[int, pygame.PixelArray] = {}
+        if not force_regen:
+            self._try_load_atlas()
+
+    # ── public API ───────────────────────────────────────────────
 
     def get(self, tile_id: int) -> pygame.Surface:
         """Return the 64×64 Surface for a tile.  Builds on first access."""
         if tile_id not in self._surfaces:
-            self._surfaces[tile_id] = _generate(tile_id)
+            surf = _generate(tile_id)
+            try:
+                surf = surf.convert()
+            except pygame.error:
+                pass  # display not initialised yet
+            self._surfaces[tile_id] = surf
         return self._surfaces[tile_id]
 
     def sample(self, tile_id: int, u: float, v: float) -> tuple[int, int, int]:
@@ -44,6 +73,80 @@ class TextureAtlas:
         tx = int(u * TEX_SIZE) & _TEX_MASK
         ty = int(v * TEX_SIZE) & _TEX_MASK
         return surf.get_at((tx, ty))[:3]  # type: ignore[return-value]
+
+    def save_atlas(self) -> Path:
+        """Pack all generated textures into a single PNG and save to disk.
+
+        Returns the path to the saved atlas file.
+        """
+        # Ensure all tiles exist
+        for tid in TILE_REGISTRY:
+            self.get(tid)
+        return _save_atlas(self._surfaces)
+
+    def ensure_all(self) -> None:
+        """Make sure every tile in the registry has a generated texture.
+
+        Called at startup to eagerly build the full atlas.
+        """
+        for tid in TILE_REGISTRY:
+            self.get(tid)
+
+    # ── atlas persistence ────────────────────────────────────────
+
+    def _try_load_atlas(self) -> None:
+        """Load textures from the atlas PNG if it exists on disk."""
+        if not _ATLAS_PATH.exists():
+            return
+        try:
+            atlas_surf = pygame.image.load(str(_ATLAS_PATH))
+        except (pygame.error, FileNotFoundError) as exc:
+            _log.warning("Failed to load atlas: %s", exc)
+            return
+
+        ids = sorted(TILE_REGISTRY.keys())
+        cols = _ATLAS_COLS
+        expected_rows = (len(ids) + cols - 1) // cols
+        expected_w = cols * TEX_SIZE
+        expected_h = expected_rows * TEX_SIZE
+
+        if atlas_surf.get_width() < expected_w or atlas_surf.get_height() < expected_h:
+            _log.info("Atlas size mismatch — will regenerate")
+            return
+
+        for idx, tid in enumerate(ids):
+            ax = (idx % cols) * TEX_SIZE
+            ay = (idx // cols) * TEX_SIZE
+            tile_surf = pygame.Surface((TEX_SIZE, TEX_SIZE))
+            tile_surf.blit(atlas_surf, (0, 0), (ax, ay, TEX_SIZE, TEX_SIZE))
+            try:
+                tile_surf = tile_surf.convert()
+            except pygame.error:
+                pass
+            self._surfaces[tid] = tile_surf
+
+        _log.info("Loaded texture atlas from %s (%d tiles)", _ATLAS_PATH, len(ids))
+
+
+def _save_atlas(surfaces: dict[int, pygame.Surface]) -> Path:
+    """Pack tile surfaces into a grid PNG and write to disk."""
+    ids = sorted(surfaces.keys())
+    cols = _ATLAS_COLS
+    rows = (len(ids) + cols - 1) // cols
+    atlas_w = cols * TEX_SIZE
+    atlas_h = rows * TEX_SIZE
+
+    atlas_surf = pygame.Surface((atlas_w, atlas_h))
+    for idx, tid in enumerate(ids):
+        ax = (idx % cols) * TEX_SIZE
+        ay = (idx // cols) * TEX_SIZE
+        atlas_surf.blit(surfaces[tid], (ax, ay))
+
+    _ATLAS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    pygame.image.save(atlas_surf, str(_ATLAS_PATH))
+    _log.info("Saved texture atlas to %s (%d tiles, %dx%d)",
+              _ATLAS_PATH, len(ids), atlas_w, atlas_h)
+    return _ATLAS_PATH
 
 
 # ═════════════════════════════════════════════════════════════════════

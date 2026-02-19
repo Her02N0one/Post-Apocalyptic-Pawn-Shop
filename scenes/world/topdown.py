@@ -24,13 +24,13 @@ from components import (
     TileEntity, Collider, WorldEventLog,
 )
 from systems.physics import movement_system
-from systems.interaction import try_interact, nearest_interactable
+from systems.interaction import nearest_interactable
 from systems.item_registry import ItemRegistry
-from systems.spawner import spawn_from_descriptor
+from systems.gameplay import (
+    do_interact_td, open_inventory, spawn_ground_item,
+)
 from ui.modal import ModalStack
 from ui.commands import CloseModal, HealPlayer
-from ui.inventory_modal import InventoryModal
-from ui.transfer_modal import TransferModal
 
 from typing import TYPE_CHECKING
 
@@ -108,12 +108,8 @@ class TopDown(Scene):
             elif event.key == pygame.K_F9:
                 self.session.load()
             elif event.key == pygame.K_RETURN:
-                if self.session.first_person:
-                    from scenes.world.firstperson import FirstPerson
-                    app.push_scene(FirstPerson(self.session))
-                else:
-                    self.session.status = "No first-person view here"
-                    self.session.status_timer = 1.5
+                from scenes.world.firstperson import FirstPerson
+                app.push_scene(FirstPerson(self.session))
             elif event.key == pygame.K_F4:
                 from scenes.editor import MapEditor
                 app.push_scene(MapEditor(self.session.zone_name))
@@ -141,231 +137,24 @@ class TopDown(Scene):
         self.session.status_timer = 1.5
 
     def _do_interact(self, app: App) -> None:
-        """Handle E key — interact with nearest entity.
-
-        Priority: tile entities (containers → pickup ground items) first,
-        then generic interaction.
-        """
-        found = nearest_interactable(app.world)
-        if found:
-            t_eid, _ = found
-            te = app.world.get(t_eid, TileEntity)
-            if te:
-                if te.tile_type == "container":
-                    self._open_container(app, t_eid, te)
-                    return
-                elif te.tile_type == "ground_item":
-                    self._pickup_ground_item(app, t_eid, te)
-                    return
-
-            # Generic interaction — open dialogue for NPCs
-            ident = app.world.get(t_eid, Identity)
-            if ident and ident.kind == EntityKind.NPC:
-                self._open_npc_dialogue(app, t_eid)
-            elif try_interact(app.world, app.world.events):
-                name = ident.name if ident else "???"
-                self.session.status = f"Interacted with {name}"
-                self.session.status_timer = 1.5
-        else:
-            # No entity — check if facing a PLATFORM tile
-            if self._try_platform_interact(app):
-                return
-            self.session.status = "Nothing nearby"
-            self.session.status_timer = 1.0
-
-    def _open_npc_dialogue(self, app: App, npc_eid: int) -> None:
-        """Open a contextual dialogue modal for an NPC."""
-        from systems.dialogue_gen import build_npc_dialogue
-        from ui.dialogue_modal import DialogueModal
-
-        ident = app.world.get(npc_eid, Identity)
-        npc_name = ident.name if ident else "???"
-        tree = build_npc_dialogue(app.world, npc_eid)
-        self.modals.push(DialogueModal(tree, npc_name=npc_name, npc_eid=npc_eid))
+        """Handle E key — delegate to shared gameplay logic."""
+        do_interact_td(
+            app.world, self.session, self.modals, self._registry,
+        )
 
     # ── Inventory ─────────────────────────────────────────────────
 
     def _open_inventory(self, app: App) -> None:
         """Open the player inventory modal."""
-        res = app.world.query_one(Player, Inventory)
-        if not res:
-            # Auto-create inventory on player if missing
-            p_res = app.world.query_one(Player, Position)
-            if not p_res:
-                return
-            p_eid = p_res[0]
-            inv = Inventory(items={})
-            app.world.add(p_eid, inv)
-        else:
-            p_eid, _, inv = res
-
-        def on_drop(item_id: str, qty: int) -> None:
-            self._spawn_ground_item(app, item_id, qty)
-
-        self.modals.push(InventoryModal(
-            player_inv=inv.items,
-            registry=self._registry,
-            on_drop=on_drop,
-        ))
+        open_inventory(
+            app.world, self.modals, self._registry, self.session.zone_name,
+        )
 
     def _spawn_ground_item(self, app: App, item_id: str, qty: int) -> None:
         """Spawn a ground item entity near the player."""
-        res = app.world.query_one(Player, Position)
-        if not res:
-            return
-        _, _, p_pos = res
-
-        desc = self._registry.to_descriptor(item_id)
-        # Snap to grid
-        col = int(p_pos.x)
-        row = int(p_pos.y)
-        desc["position"] = {"x": float(col) + 0.5, "y": float(row) + 0.5}
-        desc["id"] = f"ground_{item_id}_{id(desc)}"
-        desc.setdefault("tile_entity", {})
-        desc["tile_entity"]["item_id"] = item_id
-        desc["tile_entity"]["item_qty"] = qty
-        desc["tile_entity"]["tile_type"] = "ground_item"
-        desc["tile_entity"]["tiles"] = [[row, col]]
-
-        spawn_from_descriptor(app.world, desc, self.session.zone_name)
-
-    def _pickup_ground_item(self, app: App, eid: int, te: TileEntity) -> None:
-        """Pick up a ground item entity, adding it to player inventory."""
-        res = app.world.query_one(Player, Inventory)
-        if not res:
-            return
-        _, _, inv = res
-
-        item_id = te.item_id
-        qty = max(1, te.item_qty)
-        if item_id:
-            inv.items[item_id] = inv.items.get(item_id, 0) + qty
-
-        ident = app.world.get(eid, Identity)
-        name = ident.name if ident else item_id
-        self.session.status = f"Picked up {name}" + (f" x{qty}" if qty > 1 else "")
-        self.session.status_timer = 1.5
-        app.world.kill(eid)
-
-    # ── Container interaction ─────────────────────────────────────
-
-    def _open_container(self, app: App, eid: int, te: TileEntity) -> None:
-        """Open a container tile entity for transfer."""
-        res = app.world.query_one(Player, Inventory)
-        if not res:
-            return
-        _, _, p_inv = res
-
-        # Container inventory — stored as an Inventory component on the entity
-        container_inv = app.world.get(eid, Inventory)
-        if container_inv is None:
-            container_inv = Inventory(items={})
-            app.world.add(eid, container_inv)
-
-        # Roll loot on first open
-        if te.loot_table and not te.looted:
-            container_inv.items.update(self._roll_loot(te.loot_table))
-            te.looted = True
-
-        ident = app.world.get(eid, Identity)
-        title = ident.name if ident else "Container"
-
-        self.modals.push(TransferModal(
-            player_inv=p_inv.items,
-            container_inv=container_inv.items,
-            registry=self._registry,
-            container_title=title,
-        ))
-
-    def _try_platform_interact(self, app: App) -> bool:
-        """Check if the player is facing a PLATFORM tile and open it
-        as a surface container (table, counter, etc.)."""
-        result = app.world.query_one(Player, Position, Facing)
-        if not result:
-            return False
-        _, _, p_pos, p_face = result
-        offsets = {
-            Direction.UP:    (0, -1),
-            Direction.DOWN:  (0,  1),
-            Direction.LEFT:  (-1, 0),
-            Direction.RIGHT: (1,  0),
-        }
-        dx, dy = offsets.get(p_face.direction, (0, 0))
-        tx = int(p_pos.x) + dx
-        ty = int(p_pos.y) + dy
-        tiles = self.session.tiles
-        if not tiles:
-            return False
-        mh = len(tiles)
-        mw = len(tiles[0]) if mh else 0
-        if 0 <= ty < mh and 0 <= tx < mw:
-            tid = tiles[ty][tx]
-            if tid in PLATFORM_IDS:
-                eid = self._get_platform_entity(app, tx, ty, tid)
-                te = app.world.get(eid, TileEntity)
-                self._open_container(app, eid, te)
-                return True
-        return False
-
-    def _get_platform_entity(self, app: App, col: int, row: int,
-                             tid: int) -> int:
-        """Find or create an entity for a platform tile at (col, row)."""
-        from core.tiles import tile_def as _tile_def
-        zone = self.session.zone_name
-        for eid, pos, te in app.world.query(Position, TileEntity):
-            if (pos.zone == zone
-                    and te.tile_type == "platform_surface"
-                    and te.tiles == [[row, col]]):
-                return eid
-        td = _tile_def(tid)
-        name = td.name if td else "Surface"
-        eid = app.world.spawn()
-        app.world.add(eid, Position(x=col + 0.5, y=row + 0.5, zone=zone))
-        app.world.add(eid, Identity(name=name, kind=EntityKind.OBJECT))
-        app.world.add(eid, TileEntity(
-            tile_type="platform_surface",
-            tiles=[[row, col]],
-        ))
-        app.world.add(eid, Inventory(items={}))
-        return eid
-
-    def _roll_loot(self, table_id: str) -> dict[str, int]:
-        """Roll a loot table and return item dict."""
-        import random
-        try:
-            try:
-                import tomllib
-            except ModuleNotFoundError:
-                import tomli as tomllib  # type: ignore[no-redef]
-            from pathlib import Path
-            path = Path(__file__).resolve().parent.parent.parent / "data" / "loot_tables.toml"
-            with open(path, "rb") as f:
-                data = tomllib.load(f)
-            table = data.get("tables", {}).get(table_id)
-            if not table:
-                return {}
-            items: dict[str, int] = {}
-            for pool in table.get("pools", []):
-                rolls = int(pool.get("rolls", 1))
-                bonus = pool.get("bonus_rolls", 0)
-                if bonus:
-                    rolls += int(random.random() * bonus)
-                entries = pool.get("entries", [])
-                if not entries:
-                    continue
-                weights = [e.get("weight", 1) for e in entries]
-                for _ in range(rolls):
-                    chosen = random.choices(entries, weights=weights, k=1)[0]
-                    item = chosen.get("item", "")
-                    lo = chosen.get("min_count", 1)
-                    hi = chosen.get("max_count", 1)
-                    count = random.randint(lo, hi)
-                    items[item] = items.get(item, 0) + count
-            return items
-        except Exception as exc:
-            import logging
-            logging.getLogger(__name__).warning("_roll_loot(%s) failed: %s", table_id, exc)
-            return {}
+        spawn_ground_item(
+            app.world, item_id, qty, self._registry, self.session.zone_name,
+        )
 
     # ── Dev panel (give items) ────────────────────────────────────
 
@@ -448,23 +237,7 @@ class TopDown(Scene):
             return
 
         # Tick fade / auto-walk state machine
-        was_fading_in = (self.session._fade_direction == -1)
         self.session.update_transition(dt)
-
-        # After fade-in starts in a new zone, check if we need to switch scene
-        if was_fading_in and self.session._fade_direction == -1:
-            # Still fading in — check if destination is FP zone
-            pass  # keep rendering TopDown with fade overlay
-        if was_fading_in and self.session._fade_direction != -1:
-            # Fade-in just finished — if we're in an FP zone, push FP scene
-            pass
-
-        # If a teleport just executed (fade just started fading in),
-        # and the new zone is first-person, push the FP scene
-        if self.session._fade_direction == -1 and self.session.first_person:
-            from scenes.world.firstperson import FirstPerson
-            app.push_scene(FirstPerson(self.session))
-            return
 
         keys = pygame.key.get_pressed()
 
@@ -693,9 +466,7 @@ class TopDown(Scene):
                              sw // 2 - 80, 40, (c, c, c))
 
         # Controls
-        hint = "WASD=move  E=interact  I=inv  ~=dev  Tab=debug  F4=editor  F5=save  F6=LOD"
-        if self.session.first_person:
-            hint = "WASD  E=interact  I=inv  Enter=FP  ~=dev  F4=editor  F5=save  F6=LOD"
+        hint = "WASD=move  E=interact  I=inv  Enter=FP  ~=dev  Tab=debug  F4=editor  F5=save"
         app.draw_text(surface, hint,
                       10, sh - 18,
                       (80, 100, 90), app.font_sm)

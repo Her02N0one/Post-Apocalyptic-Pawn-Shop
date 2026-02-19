@@ -104,6 +104,32 @@ class TileEntity(Component):
 
 
 @dataclass
+class WallSprite(Component):
+    """Marks an entity for wall-column rendering in first-person mode.
+
+    Instead of being drawn as a billboard (always facing the camera),
+    entities with ``WallSprite`` are rendered as textured vertical
+    columns — just like real tile walls — giving them depth and
+    correct perspective parallax.
+
+    This is for objects like crates, shelves, TVs, vending machines,
+    or any item sitting on a surface that should look solid in 3D.
+
+    ``texture_key``:  key into the TextureAtlas generator table.
+                      If empty, falls back to the entity's Sprite colour.
+    ``width``:        world-space width in tiles (1.0 = full tile).
+    ``height``:       world-space height in tiles (1.0 = full wall).
+    ``elevation``:    base offset from floor (0.0 = on floor).
+                      Set this for items sitting on top of platforms.
+    """
+    _persist = True
+    texture_key: str = ""
+    width: float = 1.0
+    height: float = 1.0
+    elevation: float = 0.0
+
+
+@dataclass
 class PrefabRef(Component):
     """Links entity to its prefab template for rebuilding transient components.
 
@@ -247,7 +273,7 @@ __all__ = [
     # Components
     "Position", "Velocity", "Facing", "Collider",
     "Sprite", "Identity",
-    "Health", "Inventory", "TileEntity",
+    "Health", "Inventory", "TileEntity", "WallSprite",
     "PrefabRef", "Player",
     "CoarsePos", "Timers", "CombatStats",
     # Resources

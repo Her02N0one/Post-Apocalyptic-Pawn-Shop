@@ -1,0 +1,317 @@
+# Population presets -- entity spawning rules for rooms and zones.
+# Works like loot tables: each preset has pools of weighted entries.
+# Rolls determine how many picks from each pool; entries have weight
+# and min/max count per pick.
+#
+# Used by BSP generation, zone templates, and the "Populate" action.
+
+[presets.bedroom]
+description = "Sleeping quarters furnishings"
+tags = ["residential", "bedroom"]
+
+[[presets.bedroom.pools]]
+name = "furniture"
+rolls = 2
+bonus_rolls = 1
+
+[[presets.bedroom.pools.entries]]
+prefab = "table"
+weight = 10
+min_count = 1
+max_count = 1
+
+[[presets.bedroom.pools.entries]]
+prefab = "chair"
+weight = 6
+min_count = 0
+max_count = 1
+
+[[presets.bedroom.pools.entries]]
+prefab = "shelf"
+weight = 4
+min_count = 0
+max_count = 1
+
+[[presets.bedroom.pools]]
+name = "lighting"
+rolls = 1
+bonus_rolls = 0
+
+[[presets.bedroom.pools.entries]]
+prefab = "lantern"
+weight = 10
+min_count = 0
+max_count = 1
+
+[[presets.bedroom.pools]]
+name = "storage"
+rolls = 1
+bonus_rolls = 0
+
+[[presets.bedroom.pools.entries]]
+prefab = "container"
+weight = 5
+min_count = 0
+max_count = 1
+
+[[presets.bedroom.pools.entries]]
+prefab = "crate"
+weight = 3
+min_count = 0
+max_count = 1
+
+
+[presets.kitchen]
+description = "Food preparation area"
+tags = ["residential", "kitchen"]
+
+[[presets.kitchen.pools]]
+name = "counters"
+rolls = 2
+bonus_rolls = 0
+
+[[presets.kitchen.pools.entries]]
+prefab = "counter"
+weight = 10
+min_count = 1
+max_count = 2
+
+[[presets.kitchen.pools.entries]]
+prefab = "barrel"
+weight = 6
+min_count = 1
+max_count = 2
+
+[[presets.kitchen.pools]]
+name = "supplies"
+rolls = 1
+bonus_rolls = 1
+
+[[presets.kitchen.pools.entries]]
+prefab = "crate"
+weight = 8
+min_count = 0
+max_count = 1
+
+[[presets.kitchen.pools.entries]]
+prefab = "potted_plant"
+weight = 3
+min_count = 0
+max_count = 1
+
+
+[presets.storage]
+description = "Supply room filled with containers"
+tags = ["utility", "storage"]
+
+[[presets.storage.pools]]
+name = "containers"
+rolls = 3
+bonus_rolls = 2
+
+[[presets.storage.pools.entries]]
+prefab = "crate"
+weight = 10
+min_count = 1
+max_count = 3
+
+[[presets.storage.pools.entries]]
+prefab = "barrel"
+weight = 8
+min_count = 1
+max_count = 2
+
+[[presets.storage.pools.entries]]
+prefab = "shelf"
+weight = 5
+min_count = 0
+max_count = 1
+
+[[presets.storage.pools.entries]]
+prefab = "container"
+weight = 4
+min_count = 0
+max_count = 1
+
+
+[presets.office]
+description = "Administrative workspace"
+tags = ["commercial", "office"]
+
+[[presets.office.pools]]
+name = "desks"
+rolls = 1
+bonus_rolls = 0
+
+[[presets.office.pools.entries]]
+prefab = "table"
+weight = 10
+min_count = 1
+max_count = 1
+
+[[presets.office.pools.entries]]
+prefab = "chair"
+weight = 10
+min_count = 1
+max_count = 2
+
+[[presets.office.pools]]
+name = "shelving"
+rolls = 1
+bonus_rolls = 1
+
+[[presets.office.pools.entries]]
+prefab = "bookcase"
+weight = 8
+min_count = 0
+max_count = 2
+
+[[presets.office.pools.entries]]
+prefab = "safe"
+weight = 2
+min_count = 0
+max_count = 1
+
+
+[presets.living]
+description = "Common living area"
+tags = ["residential", "living"]
+
+[[presets.living.pools]]
+name = "seating"
+rolls = 2
+bonus_rolls = 1
+
+[[presets.living.pools.entries]]
+prefab = "chair"
+weight = 10
+min_count = 1
+max_count = 3
+
+[[presets.living.pools.entries]]
+prefab = "table"
+weight = 7
+min_count = 1
+max_count = 1
+
+[[presets.living.pools]]
+name = "decor"
+rolls = 1
+bonus_rolls = 1
+
+[[presets.living.pools.entries]]
+prefab = "bookcase"
+weight = 5
+min_count = 0
+max_count = 1
+
+[[presets.living.pools.entries]]
+prefab = "lantern"
+weight = 6
+min_count = 0
+max_count = 1
+
+[[presets.living.pools.entries]]
+prefab = "potted_plant"
+weight = 4
+min_count = 0
+max_count = 1
+
+
+[presets.hallway]
+description = "Connecting corridor -- sparse"
+tags = ["utility", "hallway"]
+
+[[presets.hallway.pools]]
+name = "lighting"
+rolls = 1
+bonus_rolls = 0
+
+[[presets.hallway.pools.entries]]
+prefab = "lantern"
+weight = 10
+min_count = 0
+max_count = 1
+
+
+[presets.medical]
+description = "Treatment room with medical supplies"
+tags = ["commercial", "medical"]
+
+[[presets.medical.pools]]
+name = "equipment"
+rolls = 2
+bonus_rolls = 0
+
+[[presets.medical.pools.entries]]
+prefab = "table"
+weight = 10
+min_count = 1
+max_count = 1
+
+[[presets.medical.pools.entries]]
+prefab = "shelf"
+weight = 8
+min_count = 1
+max_count = 2
+
+[[presets.medical.pools]]
+name = "supplies"
+rolls = 1
+bonus_rolls = 1
+
+[[presets.medical.pools.entries]]
+prefab = "container"
+weight = 6
+min_count = 0
+max_count = 1
+
+[[presets.medical.pools.entries]]
+prefab = "lantern"
+weight = 5
+min_count = 0
+max_count = 1
+
+
+[presets.workshop]
+description = "Crafting and repair workshop"
+tags = ["commercial", "workshop"]
+
+[[presets.workshop.pools]]
+name = "workbenches"
+rolls = 2
+bonus_rolls = 1
+
+[[presets.workshop.pools.entries]]
+prefab = "table"
+weight = 10
+min_count = 1
+max_count = 2
+
+[[presets.workshop.pools.entries]]
+prefab = "crate"
+weight = 7
+min_count = 1
+max_count = 2
+
+[[presets.workshop.pools]]
+name = "extras"
+rolls = 1
+bonus_rolls = 0
+
+[[presets.workshop.pools.entries]]
+prefab = "barrel"
+weight = 5
+min_count = 0
+max_count = 1
+
+[[presets.workshop.pools.entries]]
+prefab = "lantern"
+weight = 6
+min_count = 0
+max_count = 1
+
+
+[presets.empty]
+description = "Empty room -- no population"
+tags = ["utility"]

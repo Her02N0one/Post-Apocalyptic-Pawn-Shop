@@ -31,7 +31,7 @@ _HOVER_COL   = (255, 240, 120)
 _VALUE_COL   = (120, 220, 160)
 _DIM_COL     = (90, 90, 90)
 
-_FPS_OPTIONS = [30, 60, 0]  # 0 = uncapped
+_FPS_OPTIONS = [30, 60, 100, 0]  # 0 = uncapped
 
 
 class SettingsMenu(Scene):

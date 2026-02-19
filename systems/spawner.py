@@ -22,7 +22,7 @@ from core.ecs import Component
 from core.types import Direction, EntityKind
 from components import (
     Position, Velocity, Sprite, Identity, Health, Inventory,
-    Facing, Collider, PrefabRef, Player, TileEntity,
+    Facing, Collider, PrefabRef, Player, TileEntity, WallSprite,
 )
 
 if TYPE_CHECKING:
@@ -110,6 +110,15 @@ def _build_tile_entity(d: dict) -> TileEntity:
         tiles=tiles,
         loot_table=d.get("loot_table", ""),
         looted=bool(d.get("looted", False)),
+    )
+
+
+def _build_wall_sprite(d: dict) -> WallSprite:
+    return WallSprite(
+        texture_key=d.get("texture_key", ""),
+        width=float(d.get("width", 1.0)),
+        height=float(d.get("height", 1.0)),
+        elevation=float(d.get("elevation", 0.0)),
     )
 
 
@@ -340,6 +349,11 @@ def spawn_from_descriptor(world: "World", desc: dict[str, Any],
     if te_data:
         world.add(eid, _build_tile_entity(te_data))
 
+    # WallSprite (entities rendered as wall columns in FP mode)
+    ws_data = merged("wall_sprite")
+    if ws_data:
+        world.add(eid, _build_wall_sprite(ws_data))
+
     return eid
 
 
@@ -419,3 +433,8 @@ def rebuild_transients(world: "World",
         te_data = _merged("tile_entity")
         if te_data and not world.has(eid, TileEntity):
             world.add(eid, _build_tile_entity(te_data))
+
+        # WallSprite (entities rendered as wall columns in FP)
+        ws_data = _merged("wall_sprite")
+        if ws_data and not world.has(eid, WallSprite):
+            world.add(eid, _build_wall_sprite(ws_data))

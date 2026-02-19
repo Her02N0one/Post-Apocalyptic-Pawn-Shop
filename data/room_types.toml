@@ -1,0 +1,232 @@
+# Room type definitions for BSP procedural generation.
+# Edited via the map editor -- manual edits are preserved.
+
+[types.bedroom]
+floor       = 5
+wall        = 6
+corridor    = 13
+color       = [160, 130, 100]
+description = "Sleeping quarters with basic furniture"
+
+[[types.bedroom.entities]]
+prefab = "table"
+chance = 0.9
+min    = 1
+max    = 1
+
+[[types.bedroom.entities]]
+prefab = "lantern"
+chance = 0.7
+min    = 0
+max    = 1
+
+[[types.bedroom.entities]]
+prefab = "shelf"
+chance = 0.5
+min    = 0
+max    = 1
+
+[[types.bedroom.entities]]
+prefab = "container"
+chance = 0.35
+min    = 0
+max    = 1
+
+[types.hallway]
+floor       = 13
+wall        = 6
+corridor    = 13
+color       = [130, 130, 130]
+description = "Connecting corridor"
+
+[[types.hallway.entities]]
+prefab = "lantern"
+chance = 0.25
+min    = 0
+max    = 1
+
+[types.kitchen]
+floor       = 13
+wall        = 6
+corridor    = 13
+color       = [190, 170, 130]
+description = "Food preparation area"
+
+[[types.kitchen.entities]]
+prefab = "counter"
+chance = 1.0
+min    = 1
+max    = 2
+
+[[types.kitchen.entities]]
+prefab = "barrel"
+chance = 0.8
+min    = 1
+max    = 2
+
+[[types.kitchen.entities]]
+prefab = "crate"
+chance = 0.6
+min    = 0
+max    = 1
+
+[[types.kitchen.entities]]
+prefab = "potted_plant"
+chance = 0.4
+min    = 0
+max    = 1
+
+[types.living]
+floor       = 5
+wall        = 6
+corridor    = 13
+color       = [140, 160, 130]
+description = "Common living area"
+
+[[types.living.entities]]
+prefab = "chair"
+chance = 1.0
+min    = 1
+max    = 3
+
+[[types.living.entities]]
+prefab = "table"
+chance = 0.8
+min    = 1
+max    = 1
+
+[[types.living.entities]]
+prefab = "bookcase"
+chance = 0.6
+min    = 0
+max    = 1
+
+[[types.living.entities]]
+prefab = "lantern"
+chance = 0.5
+min    = 0
+max    = 1
+
+[types.medical]
+floor       = 13
+wall        = 17
+corridor    = 13
+color       = [200, 200, 220]
+description = "Treatment room with medical supplies"
+
+[[types.medical.entities]]
+prefab = "table"
+chance = 1.0
+min    = 1
+max    = 1
+
+[[types.medical.entities]]
+prefab = "shelf"
+chance = 0.9
+min    = 1
+max    = 2
+
+[[types.medical.entities]]
+prefab = "container"
+chance = 0.7
+min    = 0
+max    = 1
+
+[[types.medical.entities]]
+prefab = "lantern"
+chance = 0.6
+min    = 0
+max    = 1
+
+[types.office]
+floor       = 5
+wall        = 6
+corridor    = 13
+color       = [150, 160, 180]
+description = "Administrative workspace"
+
+[[types.office.entities]]
+prefab = "table"
+chance = 1.0
+min    = 1
+max    = 1
+
+[[types.office.entities]]
+prefab = "chair"
+chance = 0.9
+min    = 1
+max    = 2
+
+[[types.office.entities]]
+prefab = "bookcase"
+chance = 0.7
+min    = 0
+max    = 2
+
+[[types.office.entities]]
+prefab = "safe"
+chance = 0.3
+min    = 0
+max    = 1
+
+[types.storage]
+floor       = 13
+wall        = 6
+corridor    = 13
+color       = [130, 130, 140]
+description = "Supply room"
+
+[[types.storage.entities]]
+prefab = "crate"
+chance = 1.0
+min    = 1
+max    = 3
+
+[[types.storage.entities]]
+prefab = "barrel"
+chance = 0.8
+min    = 1
+max    = 2
+
+[[types.storage.entities]]
+prefab = "shelf"
+chance = 0.6
+min    = 0
+max    = 1
+
+[[types.storage.entities]]
+prefab = "container"
+chance = 0.5
+min    = 0
+max    = 1
+
+[types.workshop]
+floor       = 14
+wall        = 17
+corridor    = 13
+color       = [170, 150, 120]
+description = "Crafting and repair workshop"
+
+[[types.workshop.entities]]
+prefab = "table"
+chance = 1.0
+min    = 1
+max    = 2
+
+[[types.workshop.entities]]
+prefab = "crate"
+chance = 0.8
+min    = 1
+max    = 2
+
+[[types.workshop.entities]]
+prefab = "barrel"
+chance = 0.5
+min    = 0
+max    = 1
+
+[[types.workshop.entities]]
+prefab = "lantern"
+chance = 0.7
+min    = 0
+max    = 1

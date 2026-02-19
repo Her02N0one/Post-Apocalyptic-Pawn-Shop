@@ -625,7 +625,7 @@
       6,
       6,
       6,
-      6,
+      9,
       6,
       6,
       6,
@@ -688,6 +688,20 @@
       "target_pos": [
         11,
         6
+      ],
+      "exit_direction": "up"
+    },
+    {
+      "tiles": [
+        [
+          19,
+          9
+        ]
+      ],
+      "target_zone": "generated",
+      "target_pos": [
+        27.0,
+        18.0
       ],
       "exit_direction": "up"
     }
