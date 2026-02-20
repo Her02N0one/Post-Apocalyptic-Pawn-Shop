@@ -12,6 +12,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from editor.entity_defs import EntityDef
+
 # ── Paths (relative to project root) ────────────────────────────────
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -142,7 +144,7 @@ class EditorState:
         self.map_h: int = 0
         self.anchor: tuple[float, float] = (15.0, 10.0)
         self.portals: list[dict] = []
-        self.entities: list[dict] = []
+        self.entities: list[EntityDef] = []
         self.first_person: bool = False
 
         # View
@@ -220,7 +222,8 @@ class EditorState:
                 "exit_direction": p.get("exit_direction", "up"),
             })
 
-        self.entities = data.get("entities", [])
+        self.entities = [EntityDef.from_dict(e)
+                        for e in data.get("entities", [])]
         self.first_person = bool(data.get("first_person",
                                           data.get("interior", False)))
 
@@ -259,7 +262,8 @@ class EditorState:
         self.anchor = (float(anchor[0]), float(anchor[1]))
 
         self.portals = data.get("portals", [])
-        self.entities = data.get("entities", [])
+        self.entities = [EntityDef.from_dict(e)
+                        for e in data.get("entities", [])]
         self.first_person = bool(data.get("first_person", False))
 
         self.selected_entity = -1
@@ -285,7 +289,7 @@ class EditorState:
             "anchor": list(self.anchor),
             "tiles": self.tiles,
             "portals": self.portals,
-            "entities": self.entities,
+            "entities": [e.to_dict() for e in self.entities],
         }
         if self.first_person:
             data["first_person"] = True
@@ -335,7 +339,7 @@ class EditorState:
             "anchor": list(self.anchor),
             "tiles": self.tiles,
             "portals": self.portals,
-            "entities": self.entities,
+            "entities": [e.to_dict() for e in self.entities],
         }
         if self.first_person:
             data["first_person"] = True
@@ -376,7 +380,7 @@ class EditorState:
         self.tiles = [["grass"] * width for _ in range(height)]
         self.anchor = (float(width) / 2, float(height) / 2)
         self.portals = []
-        self.entities = []
+        self.entities: list[EntityDef] = []
         self.first_person = False
         self.selected_entity = -1
         self.cam_x = -(width * 32) / 2
@@ -447,17 +451,14 @@ class EditorState:
     def entity_at(self, row: int, col: int) -> int:
         """Return index of entity near tile, or -1."""
         for i, ent in enumerate(self.entities):
-            pos = ent.get("position", {})
-            ex, ey = pos.get("x", 0.0), pos.get("y", 0.0)
+            ex, ey = ent.position.x, ent.position.y
             if abs(ex - (col + 0.5)) < 0.8 and abs(ey - (row + 0.5)) < 0.8:
                 return i
         return -1
 
     def entity_name(self, idx: int) -> str:
         if 0 <= idx < len(self.entities):
-            ent = self.entities[idx]
-            ident = ent.get("identity", {})
-            return ident.get("name", ent.get("id", f"entity_{idx}"))
+            return self.entities[idx].display_name
         return ""
 
     def delete_entity(self, idx: int):
@@ -560,7 +561,7 @@ def list_loot_tables() -> list[str]:
         with open(path, "rb") as f:
             data = tomllib.load(f)
         return sorted(data.get("tables", {}).keys())
-    except Exception:
+    except (OSError, ValueError, KeyError):
         return []
 
 
@@ -580,7 +581,7 @@ def load_loot_tables() -> dict[str, Any]:
         with open(path, "rb") as f:
             data = tomllib.load(f)
         return data.get("tables", {})
-    except Exception:
+    except (OSError, ValueError, KeyError):
         return {}
 
 
@@ -641,5 +642,5 @@ def load_item_ids() -> list[str]:
             data = tomllib.load(f)
         return sorted(k for k in data.keys()
                       if isinstance(data[k], dict))
-    except Exception:
+    except (OSError, ValueError, KeyError):
         return []

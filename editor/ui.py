@@ -367,14 +367,18 @@ class Checkbox:
         self.on_change = on_change
 
     def draw(self, surface: pygame.Surface, font: pygame.font.Font):
-        box = pygame.Rect(self.rect.x, self.rect.y + 2, 16, 16)
-        pygame.draw.rect(surface, Theme.FIELD_BG, box, border_radius=2)
-        pygame.draw.rect(surface, Theme.BORDER, box, 1, border_radius=2)
+        from editor.layout import Layout
+        sz = max(12, Layout.s(14))
+        box = pygame.Rect(self.rect.x, self.rect.y + Layout.pad_sm,
+                          sz, sz)
+        br = max(1, Layout.border_r - 1)
+        pygame.draw.rect(surface, Theme.FIELD_BG, box, border_radius=br)
+        pygame.draw.rect(surface, Theme.BORDER, box, 1, border_radius=br)
         if self.checked:
             inner = box.inflate(-6, -6)
             pygame.draw.rect(surface, Theme.ACCENT, inner, border_radius=1)
-        draw_text(surface, self.label, box.right + 6,
-                  self.rect.y + 2, Theme.TEXT, font)
+        draw_text(surface, self.label, box.right + Layout.pad_md,
+                  self.rect.y + Layout.pad_sm, Theme.TEXT, font)
 
     def handle_event(self, event: pygame.event.Event) -> bool:
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -412,8 +416,11 @@ class Dropdown:
         pygame.draw.rect(surface, bg, self.rect, border_radius=3)
         pygame.draw.rect(surface, Theme.ACCENT if self._open else Theme.BORDER,
                          self.rect, 1, border_radius=3)
+        from editor.layout import Layout
         txt = self.value if self.value else "(none)"
-        draw_text(surface, txt, self.rect.x + 6, self.rect.y + 4,
+        fh = font.get_height()
+        ty = self.rect.y + max(1, (self.rect.h - fh) // 2)
+        draw_text(surface, txt, self.rect.x + Layout.pad_md, ty,
                   Theme.TEXT, font)
         # Arrow
         ax = self.rect.right - 14
@@ -425,13 +432,17 @@ class Dropdown:
         """Draw the dropdown list (call AFTER other widgets)."""
         if not self._open or not self.options:
             return
-        item_h = 24
+        from editor.layout import Layout
+        item_h = Layout.item_h
         total_h = min(len(self.options), 8) * item_h
+        br = Layout.border_r
         dr = pygame.Rect(self.rect.x, self.rect.bottom + 2,
                          self.rect.w, total_h)
-        pygame.draw.rect(surface, Theme.PANEL, dr, border_radius=4)
-        pygame.draw.rect(surface, Theme.BORDER, dr, 1, border_radius=4)
+        pygame.draw.rect(surface, Theme.PANEL, dr, border_radius=br)
+        pygame.draw.rect(surface, Theme.BORDER, dr, 1, border_radius=br)
 
+        fh = font.get_height()
+        text_y_off = max(1, (item_h - fh) // 2)
         mx, my = pygame.mouse.get_pos()
         for i, opt in enumerate(self.options[:8]):
             iy = dr.y + i * item_h
@@ -443,12 +454,14 @@ class Dropdown:
             elif is_sel:
                 pygame.draw.rect(surface, Theme.SELECTED, ir, border_radius=2)
             color = Theme.ACCENT if is_sel else Theme.TEXT
-            draw_text(surface, opt, ir.x + 6, ir.y + 4, color, font)
+            draw_text(surface, opt, ir.x + Layout.pad_md,
+                      ir.y + text_y_off, color, font)
 
     def handle_event(self, event: pygame.event.Event) -> bool:
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self._open:
-                item_h = 24
+                from editor.layout import Layout
+                item_h = Layout.item_h
                 dr = pygame.Rect(self.rect.x, self.rect.bottom + 2,
                                  self.rect.w,
                                  min(len(self.options), 8) * item_h)
@@ -610,15 +623,112 @@ class ScrollPanel:
 def draw_section_header(surface: pygame.Surface, text: str,
                         x: int, y: int, width: int,
                         font: pygame.font.Font):
-    """Draw a labeled divider for inspector sections."""
-    pygame.draw.line(surface, Theme.BORDER, (x, y + 8),
-                     (x + width, y + 8), 1)
-    draw_text(surface, text, x + 4, y, Theme.ACCENT, font)
-    return y + 20
+    """Draw a labeled divider for inspector sections.
+
+    Layout:  ``text``  at *y*, horizontal rule below at ``y + fh + gap``.
+    Returns the y position after the header (ready for the next widget).
+    """
+    from editor.layout import Layout
+    fh = font.get_height()
+    gap = max(2, Layout.pad_sm)
+    # Text sits at the top; line underneath
+    tw = draw_text(surface, text, x + Layout.pad_sm, y, Theme.ACCENT, font) or 0
+    line_y = y + fh + gap
+    pygame.draw.line(surface, Theme.BORDER, (x, line_y),
+                     (x + width, line_y), 1)
+    return line_y + gap
 
 
 # ── KeyValue row ────────────────────────────────────────────────────
 
 def draw_label(surface: pygame.Surface, label: str,
                x: int, y: int, font: pygame.font.Font, width: int = 80):
-    draw_text(surface, label, x, y + 4, Theme.TEXT_DIM, font)
+    """Draw a dim label at *(x, y)*.  Vertically offset by ``pad_sm``."""
+    from editor.layout import Layout
+    draw_text(surface, label, x, y + Layout.pad_sm, Theme.TEXT_DIM, font)
+
+
+# ── Panel rendering helpers ─────────────────────────────────────────
+
+def draw_panel_bg(surface: pygame.Surface, left: int, top: int,
+                  pw: int, panel_h: int):
+    """Draw the standard semi-transparent panel background + right border."""
+    panel_surf = pygame.Surface((pw, panel_h), pygame.SRCALPHA)
+    panel_surf.fill((*Theme.PANEL, 230))
+    surface.blit(panel_surf, (left, top))
+    pygame.draw.line(surface, Theme.BORDER,
+                     (left + pw - 1, top),
+                     (left + pw - 1, top + panel_h))
+
+
+def draw_item_row(surface: pygame.Surface, rect: pygame.Rect, *,
+                  hovered: bool = False, selected: bool = False,
+                  border: bool = False, accent_border: bool = False,
+                  br: int = 0):
+    """Draw a standard list-item background.
+
+    *selected* — ``Theme.SELECTED`` fill; optionally an ``ACCENT`` outline
+    if *accent_border* is set.
+    *hovered*  — ``Theme.HIGHLIGHT`` fill.
+    *border*   — always draw a ``Theme.BORDER`` outline (e.g. portal rows).
+    """
+    if selected:
+        pygame.draw.rect(surface, Theme.SELECTED, rect, border_radius=br)
+        if accent_border:
+            pygame.draw.rect(surface, Theme.ACCENT, rect, 1, border_radius=br)
+    elif hovered:
+        pygame.draw.rect(surface, Theme.HIGHLIGHT, rect, border_radius=br)
+    if border:
+        pygame.draw.rect(surface, Theme.BORDER, rect, 1, border_radius=br)
+
+
+def draw_empty_hint(surface: pygame.Surface, lines: list[str],
+                    x: int, y: int, font: pygame.font.Font) -> int:
+    """Draw greyed-out placeholder text for an empty list.
+
+    Returns the y position after the last line.
+    """
+    fh = font.get_height()
+    for line in lines:
+        draw_text(surface, line, x, y, Theme.TEXT_DIM, font)
+        y += fh + 2
+    return y
+
+
+def clamp_scroll(scroll_y: float, total_h: float,
+                 visible_h: float) -> float:
+    """Clamp scroll offset so content cannot scroll past the end."""
+    max_scroll = max(0.0, total_h - visible_h)
+    return min(scroll_y, max_scroll)
+
+
+def two_line_offsets(item_h: int, font_h: int,
+                     gap: int = 2) -> tuple[int, int]:
+    """Return ``(line1_y_offset, line2_y_offset)`` for a two-line list item.
+
+    Offsets are relative to the item-rect top.  Text is vertically centred
+    within ``item_h - 2`` pixels (leaving a 2 px row gap at the bottom).
+    The second offset is clamped so that text never extends below the row.
+    """
+    usable = item_h - 2
+    block = font_h * 2 + gap
+    top_pad = max(1, (usable - block) // 2)
+    return top_pad, min(top_pad + font_h + gap, max(0, usable - font_h))
+
+
+def draw_scrollbar(surface: pygame.Surface, x: int, top: int,
+                   height: int, total_h: float, scroll_y: float,
+                   bar_w: int = 4, br: int = 2):
+    """Draw a thin scrollbar track + thumb.
+
+    Does nothing when *total_h* fits within *height*.
+    """
+    if total_h <= height or height <= 0:
+        return
+    thumb_h = max(16, int(height * height / max(1, total_h)))
+    thumb_y = top + int(scroll_y / max(1, total_h) * height)
+    thumb_y = min(thumb_y, top + height - thumb_h)
+    pygame.draw.rect(surface, Theme.SCROLLBAR,
+                     (x, top, bar_w, height), border_radius=br)
+    pygame.draw.rect(surface, Theme.SCROLLTHUMB,
+                     (x, thumb_y, bar_w, thumb_h), border_radius=br)

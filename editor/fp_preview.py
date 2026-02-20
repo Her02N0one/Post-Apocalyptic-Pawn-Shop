@@ -1,22 +1,25 @@
-"""editor/fp_preview.py — First-person preview & editing for the editor.
+"""editor/fp_preview.py -- First-person preview & editing for the editor.
+
+Reuses the game's rendering pipeline (``scenes.world.fp_renderer.Renderer``,
+``systems.raycaster.cast_walls``) instead of duplicating DDA / texture code.
 
 Render modes:
   * **PIP** (``P`` key) -- small raycaster overlay in the top-right corner.
   * **Full-screen edit** (``Tab`` while PIP is open) -- takes over the
-    entire canvas area.  The designer can look around, walk and **paint
-    tiles** directly from the first-person view.
+    entire canvas area.
 
 Editing controls (full-screen only):
-  * Left-click:  paint the selected tile onto the wall/floor you're
-    looking at (same as the top-down brush).
+  * Left-click:  paint tile onto the aimed wall/floor.
   * Right-click: eyedropper -- pick the tile you're looking at.
   * Middle-click: erase (paint erase_tile).
+  * Scroll: cycle selected tile.
+  * Ctrl+Z / Ctrl+Y: undo / redo.
   * Mouse-look: always on in fullscreen.
-  * WASD: move, mouse: look, Scroll: cycle selected tile, Esc: back to PIP.
+  * WASD: move.  Esc: back to PIP.
 
-The raycaster is a simple DDA column-cast against the editor's tile
-grid -- no ECS, no entities, no lighting.  Good enough for a designer
-sanity check and quick tile placement.
+Ghost-block preview: when aiming at a wall, the adjacent empty cell
+is highlighted with a translucent tinted column so you can see where
+a new block would be placed before clicking.
 """
 
 from __future__ import annotations
@@ -26,7 +29,10 @@ from typing import TYPE_CHECKING
 
 import pygame
 
-from core.tiles import TILE_COLORS, tile_def, TF, TILE_REGISTRY, TileType
+from core.tiles import tile_def, TF, TILE_REGISTRY
+from systems.raycaster import cast_walls, project_entities, WallSlice
+from scenes.world.fp_renderer import Renderer, FOV
+from scenes.world.fp_lighting import compute_fog_params
 from editor.ui import Theme, draw_text
 
 if TYPE_CHECKING:
@@ -36,12 +42,14 @@ if TYPE_CHECKING:
 #  Constants
 # =====================================================================
 
-FOV = math.pi / 3          # 60 deg horizontal
 MAX_DEPTH = 24.0
-RAY_STEP = 2               # pixels per column (2 = fast, 1 = crisp)
-TURN_SPEED = 2.5           # rad/s (keyboard turning)
-MOVE_SPEED = 4.0           # tiles/s
-MOUSE_SENS = 0.003         # mouse-look sensitivity (rad/px)
+RAY_STEP = 4               # match the game renderer
+TURN_SPEED = 2.5            # rad/s (keyboard turning)
+MOVE_SPEED = 4.0            # tiles/s
+MOUSE_SENS = 0.003          # mouse-look sensitivity (rad/px)
+
+# Day/night factor for editor (always bright daylight)
+_EDITOR_DN = 1.0
 
 
 # =====================================================================
@@ -49,11 +57,16 @@ MOUSE_SENS = 0.003         # mouse-look sensitivity (rad/px)
 # =====================================================================
 
 class FPPreview:
-    """First-person raycaster with optional in-viewport editing."""
+    """First-person raycaster with optional in-viewport editing.
+
+    Delegates all rendering to the game's ``Renderer`` so that
+    textures, face overrides, fog, floor/ceiling, visplane, and
+    AO shadows are identical to the actual game.
+    """
 
     def __init__(self):
         self.active = False
-        self.fullscreen = False   # True = takes over the canvas
+        self.fullscreen = False
         # Camera
         self.px: float = 15.0
         self.py: float = 10.0
@@ -63,9 +76,39 @@ class FPPreview:
         # Mouse-look state
         self._looking: bool = False
         # Crosshair target (updated each frame)
-        self._target_tile: str | None = None   # tile ID at crosshair
-        self._target_rc: tuple[int, int] | None = None  # (row, col) on map
+        self._target_tile: str | None = None
+        self._target_rc: tuple[int, int] | None = None
         self._target_dist: float = 0.0
+        # Ghost placement: the empty cell adjacent to crosshair wall
+        self._ghost_rc: tuple[int, int] | None = None
+        # Shared game renderer (lazy-init)
+        self._renderer: Renderer | None = None
+        # Cached render target -- avoids re-alloc each frame
+        self._rt: pygame.Surface | None = None
+        self._rt_size: tuple[int, int] = (0, 0)
+        # Cached fog_lut for editor daylight
+        self._fog_rate: int = 0
+        self._fog_lut: list[int] = []
+        self._fog_ready = False
+
+    # -- lazy init ----------------------------------------------------
+
+    def _ensure_renderer(self) -> Renderer:
+        if self._renderer is None:
+            self._renderer = Renderer()
+        return self._renderer
+
+    def _ensure_fog(self) -> list[int]:
+        if not self._fog_ready:
+            self._fog_rate, _, self._fog_lut = compute_fog_params(_EDITOR_DN)
+            self._fog_ready = True
+        return self._fog_lut
+
+    def _get_rt(self, w: int, h: int) -> pygame.Surface:
+        if self._rt is None or self._rt_size != (w, h):
+            self._rt = pygame.Surface((w, h)).convert()
+            self._rt_size = (w, h)
+        return self._rt
 
     # -- public API ---------------------------------------------------
 
@@ -108,10 +151,7 @@ class FPPreview:
 
     def handle_event(self, event: pygame.event.Event,
                      state: "EditorState | None" = None) -> bool:
-        """Process events.  Returns True if consumed.
-
-        *state* is required for fullscreen editing (painting/picking).
-        """
+        """Process events.  Returns True if consumed."""
         if not self.active:
             return False
 
@@ -133,6 +173,20 @@ class FPPreview:
             if event.key == pygame.K_TAB:
                 self.toggle_fullscreen()
                 return True
+
+            # Fullscreen editor shortcuts
+            if self.fullscreen and state is not None:
+                mods = pygame.key.get_mods()
+                ctrl = mods & pygame.KMOD_CTRL
+                if ctrl and event.key == pygame.K_z:
+                    state.undo()
+                    state.toast("Undo")
+                    return True
+                if ctrl and event.key == pygame.K_y:
+                    state.redo()
+                    state.toast("Redo")
+                    return True
+
             return event.key in (pygame.K_w, pygame.K_a,
                                  pygame.K_s, pygame.K_d,
                                  pygame.K_LEFT, pygame.K_RIGHT)
@@ -143,7 +197,6 @@ class FPPreview:
 
         # -- Fullscreen-only events -----------------------------------
         if self.fullscreen and state is not None:
-            # Mouse-look (always on in fullscreen via relative motion)
             if event.type == pygame.MOUSEMOTION:
                 dx, _dy = event.rel
                 self.angle += dx * MOUSE_SENS
@@ -191,6 +244,8 @@ class FPPreview:
 
         return False
 
+    # -- update -------------------------------------------------------
+
     def update(self, dt: float, tiles: list[list[str]],
                map_w: int, map_h: int):
         """Move camera and update crosshair target."""
@@ -228,14 +283,87 @@ class FPPreview:
         if self._passable(self.px, ny, tiles, map_w, map_h, margin):
             self.py = ny
 
-        # Update crosshair target (centre ray)
+        # Update crosshair target via DDA (single centre ray)
+        self._update_crosshair(tiles, map_w, map_h)
+
+    def _update_crosshair(self, tiles: list[list[str]],
+                           map_w: int, map_h: int):
+        """Cast a single centre ray to find the aimed tile + ghost cell."""
         cos_c = math.cos(self.angle)
         sin_c = math.sin(self.angle)
-        dist, tid, _side, rc = self._cast_ray_full(
-            self.px, self.py, cos_c, sin_c, tiles, map_w, map_h)
-        self._target_tile = tid
-        self._target_rc = rc
-        self._target_dist = dist
+        eps = 1e-9
+        if abs(cos_c) < eps:
+            cos_c = eps
+        if abs(sin_c) < eps:
+            sin_c = eps
+
+        step_x = 1 if cos_c > 0 else -1
+        step_y = 1 if sin_c > 0 else -1
+        mx = int(self.px)
+        my = int(self.py)
+        ddx = abs(1.0 / cos_c)
+        ddy = abs(1.0 / sin_c)
+
+        if cos_c > 0:
+            side_x = (mx + 1.0 - self.px) * ddx
+        else:
+            side_x = (self.px - mx) * ddx
+        if sin_c > 0:
+            side_y = (my + 1.0 - self.py) * ddy
+        else:
+            side_y = (self.py - my) * ddy
+
+        prev_mx, prev_my = mx, my
+        side = 0
+        hit = False
+
+        for _ in range(int(MAX_DEPTH * 4)):
+            prev_mx, prev_my = mx, my
+            if side_x < side_y:
+                side_x += ddx
+                mx += step_x
+                side = 0
+            else:
+                side_y += ddy
+                my += step_y
+                side = 1
+
+            if not (0 <= my < map_h and 0 <= mx < map_w):
+                break
+
+            tid = tiles[my][mx]
+            td = tile_def(tid)
+            if td.flags & (TF.WALL | TF.SOLID):
+                hit = True
+                break
+
+        if hit:
+            if side == 0:
+                dist = (mx - self.px + (1 - step_x) / 2) / cos_c
+            else:
+                dist = (my - self.py + (1 - step_y) / 2) / sin_c
+            self._target_dist = abs(dist)
+            self._target_tile = tiles[my][mx]
+            self._target_rc = (my, mx)
+            # Ghost = empty cell just before the wall
+            if 0 <= prev_my < map_h and 0 <= prev_mx < map_w:
+                prev_td = tile_def(tiles[prev_my][prev_mx])
+                if not (prev_td.flags & (TF.WALL | TF.SOLID)):
+                    self._ghost_rc = (prev_my, prev_mx)
+                else:
+                    self._ghost_rc = None
+            else:
+                self._ghost_rc = None
+        else:
+            self._target_dist = MAX_DEPTH
+            fr, fc = int(self.py), int(self.px)
+            if 0 <= fr < map_h and 0 <= fc < map_w:
+                self._target_tile = tiles[fr][fc]
+                self._target_rc = (fr, fc)
+            else:
+                self._target_tile = None
+                self._target_rc = None
+            self._ghost_rc = None
 
     # -- collision ----------------------------------------------------
 
@@ -259,78 +387,79 @@ class FPPreview:
     def draw(self, surface: pygame.Surface,
              tiles: list[list[str]], map_w: int, map_h: int,
              rect: pygame.Rect,
-             selected_tile: str | None = None):
+             selected_tile: str | None = None,
+             entities: list | None = None):
         """Render the first-person view into *rect*.
 
-        *selected_tile* is used in fullscreen mode to show a placement
-        HUD with the tile name and colour.
+        Uses the game's ``Renderer`` for textured walls, floor/ceiling,
+        and visplanes.  Entity billboards are projected from the
+        editor's ``EntityDef`` list.
+
+        *selected_tile* is used in fullscreen mode for the HUD.
+        *entities* is the editor's list[EntityDef] for billboard
+        rendering (optional).
         """
         if not self.active:
             return
 
+        renderer = self._ensure_renderer()
+        fog_lut = self._ensure_fog()
         vw, vh = rect.w, rect.h
-        half_h = vh / 2
+        half = vh // 2
 
-        # Background (sky + floor)
-        sky_r = pygame.Rect(rect.x, rect.y, vw, vh // 2)
-        floor_r = pygame.Rect(rect.x, rect.y + vh // 2, vw, vh // 2)
-        pygame.draw.rect(surface, (40, 50, 70), sky_r)
-        pygame.draw.rect(surface, (50, 45, 35), floor_r)
+        # Render to an offscreen surface at rect size, then blit
+        rt = self._get_rt(vw, vh)
 
-        num_cols = vw // RAY_STEP
+        # 1. Floor + ceiling (uses the game's textured floor renderer)
+        renderer.draw_floor_ceiling(
+            rt, vw, vh, half,
+            self.px, self.py, self.angle,
+            fog_lut, _EDITOR_DN, FOV,
+            tiles, map_w, map_h,
+            True,  # is_interior (use indoor ceiling)
+        )
 
-        for col in range(num_cols):
-            frac = (col / num_cols) - 0.5
-            ray_angle = self.angle + frac * FOV
+        # 2. Textured walls (game's full pipeline)
+        slices, plat_col, zbuf_full, deferred_halves = renderer.draw_walls(
+            rt, vw, vh, half,
+            self.px, self.py,
+            self.angle, FOV,
+            tiles, fog_lut, _EDITOR_DN,
+        )
 
-            cos_a = math.cos(ray_angle)
-            sin_a = math.sin(ray_angle)
+        # 3. Visplane tops (platforms)
+        renderer.draw_visplane_tops(
+            rt, vw, vh, half,
+            self.px, self.py,
+            self.angle, FOV,
+            plat_col, fog_lut,
+            tiles, map_w, map_h,
+        )
 
-            dist, hit_tile, hit_side = self._cast_ray(
-                self.px, self.py, cos_a, sin_a,
-                tiles, map_w, map_h)
+        # 4. Entity billboards (from editor EntityDef list)
+        if entities:
+            self._draw_editor_entities(
+                rt, vw, vh, half, entities, zbuf_full)
 
-            if dist <= 0:
-                continue
+        # 5. Ghost block preview
+        if self.fullscreen and self._ghost_rc and selected_tile:
+            self._draw_ghost(rt, vw, vh, half, selected_tile)
 
-            perp = dist * math.cos(ray_angle - self.angle)
-            if perp < 0.05:
-                perp = 0.05
+        # Blit the render target onto the output surface
+        surface.blit(rt, (rect.x, rect.y))
 
-            line_h = int(vh / perp)
-            draw_top = int(half_h - line_h / 2) + rect.y
-            draw_bot = int(half_h + line_h / 2) + rect.y
-
-            td = tile_def(hit_tile)
-            color = list(td.color)
-            if hit_side == 1:
-                color = [max(0, c - 30) for c in color]
-            fog = max(0.15, 1.0 - dist / MAX_DEPTH)
-            color = [int(c * fog) for c in color]
-
-            sx = rect.x + col * RAY_STEP
-            pygame.draw.rect(surface, color,
-                             (sx, max(rect.y, draw_top),
-                              RAY_STEP,
-                              min(rect.bottom, draw_bot) - max(rect.y, draw_top)))
-
-        # -- Crosshair ------------------------------------------------
+        # 6. Crosshair (drawn on the output surface directly)
         cx, cy = rect.centerx, rect.centery
         cross_col = (200, 200, 200)
         if self.fullscreen and self._target_tile:
             td = tile_def(self._target_tile)
             cross_col = tuple(min(255, c + 60) for c in td.color)
-        pygame.draw.line(surface, cross_col,
-                         (cx - 8, cy), (cx - 3, cy), 1)
-        pygame.draw.line(surface, cross_col,
-                         (cx + 3, cy), (cx + 8, cy), 1)
-        pygame.draw.line(surface, cross_col,
-                         (cx, cy - 8), (cx, cy - 3), 1)
-        pygame.draw.line(surface, cross_col,
-                         (cx, cy + 3), (cx, cy + 8), 1)
+        _draw_crosshair(surface, cx, cy, cross_col)
 
-        # -- Info overlay ----------------------------------------------
-        font_sm = pygame.font.SysFont("monospace", 11)
+        # 7. Info overlay / HUD
+        from editor.layout import Layout as _L
+        font_sm = pygame.font.SysFont("monospace",
+                                      max(9, round(11 * _L.scale)))
         if self.fullscreen:
             self._draw_fullscreen_hud(surface, rect, font_sm, selected_tile)
         else:
@@ -338,6 +467,128 @@ class FPPreview:
                       rect.x + 4, rect.y + 4, Theme.ACCENT, font_sm)
             draw_text(surface, "WASD=Move  Arrows=Turn  Tab=Edit  Esc=Close",
                       rect.x + 4, rect.y + 16, Theme.TEXT_DIM, font_sm)
+
+    # -- entity billboards from editor defs ---------------------------
+
+    def _draw_editor_entities(
+        self,
+        surface: pygame.Surface,
+        sw: int, sh: int, half: int,
+        entities: list,
+        zbuf: list[float],
+    ):
+        """Project editor EntityDef objects as simple billboards."""
+        from editor.entity_defs import EntityDef
+        ent_data: list[tuple] = []
+        for i, ent in enumerate(entities):
+            if not isinstance(ent, EntityDef):
+                continue
+            ex = ent.position.x
+            ey = ent.position.y
+            sp = ent.sprite
+            char = sp.char if sp else "?"
+            color = tuple(sp.color) if sp and sp.color else (200, 200, 200)
+            ent_data.append((i, ex, ey, char, color, 0.6, 0.4))
+
+        if not ent_data:
+            return
+
+        billboards = project_entities(
+            self.px, self.py, self.angle, FOV, sw, sh, ent_data)
+
+        font_cache: dict[int, pygame.font.Font] = {}
+        for bb in billboards:
+            if bb.distance > MAX_DEPTH:
+                continue
+
+            # Depth test against wall zbuffer
+            scx = int(bb.screen_x)
+            if 0 <= scx < sw and bb.distance > zbuf[scx]:
+                continue
+
+            bx = int(bb.screen_x - bb.width * 0.5)
+            by = int(bb.screen_y)
+            bw = max(1, bb.width)
+            bh = max(1, bb.height)
+
+            # Fog
+            fog = max(0.15, 1.0 - bb.distance / MAX_DEPTH)
+            col = tuple(int(c * fog) for c in bb.color)
+
+            # Simple glyph rendering
+            font_size = max(8, min(48, bh))
+            font_size = (font_size // 2) * 2
+            if font_size not in font_cache:
+                font_cache[font_size] = pygame.font.SysFont(
+                    "monospace", font_size)
+            font = font_cache[font_size]
+
+            glyph = font.render(bb.char, True, col)
+            gx = int(bb.screen_x - glyph.get_width() * 0.5)
+            gy = by + (bh - glyph.get_height()) // 2
+            surface.blit(glyph, (gx, gy))
+
+    # -- ghost block preview ------------------------------------------
+
+    def _draw_ghost(self, surface: pygame.Surface,
+                    sw: int, sh: int, half: int,
+                    tile_id: str):
+        """Draw a translucent tinted column at the ghost cell position."""
+        gr, gc = self._ghost_rc  # type: ignore[misc]
+        # Project the ghost cell centre into screen space
+        cx = gc + 0.5
+        cy = gr + 0.5
+        dx = cx - self.px
+        dy = cy - self.py
+
+        dir_x = math.cos(self.angle)
+        dir_y = math.sin(self.angle)
+        plane_scale = math.tan(FOV * 0.5)
+        plane_x = -dir_y * plane_scale
+        plane_y = dir_x * plane_scale
+
+        det = plane_x * dir_y - dir_x * plane_y
+        if abs(det) < 1e-10:
+            return
+        inv_det = 1.0 / det
+
+        tx = inv_det * (dir_y * dx - dir_x * dy)
+        ty = inv_det * (-plane_y * dx + plane_x * dy)
+
+        if ty <= 0.1:
+            return  # behind camera
+
+        sx = int(sw * 0.5 * (1.0 + tx / ty))
+        wall_h = sh / ty
+        col_top = int(half - wall_h * 0.5)
+        col_bot = int(half + wall_h * 0.5)
+
+        # Clamp
+        col_top = max(0, col_top)
+        col_bot = min(sh, col_bot)
+        if col_bot <= col_top:
+            return
+
+        col_w = max(1, int(wall_h * 0.5))
+        x0 = sx - col_w // 2
+        x1 = x0 + col_w
+
+        # Get tile colour for the ghost tint
+        td = tile_def(tile_id)
+        ghost_color = tuple(min(255, c + 40) for c in td.color)
+
+        # Draw translucent overlay
+        gw = max(1, x1 - x0)
+        gh = col_bot - col_top
+        ghost_surf = pygame.Surface((gw, gh), pygame.SRCALPHA)
+        ghost_surf.fill((*ghost_color, 80))
+        surface.blit(ghost_surf, (max(0, x0), col_top))
+
+        # Outline
+        outline_rect = pygame.Rect(max(0, x0), col_top, gw, gh)
+        pygame.draw.rect(surface, (*ghost_color, 160), outline_rect, 1)
+
+    # -- HUD ----------------------------------------------------------
 
     def _draw_fullscreen_hud(self, surface: pygame.Surface,
                               rect: pygame.Rect,
@@ -359,9 +610,17 @@ class FPPreview:
             draw_text(surface, f"Looking at: {td.name} [{r},{c}]",
                       x0, y, Theme.TEXT, font_sm)
             y += 14
-            draw_text(surface, f"  type={td.type.value}  dist={self._target_dist:.1f}",
+            draw_text(surface,
+                      f"  type={td.type.value}  dist={self._target_dist:.1f}",
                       x0, y, Theme.TEXT_DIM, font_sm)
         y += 14
+
+        # Ghost placement indicator
+        if self._ghost_rc:
+            gr, gc = self._ghost_rc
+            draw_text(surface, f"Place at: [{gr},{gc}]",
+                      x0, y, (120, 200, 120), font_sm)
+            y += 14
 
         # Selected tile (bottom-left)
         if selected_tile:
@@ -369,141 +628,30 @@ class FPPreview:
             td = tile_def(selected_tile)
             sw_r = pygame.Rect(x0, by, 20, 20)
             pygame.draw.rect(surface, td.color, sw_r, border_radius=2)
-            pygame.draw.rect(surface, (120, 120, 120), sw_r, 1, border_radius=2)
+            pygame.draw.rect(surface, (120, 120, 120), sw_r, 1,
+                             border_radius=2)
             draw_text(surface, f"Brush: {td.name}",
                       x0 + 26, by + 3, Theme.ACCENT, font_sm)
             draw_text(surface, f"  ({td.type.value})",
                       x0 + 26, by + 16, Theme.TEXT_DIM, font_sm)
 
         # Controls hint (bottom-right)
-        hints = "LClick=Paint  RClick=Pick  MClick=Erase  Scroll=Cycle  Tab=TopDown  Esc=PIP"
+        hints = ("LClick=Paint  RClick=Pick  MClick=Erase  "
+                 "Scroll=Cycle  Ctrl+Z/Y=Undo/Redo  Tab=TopDown  Esc=PIP")
         tw = font_sm.size(hints)[0]
         draw_text(surface, hints,
                   rect.right - tw - 6, rect.bottom - 16,
                   Theme.TEXT_DIM, font_sm)
 
-    # -- raycasting ---------------------------------------------------
 
-    @staticmethod
-    def _cast_ray(px: float, py: float,
-                  cos_a: float, sin_a: float,
-                  tiles: list[list[str]], map_w: int, map_h: int,
-                  ) -> tuple[float, str, int]:
-        """Simple DDA raycast.  Returns (distance, tile_id, side)."""
-        eps = 1e-9
-        if abs(cos_a) < eps:
-            cos_a = eps
-        if abs(sin_a) < eps:
-            sin_a = eps
+# =====================================================================
+#  Helpers
+# =====================================================================
 
-        step_x = 1 if cos_a > 0 else -1
-        step_y = 1 if sin_a > 0 else -1
-        map_x = int(px)
-        map_y = int(py)
-        ddx = abs(1.0 / cos_a)
-        ddy = abs(1.0 / sin_a)
-
-        if cos_a > 0:
-            side_x = (map_x + 1.0 - px) * ddx
-        else:
-            side_x = (px - map_x) * ddx
-        if sin_a > 0:
-            side_y = (map_y + 1.0 - py) * ddy
-        else:
-            side_y = (py - map_y) * ddy
-
-        hit = False
-        side = 0
-
-        for _ in range(int(MAX_DEPTH * 4)):
-            if side_x < side_y:
-                side_x += ddx
-                map_x += step_x
-                side = 0
-            else:
-                side_y += ddy
-                map_y += step_y
-                side = 1
-
-            if not (0 <= map_y < map_h and 0 <= map_x < map_w):
-                break
-
-            tid = tiles[map_y][map_x]
-            td = tile_def(tid)
-            if td.flags & (TF.WALL | TF.SOLID):
-                hit = True
-                break
-
-        if not hit:
-            return MAX_DEPTH, "void", 0
-
-        if side == 0:
-            dist = (map_x - px + (1 - step_x) / 2) / cos_a
-        else:
-            dist = (map_y - py + (1 - step_y) / 2) / sin_a
-
-        return abs(dist), tiles[map_y][map_x], side
-
-    @staticmethod
-    def _cast_ray_full(px: float, py: float,
-                       cos_a: float, sin_a: float,
-                       tiles: list[list[str]], map_w: int, map_h: int,
-                       ) -> tuple[float, "str | None", int, "tuple[int, int] | None"]:
-        """Like _cast_ray but also returns the (row, col) of the hit cell."""
-        eps = 1e-9
-        if abs(cos_a) < eps:
-            cos_a = eps
-        if abs(sin_a) < eps:
-            sin_a = eps
-
-        step_x = 1 if cos_a > 0 else -1
-        step_y = 1 if sin_a > 0 else -1
-        map_x = int(px)
-        map_y = int(py)
-        ddx = abs(1.0 / cos_a)
-        ddy = abs(1.0 / sin_a)
-
-        if cos_a > 0:
-            side_x = (map_x + 1.0 - px) * ddx
-        else:
-            side_x = (px - map_x) * ddx
-        if sin_a > 0:
-            side_y = (map_y + 1.0 - py) * ddy
-        else:
-            side_y = (py - map_y) * ddy
-
-        hit = False
-        side = 0
-
-        for _ in range(int(MAX_DEPTH * 4)):
-            if side_x < side_y:
-                side_x += ddx
-                map_x += step_x
-                side = 0
-            else:
-                side_y += ddy
-                map_y += step_y
-                side = 1
-
-            if not (0 <= map_y < map_h and 0 <= map_x < map_w):
-                break
-
-            tid = tiles[map_y][map_x]
-            td = tile_def(tid)
-            if td.flags & (TF.WALL | TF.SOLID):
-                hit = True
-                break
-
-        if not hit:
-            # Return the floor cell the player is standing on
-            fr, fc = int(py), int(px)
-            if 0 <= fr < map_h and 0 <= fc < map_w:
-                return MAX_DEPTH, tiles[fr][fc], 0, (fr, fc)
-            return MAX_DEPTH, None, 0, None
-
-        if side == 0:
-            dist = (map_x - px + (1 - step_x) / 2) / cos_a
-        else:
-            dist = (map_y - py + (1 - step_y) / 2) / sin_a
-
-        return abs(dist), tiles[map_y][map_x], side, (map_y, map_x)
+def _draw_crosshair(surface: pygame.Surface, cx: int, cy: int,
+                     color: tuple):
+    """Small crosshair at screen centre."""
+    pygame.draw.line(surface, color, (cx - 8, cy), (cx - 3, cy), 1)
+    pygame.draw.line(surface, color, (cx + 3, cy), (cx + 8, cy), 1)
+    pygame.draw.line(surface, color, (cx, cy - 8), (cx, cy - 3), 1)
+    pygame.draw.line(surface, color, (cx, cy + 3), (cx, cy + 8), 1)

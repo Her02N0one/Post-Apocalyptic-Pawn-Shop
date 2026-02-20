@@ -123,11 +123,13 @@ class Canvas:
         ax, ay = st.anchor
         asx, asy = self.world_to_screen(ax * TILE_SIZE, ay * TILE_SIZE,
                                         surface)
-        pygame.draw.circle(surface, Theme.ANCHOR, (asx, asy), 8, 2)
+        _ar = Layout.s(8)
+        _al = Layout.s(10)
+        pygame.draw.circle(surface, Theme.ANCHOR, (asx, asy), _ar, 2)
         pygame.draw.line(surface, Theme.ANCHOR,
-                         (asx - 10, asy), (asx + 10, asy), 1)
+                         (asx - _al, asy), (asx + _al, asy), 1)
         pygame.draw.line(surface, Theme.ANCHOR,
-                         (asx, asy - 10), (asx, asy + 10), 1)
+                         (asx, asy - _al), (asx, asy + _al), 1)
 
         # Draw entities
         self._draw_entities(surface, font, font_sm, ts)
@@ -143,29 +145,32 @@ class Canvas:
                        ts: int):
         st = self.state
         for i, ent in enumerate(st.entities):
-            pos = ent.get("position", {})
-            ex, ey = pos.get("x", 0.0), pos.get("y", 0.0)
+            ex, ey = ent.position.x, ent.position.y
             sx, sy = self.world_to_screen(ex * TILE_SIZE, ey * TILE_SIZE,
                                           surface)
 
-            sprite = ent.get("sprite", {})
-            if not sprite:
+            sprite = ent.sprite
+            if sprite is None:
                 # Try prefab defaults
                 _try_import_prefabs()
                 if _PREFAB_DEFAULTS:
-                    defaults = _PREFAB_DEFAULTS.get(ent.get("prefab", ""), {})
-                    sprite = defaults.get("sprite", {})
+                    defaults = _PREFAB_DEFAULTS.get(ent.prefab, {})
+                    sprite_d = defaults.get("sprite", {})
+                    char = sprite_d.get("char", "?")
+                    color = tuple(sprite_d.get("color", [200, 200, 200]))
+                else:
+                    char = "?"
+                    color = (200, 200, 200)
+            else:
+                char = sprite.char
+                color = tuple(sprite.color)
 
-            char = sprite.get("char", "?")
-            color = tuple(sprite.get("color", [200, 200, 200]))
-            ident = ent.get("identity", {})
-            name = ident.get("name", ent.get("id", ""))
+            name = ent.display_name
 
-            radius = max(6, ts // 3)
+            radius = max(Layout.s(6), ts // 3)
             is_sel = (i == st.selected_entity)
 
-            te = ent.get("tile_entity", {})
-            if te:
+            if ent.tile_entity is not None:
                 ring_col = Theme.ACCENT if is_sel else Theme.ACCENT2
                 half = radius
                 pygame.draw.rect(surface, ring_col,

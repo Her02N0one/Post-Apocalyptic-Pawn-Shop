@@ -285,7 +285,7 @@ class TemplateEditor:
             "height": s.map_h,
             "base_tiles": [row[:] for row in s.tiles],
             "slots": [],
-            "fixed_entities": deepcopy(s.entities),
+            "fixed_entities": [e.to_dict() for e in s.entities],
             "portals": deepcopy(s.portals),
             "first_person": s.first_person,
         }
@@ -307,22 +307,14 @@ class TemplateEditor:
         # Entities inside the region
         ents = []
         for e in s.entities:
-            pos = e.get("position")
-            if isinstance(pos, list) and len(pos) >= 2:
-                ex, ey = pos[0], pos[1]
-            elif isinstance(pos, dict):
-                ex, ey = pos.get("x", 0), pos.get("y", 0)
-            else:
+            if e.position is None:
                 continue
+            ex, ey = e.position.x, e.position.y
             if x <= ex < x + w and y <= ey < y + h:
-                ec = deepcopy(e)
-                if isinstance(ec["position"], list):
-                    ec["position"][0] -= x
-                    ec["position"][1] -= y
-                elif isinstance(ec["position"], dict):
-                    ec["position"]["x"] -= x
-                    ec["position"]["y"] -= y
-                ents.append(ec)
+                ec = e.copy()
+                ec.position.x -= x
+                ec.position.y -= y
+                ents.append(ec.to_dict())
 
         room = {
             "name": name,

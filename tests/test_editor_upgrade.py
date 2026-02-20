@@ -253,21 +253,25 @@ class TestFPPreview:
         import math
         from editor.fp_preview import FPPreview
         tiles = self._simple_map()
-        # Cast east from center
-        dist, tid, side = FPPreview._cast_ray(
-            2.5, 2.5, 1.0, 0.0, tiles, 5, 5)
-        assert dist > 0
-        assert tid == "wall"  # wall
+        # Cast east from center using _update_crosshair
+        fp = FPPreview()
+        fp.px, fp.py = 2.5, 2.5
+        fp.angle = 0.0  # east
+        fp.active = True
+        fp._update_crosshair(tiles, 5, 5)
+        assert fp._target_dist > 0
+        assert fp._target_tile == "wall"
 
     def test_cast_ray_no_crash_on_diagonal(self):
         import math
         from editor.fp_preview import FPPreview
         tiles = self._simple_map()
-        cos_a = math.cos(math.pi / 4)
-        sin_a = math.sin(math.pi / 4)
-        dist, tid, side = FPPreview._cast_ray(
-            2.5, 2.5, cos_a, sin_a, tiles, 5, 5)
-        assert dist > 0
+        fp = FPPreview()
+        fp.px, fp.py = 2.5, 2.5
+        fp.angle = math.pi / 4  # diagonal
+        fp.active = True
+        fp._update_crosshair(tiles, 5, 5)
+        assert fp._target_dist > 0
 
     def test_toggle(self):
         from editor.fp_preview import FPPreview

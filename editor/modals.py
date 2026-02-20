@@ -16,6 +16,8 @@ from editor.ui import (
 )
 from editor.state import EditorState, list_zones, ZONES_DIR
 from editor.canvas import get_prefab_defaults
+from editor.entity_factory import create_prefab_entity, create_forge_entity
+from editor.layout import Layout as _L
 
 import json
 
@@ -83,18 +85,23 @@ class _BaseModal:
         return False
 
     def _centered_rect(self, surface, width, height) -> pygame.Rect:
+        from editor.layout import Layout
+        w = Layout.s(width) if width <= 600 else width
+        h = Layout.s(height) if height <= 600 else height
         sw, sh = surface.get_size()
-        return pygame.Rect((sw - width) // 2, (sh - height) // 2,
-                           width, height)
+        return pygame.Rect((sw - w) // 2, (sh - h) // 2, w, h)
 
     def _draw_panel(self, surface, rect, title="",
                     border_color=Theme.ACCENT):
-        pygame.draw.rect(surface, Theme.PANEL, rect, border_radius=10)
-        pygame.draw.rect(surface, border_color, rect, 2, border_radius=10)
+        from editor.layout import Layout
+        br = Layout.s(10)
+        pygame.draw.rect(surface, Theme.PANEL, rect, border_radius=br)
+        pygame.draw.rect(surface, border_color, rect, 2, border_radius=br)
         if title:
-            font = pygame.font.SysFont("monospace", 14)
-            draw_text(surface, title, rect.x + 16, rect.y + 12,
-                      border_color, font)
+            font = pygame.font.SysFont("monospace",
+                                       max(11, round(14 * Layout.scale)))
+            draw_text(surface, title, rect.x + Layout.s(16),
+                      rect.y + Layout.s(12), border_color, font)
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -154,9 +161,10 @@ class ZonePickerModal(_BaseModal):
         rect = self._centered_rect(surface, 500, sh - 120)
         self._draw_panel(surface, rect, "Select Zone")
 
-        item_h = 32
-        list_y = rect.y + 40
-        clip = pygame.Rect(rect.x + 8, list_y, rect.w - 16, rect.h - 60)
+        item_h = _L.s(32)
+        list_y = rect.y + _L.s(40)
+        clip = pygame.Rect(rect.x + _L.pad_md, list_y,
+                           rect.w - 2 * _L.pad_md, rect.h - _L.s(60))
         surface.set_clip(clip)
         mx, my = pygame.mouse.get_pos()
 
@@ -165,16 +173,18 @@ class ZonePickerModal(_BaseModal):
             if iy + item_h < clip.y or iy > clip.bottom:
                 continue
             is_current = (z == self.state.zone_name)
-            ir = pygame.Rect(rect.x + 10, iy, rect.w - 20, item_h - 2)
+            ir = pygame.Rect(rect.x + _L.pad_lg, iy,
+                             rect.w - 2 * _L.pad_lg, item_h - 2)
             is_hov = ir.collidepoint(mx, my)
             if is_hov:
                 pygame.draw.rect(surface, Theme.HIGHLIGHT, ir,
-                                 border_radius=4)
+                                 border_radius=_L.border_r)
             elif is_current:
                 pygame.draw.rect(surface, Theme.SELECTED, ir,
-                                 border_radius=4)
+                                 border_radius=_L.border_r)
             color = Theme.ACCENT if is_current else Theme.TEXT
-            draw_text(surface, z, ir.x + 12, ir.y + 8, color, font)
+            draw_text(surface, z, ir.x + _L.pad_lg,
+                      ir.y + _L.pad_md, color, font)
 
         surface.set_clip(None)
 
@@ -190,11 +200,12 @@ class ZonePickerModal(_BaseModal):
             sw, sh = pygame.display.get_surface().get_size()
             rect = self._centered_rect(pygame.display.get_surface(),
                                        500, sh - 120)
-            item_h = 32
-            list_y = rect.y + 40
+            item_h = _L.s(32)
+            list_y = rect.y + _L.s(40)
             for i, z in enumerate(self.zones):
                 iy = list_y + i * item_h - self.scroll
-                ir = pygame.Rect(rect.x + 10, iy, rect.w - 20, item_h)
+                ir = pygame.Rect(rect.x + _L.pad_lg, iy,
+                                 rect.w - 2 * _L.pad_lg, item_h)
                 if ir.collidepoint(event.pos):
                     self.state.load_zone(z)
                     self.manager.close()
@@ -226,7 +237,7 @@ class PrefabPickerModal(_BaseModal):
             reg = ForgeRegistry.instance()
             self._forge_archetypes = sorted(reg.all().values(),
                                             key=lambda a: a.id)
-        except Exception:
+        except (ImportError, AttributeError, TypeError):
             self._forge_archetypes = []
 
     def draw(self, surface, font, font_sm, dt):
@@ -238,31 +249,34 @@ class PrefabPickerModal(_BaseModal):
         mx, my = pygame.mouse.get_pos()
 
         # Tab bar
-        tab_y = rect.y + 30
+        tab_y = rect.y + _L.s(30)
         tabs = [("Prefabs", self.TAB_PREFABS), ("Forge", self.TAB_FORGE)]
-        tx = rect.x + 10
+        tx = rect.x + _L.pad_lg
         self._tab_rects: list[tuple[int, pygame.Rect]] = []
         for label, tab_id in tabs:
-            tw = font_sm.size(label)[0] + 20
-            tr = pygame.Rect(tx, tab_y, tw, 22)
+            tw = font_sm.size(label)[0] + _L.s(20)
+            tr = pygame.Rect(tx, tab_y, tw, _L.field_h)
             is_sel = (self._tab == tab_id)
             hov = tr.collidepoint(mx, my)
             bg = Theme.SELECTED if is_sel else (Theme.HIGHLIGHT if hov else Theme.PANEL)
-            pygame.draw.rect(surface, bg, tr, border_radius=4)
-            draw_text(surface, label, tx + 10, tab_y + 4,
+            pygame.draw.rect(surface, bg, tr, border_radius=_L.border_r)
+            draw_text(surface, label, tx + _L.pad_lg,
+                      tab_y + _L.pad_sm,
                       Theme.ACCENT if is_sel else Theme.TEXT_DIM, font_sm)
             self._tab_rects.append((tab_id, tr))
-            tx += tw + 4
+            tx += tw + _L.pad_sm
 
         # Forge count badge
         if self._forge_archetypes:
             badge = f"({len(self._forge_archetypes)})"
-            draw_text(surface, badge, tx + 4, tab_y + 4,
+            draw_text(surface, badge, tx + _L.pad_sm, tab_y + _L.pad_sm,
                       Theme.TEXT_DIM, font_sm)
 
-        item_h = 40
-        list_y = tab_y + 28
-        clip = pygame.Rect(rect.x + 4, list_y, rect.w - 8, rect.bottom - list_y - 10)
+        item_h = _L.s(40)
+        list_y = tab_y + _L.item_h
+        clip = pygame.Rect(rect.x + _L.pad_sm, list_y,
+                           rect.w - 2 * _L.pad_sm,
+                           rect.bottom - list_y - _L.pad_lg)
         surface.set_clip(clip)
 
         if self._tab == self.TAB_PREFABS:
@@ -282,22 +296,26 @@ class PrefabPickerModal(_BaseModal):
             iy = list_y + i * item_h - self.scroll
             if iy + item_h < list_y or iy > clip_bottom:
                 continue
-            ir = pygame.Rect(rect.x + 10, iy, rect.w - 20, item_h - 3)
+            ir = pygame.Rect(rect.x + _L.pad_lg, iy,
+                             rect.w - 2 * _L.pad_lg, item_h - _L.pad_sm)
             is_hov = ir.collidepoint(mx, my)
             bg = Theme.HIGHLIGHT if is_hov else Theme.PANEL
-            pygame.draw.rect(surface, bg, ir, border_radius=4)
+            pygame.draw.rect(surface, bg, ir, border_radius=_L.border_r)
 
             pdef = defaults.get(prefab, {})
             sprite = pdef.get("sprite", {})
             char = sprite.get("char", "?")
             color = tuple(sprite.get("color", [200, 200, 200]))
             glyph = font.render(char, True, color)
-            surface.blit(glyph, (ir.x + 8, ir.y + 10))
+            surface.blit(glyph, (ir.x + _L.pad_md,
+                                 ir.y + _L.pad_lg))
 
-            draw_text(surface, prefab.title(), ir.x + 30, ir.y + 6,
+            draw_text(surface, prefab.title(),
+                      ir.x + _L.s(30), ir.y + _L.pad_md,
                       Theme.TEXT, font)
             kind = pdef.get("identity", {}).get("kind", "")
-            draw_text(surface, f"Kind: {kind}", ir.x + 30, ir.y + 22,
+            draw_text(surface, f"Kind: {kind}",
+                      ir.x + _L.s(30), ir.y + _L.field_h,
                       Theme.TEXT_DIM, font_sm)
 
     def _draw_forge_list(self, surface, font, font_sm, rect,
@@ -319,23 +337,27 @@ class PrefabPickerModal(_BaseModal):
             iy = list_y + i * item_h - self.scroll
             if iy + item_h < list_y or iy > clip_bottom:
                 continue
-            ir = pygame.Rect(rect.x + 10, iy, rect.w - 20, item_h - 3)
+            ir = pygame.Rect(rect.x + _L.pad_lg, iy,
+                             rect.w - 2 * _L.pad_lg, item_h - _L.pad_sm)
             is_hov = ir.collidepoint(mx, my)
             bg = Theme.HIGHLIGHT if is_hov else Theme.PANEL
-            pygame.draw.rect(surface, bg, ir, border_radius=4)
+            pygame.draw.rect(surface, bg, ir, border_radius=_L.border_r)
 
             icon = kind_icons.get(arch.kind, "?")
             color = arch.sprite_color if arch.kind == "billboard" else arch.color
             glyph = font.render(icon, True, color)
-            surface.blit(glyph, (ir.x + 8, ir.y + 10))
+            surface.blit(glyph, (ir.x + _L.pad_md,
+                                 ir.y + _L.pad_lg))
 
             name = arch.display_name or arch.id
-            draw_text(surface, name[:24], ir.x + 30, ir.y + 6,
+            draw_text(surface, name[:24],
+                      ir.x + _L.s(30), ir.y + _L.pad_md,
                       Theme.TEXT, font)
             subtitle = f"{arch.kind}"
             if arch.dev_notes:
                 subtitle += f"  \u2014 {arch.dev_notes[:30]}"
-            draw_text(surface, subtitle, ir.x + 30, ir.y + 22,
+            draw_text(surface, subtitle,
+                      ir.x + _L.s(30), ir.y + _L.field_h,
                       Theme.TEXT_DIM, font_sm)
 
     def handle_event(self, event) -> bool:
@@ -355,14 +377,15 @@ class PrefabPickerModal(_BaseModal):
 
             surf = pygame.display.get_surface()
             rect = self._centered_rect(surf, 380, 440)
-            tab_y = rect.y + 30
-            item_h = 40
-            list_y = tab_y + 28
+            tab_y = rect.y + _L.s(30)
+            item_h = _L.s(40)
+            list_y = tab_y + _L.item_h
 
             if self._tab == self.TAB_PREFABS:
                 for i, prefab in enumerate(self.prefabs):
                     iy = list_y + i * item_h - self.scroll
-                    ir = pygame.Rect(rect.x + 10, iy, rect.w - 20, item_h)
+                    ir = pygame.Rect(rect.x + _L.pad_lg, iy,
+                                     rect.w - 2 * _L.pad_lg, item_h)
                     if ir.collidepoint(event.pos):
                         self._place_prefab(prefab)
                         self.manager.close()
@@ -370,7 +393,8 @@ class PrefabPickerModal(_BaseModal):
             else:
                 for i, arch in enumerate(self._forge_archetypes):
                     iy = list_y + i * item_h - self.scroll
-                    ir = pygame.Rect(rect.x + 10, iy, rect.w - 20, item_h)
+                    ir = pygame.Rect(rect.x + _L.pad_lg, iy,
+                                     rect.w - 2 * _L.pad_lg, item_h)
                     if ir.collidepoint(event.pos):
                         self._place_forge_archetype(arch)
                         self.manager.close()
@@ -383,111 +407,22 @@ class PrefabPickerModal(_BaseModal):
         st = self.state
         defaults = get_prefab_defaults()
 
-        existing_ids = {e.get("id", "") for e in st.entities}
-        base = f"{prefab}_{len(st.entities)}"
-        uid = base
-        n = 0
-        while uid in existing_ids:
-            n += 1
-            uid = f"{base}_{n}"
-
-        pdef = defaults.get(prefab, {})
-        ent: dict[str, Any] = {
-            "id": uid,
-            "prefab": prefab,
-            "position": {"x": float(c) + 0.5, "y": float(r) + 0.5},
-        }
-        if "identity" in pdef:
-            ent["identity"] = dict(pdef["identity"])
-            ent["identity"]["name"] = f"{prefab.title()} ({uid})"
-        if "sprite" in pdef:
-            ent["sprite"] = dict(pdef["sprite"])
-        if "tile_entity" in pdef:
-            ent["tile_entity"] = dict(pdef["tile_entity"])
-            ent["tile_entity"]["tiles"] = [[r, c]]
-        if "collider" in pdef:
-            ent["collider"] = dict(pdef["collider"])
-        if "health" in pdef:
-            ent["health"] = dict(pdef["health"])
-        if "facing" in pdef:
-            ent["facing"] = dict(pdef["facing"])
-        if "inventory" in pdef:
-            import copy
-            ent["inventory"] = copy.deepcopy(pdef["inventory"])
-        if "dialogue" in pdef:
-            ent["dialogue"] = dict(pdef["dialogue"])
-        if "wall_sprite" in pdef:
-            ent["wall_sprite"] = dict(pdef["wall_sprite"])
-
+        ent = create_prefab_entity(prefab, defaults, r, c, st.entities)
         st.entities.append(ent)
         st.selected_entity = len(st.entities) - 1
         st.push_undo()
-        st.toast(f"Placed {prefab}: {uid}")
+        st.toast(f"Placed {prefab}: {ent.id}")
 
     def _place_forge_archetype(self, arch):
         """Place a Forge archetype entity."""
         r, c = self.place_at
         st = self.state
 
-        existing_ids = {e.get("id", "") for e in st.entities}
-        base = f"{arch.id}_{len(st.entities)}"
-        uid = base
-        n = 0
-        while uid in existing_ids:
-            n += 1
-            uid = f"{arch.id}_{n}"
-
-        ent: dict[str, Any] = {
-            "id": uid,
-            "forge_archetype": arch.id,
-            "position": {"x": float(c) + 0.5, "y": float(r) + 0.5},
-            "identity": {
-                "name": arch.display_name or arch.id.replace("_", " ").title(),
-                "kind": arch.kind,
-            },
-            "sprite": {
-                "char": arch.sprite_char if arch.kind == "billboard" else (
-                    "\u25A3" if arch.kind == "tile" else "\u25A1"),
-                "color": list(arch.sprite_color if arch.kind == "billboard"
-                              else arch.color),
-                "layer": 5,
-            },
-        }
-        if arch.dev_notes:
-            ent["dev_notes"] = arch.dev_notes
-        if arch.tags:
-            ent["tags"] = list(arch.tags)
-
-        # Kind-specific defaults
-        if arch.kind == "tile":
-            ent["tile_entity"] = {"tile_type": "container",
-                                  "tiles": [[r, c]]}
-            if arch.texture_key:
-                ent["wall_sprite"] = {
-                    "texture_key": arch.texture_key,
-                    "width": 1.0,
-                    "height": arch.ceiling_z - arch.floor_z,
-                    "elevation": arch.floor_z,
-                }
-        elif arch.kind == "box":
-            if arch.solid:
-                ent["collider"] = {"w": arch.width, "h": arch.depth,
-                                   "solid": True}
-            if arch.texture_key:
-                ent["wall_sprite"] = {
-                    "texture_key": arch.texture_key,
-                    "width": arch.width,
-                    "height": arch.height,
-                    "elevation": arch.z_offset,
-                }
-        elif arch.kind == "billboard":
-            if arch.solid:
-                ent["collider"] = {"w": 0.4, "h": 0.4, "solid": True}
-
+        ent = create_forge_entity(arch, r, c, st.entities)
         st.entities.append(ent)
         st.selected_entity = len(st.entities) - 1
         st.push_undo()
-        st.toast(f"Placed {arch.display_name or arch.id}: {uid}")
+        st.toast(f"Placed {arch.display_name or arch.id}: {ent.id}")
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -498,15 +433,8 @@ class AddComponentModal(_BaseModal):
     """Let user add a missing component to the selected entity."""
 
     COMPONENTS = [
-        ("collider", {"w": 0.6, "h": 0.6, "solid": True}),
-        ("health", {"current": 100, "maximum": 100}),
-        ("tile_entity", {"tile_type": "container"}),
-        ("wall_sprite", {"texture_key": "", "width": 1.0,
-                         "height": 1.0, "elevation": 0.0}),
-        ("inventory", {"items": {}}),
-        ("facing", {"direction": "down"}),
-        ("dialogue", {"bark": "..."}),
-        ("sprite", {"char": "?", "color": [200, 200, 200], "layer": 5}),
+        "collider", "health", "tile_entity", "wall_sprite",
+        "inventory", "facing", "dialogue", "sprite", "combat_stats",
     ]
 
     def __init__(self, manager: ModalManager):
@@ -514,29 +442,34 @@ class AddComponentModal(_BaseModal):
         # Filter to only missing components
         st = self.state
         ent = st.entities[st.selected_entity] if 0 <= st.selected_entity < len(st.entities) else None
-        self.available = []
+        self.available: list[str] = []
         if ent:
-            for key, default in self.COMPONENTS:
-                if key not in ent:
-                    self.available.append((key, default))
+            for comp_name in self.COMPONENTS:
+                if getattr(ent, comp_name, None) is None:
+                    self.available.append(comp_name)
 
     def draw(self, surface, font, font_sm, dt):
         super().draw(surface, font, font_sm, dt)
-        rect = self._centered_rect(surface, 300, 40 + len(self.available) * 30 + 30)
+        row = _L.s(30)
+        rect = self._centered_rect(surface, 300,
+                                    _L.s(40) + len(self.available) * row + row)
         self._draw_panel(surface, rect, "Add Component")
 
-        for i, (key, _) in enumerate(self.available):
-            iy = rect.y + 40 + i * 30
-            ir = pygame.Rect(rect.x + 10, iy, rect.w - 20, 26)
+        for i, comp_name in enumerate(self.available):
+            iy = rect.y + _L.s(40) + i * row
+            ir = pygame.Rect(rect.x + _L.pad_lg, iy,
+                             rect.w - 2 * _L.pad_lg, _L.btn_h)
             hov = ir.collidepoint(pygame.mouse.get_pos())
             bg = Theme.HIGHLIGHT if hov else Theme.PANEL
-            pygame.draw.rect(surface, bg, ir, border_radius=4)
-            draw_text(surface, key.replace("_", " ").title(),
-                      ir.x + 12, ir.y + 6, Theme.TEXT, font_sm)
+            pygame.draw.rect(surface, bg, ir, border_radius=_L.border_r)
+            draw_text(surface, comp_name.replace("_", " ").title(),
+                      ir.x + _L.pad_lg, ir.y + _L.pad_md,
+                      Theme.TEXT, font_sm)
 
         if not self.available:
             draw_text(surface, "All components present",
-                      rect.x + 16, rect.y + 44, Theme.TEXT_DIM, font_sm)
+                      rect.x + _L.s(16), rect.y + _L.s(44),
+                      Theme.TEXT_DIM, font_sm)
 
     def handle_event(self, event) -> bool:
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
@@ -544,17 +477,19 @@ class AddComponentModal(_BaseModal):
             return True
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             surf = pygame.display.get_surface()
+            row = _L.s(30)
             rect = self._centered_rect(surf, 300,
-                                       40 + len(self.available) * 30 + 30)
-            for i, (key, default) in enumerate(self.available):
-                iy = rect.y + 40 + i * 30
-                ir = pygame.Rect(rect.x + 10, iy, rect.w - 20, 26)
+                                       _L.s(40) + len(self.available) * row + row)
+            for i, comp_name in enumerate(self.available):
+                iy = rect.y + _L.s(40) + i * row
+                ir = pygame.Rect(rect.x + _L.pad_lg, iy,
+                                 rect.w - 2 * _L.pad_lg, _L.btn_h)
                 if ir.collidepoint(event.pos):
                     st = self.state
-                    import copy
-                    st.entities[st.selected_entity][key] = copy.deepcopy(default)
+                    ent = st.entities[st.selected_entity]
+                    ent.add_component(comp_name)
                     st.push_undo()
-                    st.toast(f"Added: {key}")
+                    st.toast(f"Added: {comp_name}")
                     self.manager.close()
                     return True
         return True
@@ -711,22 +646,24 @@ class PortalWizardModal(_BaseModal):
         draw_text(surface, "Select destination zone:",
                   rect.x + 16, rect.y + 40, Theme.TEXT, font_sm)
 
-        item_h = 36
-        list_y = rect.y + 64
+        item_h = _L.s(36)
+        list_y = rect.y + _L.s(64)
         mx, my = pygame.mouse.get_pos()
-        clip_bottom = rect.bottom - 40
+        clip_bottom = rect.bottom - _L.s(40)
 
         for i, z in enumerate(self.zone_list):
             iy = list_y + i * item_h - self.zone_scroll
             if iy + item_h < list_y or iy > clip_bottom:
                 continue
-            ir = pygame.Rect(rect.x + 10, iy, rect.w - 20, item_h - 3)
+            ir = pygame.Rect(rect.x + _L.pad_lg, iy,
+                             rect.w - 2 * _L.pad_lg, item_h - _L.pad_sm)
             is_hov = ir.collidepoint(mx, my)
             sel = (z == self.dest_zone)
             bg = (60, 40, 80) if sel else (Theme.HIGHLIGHT if is_hov else Theme.PANEL)
-            pygame.draw.rect(surface, bg, ir, border_radius=4)
+            pygame.draw.rect(surface, bg, ir, border_radius=_L.border_r)
             color = Theme.PORTAL if sel else Theme.TEXT
-            draw_text(surface, z, ir.x + 12, ir.y + 10, color, font)
+            draw_text(surface, z, ir.x + _L.pad_lg,
+                      ir.y + _L.pad_lg, color, font)
 
     def _draw_tile_step(self, surface, font, font_sm):
         sw, sh = surface.get_size()
@@ -878,11 +815,12 @@ class PortalWizardModal(_BaseModal):
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             surf = pygame.display.get_surface()
             rect = self._centered_rect(surf, 460, 420)
-            item_h = 36
-            list_y = rect.y + 64
+            item_h = _L.s(36)
+            list_y = rect.y + _L.s(64)
             for i, z in enumerate(self.zone_list):
                 iy = list_y + i * item_h - self.zone_scroll
-                ir = pygame.Rect(rect.x + 10, iy, rect.w - 20, item_h)
+                ir = pygame.Rect(rect.x + _L.pad_lg, iy,
+                                 rect.w - 2 * _L.pad_lg, item_h)
                 if ir.collidepoint(event.pos):
                     self.dest_zone = z
                     self._advance()
@@ -1038,7 +976,7 @@ class TileEditorModal(_BaseModal):
         if self._atlas and self._editing:
             try:
                 self._tex_preview = self._atlas.get(self._editing.id).copy()
-            except Exception:
+            except (KeyError, AttributeError, pygame.error):
                 self._tex_preview = None
         else:
             self._tex_preview = None

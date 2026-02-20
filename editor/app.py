@@ -29,7 +29,7 @@ from editor.canvas import Canvas
 from editor.panels import (
     MenuBar, TilePalette, ZonePanel, EntityPanel,
     TextureBrowserPanel, PortalPanel, RoomTemplatePanel,
-    Minimap, StatusBar, ZoneNav,
+    Minimap, StatusBar, ZoneNav, PanelSplitter,
 )
 from editor.inspector import Inspector
 from editor.modals import (
@@ -42,7 +42,13 @@ from editor.templates import TemplateEditor
 from editor.entity_forge import EntityForgeModal
 from editor.fp_preview import FPPreview
 from editor.layout import Layout
+from editor.entity_factory import create_forge_entity
 from systems.textures import TextureAtlas, browse_and_import
+
+# Valid panel mode identifiers
+_PANEL_MODES = frozenset(
+    {"tiles", "entities", "textures", "portals", "templates", "zones"}
+)
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -63,19 +69,24 @@ class EditorApp:
 
     def _init(self):
         pygame.init()
+
+        # Pick a comfortable starting size (80% of the display)
+        info = pygame.display.Info()
+        start_w = max(self.MIN_W, int(info.current_w * 0.80))
+        start_h = max(self.MIN_H, int(info.current_h * 0.80))
+
         self.screen = pygame.display.set_mode(
-            (self.MIN_W, self.MIN_H),
-            pygame.RESIZABLE | pygame.SCALED,
+            (start_w, start_h),
+            pygame.RESIZABLE,
         )
         pygame.display.set_caption(self.TITLE)
         self.clock = pygame.time.Clock()
 
-        # Fonts
-        self.font = pygame.font.SysFont("monospace", 16)
-        self.font_sm = pygame.font.SysFont("monospace", 12)
+        # Initial layout compute (sets Layout.scale)
+        Layout.update(start_w, start_h)
 
-        # Initial layout compute
-        Layout.update(self.MIN_W, self.MIN_H)
+        # Fonts — built from scale factor
+        self._build_fonts()
 
         # Shared context
         self.ctx = UIContext()
@@ -100,6 +111,17 @@ class EditorApp:
         self.template_editor = TemplateEditor(self.state, self.ctx)
         self.forge = EntityForgeModal(self.ctx, self.state)
         self.fp_preview = FPPreview()
+        self.splitter = PanelSplitter()
+
+        # Table-driven left panel lookup (panel_mode → widget)
+        self._panel_widgets: dict[str, object] = {
+            "tiles":     self.palette,
+            "zones":     self.zone_panel,
+            "entities":  self.entity_panel,
+            "textures":  self.texture_panel,
+            "portals":   self.portal_panel,
+            "templates": self.template_panel,
+        }
 
         # Load initial zone (or create blank)
         if self._initial_zone:
@@ -136,6 +158,13 @@ class EditorApp:
         self.state.load_zone(name)
         self.inspector.force_rebuild()
 
+    def _build_fonts(self):
+        """(Re)create fonts at sizes appropriate for the current scale."""
+        s = Layout.scale
+        self.font = pygame.font.SysFont("monospace", max(12, round(16 * s)))
+        self.font_sm = pygame.font.SysFont("monospace", max(10, round(12 * s)))
+        Layout._fonts_dirty = False
+
     # ── Main loop ───────────────────────────────────────────────
 
     def run(self):
@@ -154,6 +183,12 @@ class EditorApp:
     # ── Events ──────────────────────────────────────────────────
 
     def _handle_events(self):
+        # Ensure layout is up-to-date before processing events
+        # (handles the frame where a window resize occurs)
+        Layout.update(*self.screen.get_size())
+        if Layout._fonts_dirty:
+            self._build_fonts()
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self._running = False
@@ -200,58 +235,19 @@ class EditorApp:
                 self._do_load_zone(nav_action[4:])
                 continue
 
+            # Panel splitter drag handles (before palette/inspector)
+            if self.splitter.handle_event(event):
+                continue
+
             # FP fullscreen consumes ALL events (before palette/inspector)
             if self.fp_preview.active and self.fp_preview.fullscreen:
                 if self.fp_preview.handle_event(event, self.state):
                     continue
 
-            # Left panel (tiles or zones)
-            if self.menu_bar.panel_mode == "tiles":
-                pal_result = self.palette.handle_event(event, self.screen)
-                if pal_result == "add_tile":
-                    self.modals.open(TileEditorModal(
-                        self.modals, atlas=self.atlas))
-                    continue
-                elif pal_result and pal_result.startswith("edit_tile:"):
-                    from core.tiles import TILE_REGISTRY
-                    tid = pal_result.split(":", 1)[1]
-                    td = TILE_REGISTRY.get(tid)
-                    if td:
-                        self.modals.open(TileEditorModal(
-                            self.modals, edit_tile=td, atlas=self.atlas))
-                    continue
-                elif pal_result:
-                    continue
-            elif self.menu_bar.panel_mode == "zones":
-                zone_action = self.zone_panel.handle_event(
-                    event, self.screen)
-                if zone_action and zone_action.startswith("load:"):
-                    self._do_load_zone(zone_action[5:])
-                    continue
-            elif self.menu_bar.panel_mode == "entities":
-                ent_action = self.entity_panel.handle_event(
-                    event, self.screen)
-                if ent_action:
-                    self._dispatch_action(ent_action)
-                    continue
-            elif self.menu_bar.panel_mode == "textures":
-                tex_action = self.texture_panel.handle_event(
-                    event, self.screen)
-                if tex_action:
-                    self._dispatch_action(tex_action)
-                    continue
-            elif self.menu_bar.panel_mode == "portals":
-                port_action = self.portal_panel.handle_event(
-                    event, self.screen)
-                if port_action:
-                    self._dispatch_action(port_action)
-                    continue
-            elif self.menu_bar.panel_mode == "templates":
-                tmpl_action = self.template_panel.handle_event(
-                    event, self.screen)
-                if tmpl_action:
-                    self._dispatch_action(tmpl_action)
-                    continue
+            # Left panel — dispatch via _panel_handlers table
+            panel_result = self._handle_left_panel_event(event)
+            if panel_result is not None:
+                continue
 
             # Inspector
             insp_action = self.inspector.handle_event(event, self.screen)
@@ -265,6 +261,51 @@ class EditorApp:
                 if self.fp_preview.handle_event(event, self.state):
                     continue
             self._handle_canvas_event(event)
+
+    # ── Left-panel event routing ────────────────────────────────
+
+    def _handle_left_panel_event(self, event: pygame.event.Event) -> str | None:
+        """Dispatch event to the active left panel and handle its result.
+
+        Returns the result string (truthy) if the event was consumed,
+        or *None* when the panel didn't handle the event.
+        """
+        widget = self._panel_widgets.get(self.menu_bar.panel_mode)
+        if widget is None:
+            return None
+
+        result = widget.handle_event(event, self.screen)
+        if result is None:
+            return None
+
+        # "consumed" means the widget ate the event but there's no action
+        if result == "consumed":
+            return result
+
+        # Tile-palette specials (not in the generic dispatch tables)
+        if result == "add_tile":
+            self.modals.open(
+                TileEditorModal(self.modals, atlas=self.atlas))
+            return result
+
+        if result.startswith("edit_tile:"):
+            tile_id = result.split(":", 1)[1]
+            from core.tiles import TILE_REGISTRY
+            td = TILE_REGISTRY.get(tile_id)
+            if td is not None:
+                self.modals.open(
+                    TileEditorModal(self.modals, edit_tile=td,
+                                    atlas=self.atlas))
+            return result
+
+        # Zone-panel special: load a zone directly
+        if result.startswith("load:"):
+            self._do_load_zone(result.split(":", 1)[1])
+            return result
+
+        # Everything else → generic dispatch
+        self._dispatch_action(result)
+        return result
 
     def _handle_shortcut(self, event: pygame.event.Event) -> bool:
         """Global keyboard shortcuts.  Returns True if handled."""
@@ -320,123 +361,184 @@ class EditorApp:
         return False
 
     def _dispatch_action(self, action: str):
-        """Route any action string from menus, inspector, or modals."""
-        st = self.state
+        """Route any action string from menus, inspector, or modals.
 
-        if action == "save":
-            st.save_zone()
-        elif action == "quit":
-            self._running = False
-        elif action == "undo":
-            self._do_undo()
-        elif action == "redo":
-            self._do_redo()
-        elif action == "delete_entity":
-            self._do_delete_entity()
-        elif action == "load":
-            self.modals.open(ZonePickerModal(self.modals))
-        elif action == "new":
-            def _on_name(name: str):
-                st.new_zone(name, 30, 20)
-                self.inspector.force_rebuild()
-            self.modals.open(
-                TextInputModal(self.modals, "New zone name:",
-                               "untitled", _on_name))
-        elif action == "loot":
-            self.loot_editor.open()
-        elif action == "templates":
-            self.template_editor.open()
-        elif action == "forge":
-            self.forge.open()
-        elif action == "export_mpz":
-            self._export_current_mpz()
-        elif action == "export_all_mpz":
-            self._export_all_mpz()
-        elif action == "import_texture":
-            dest = browse_and_import()
-            if dest:
-                # Invalidate any cached tile that uses this texture key
-                from core.tiles import TILE_REGISTRY as _reg
-                key = dest.stem
-                for td in _reg.values():
-                    tk = td.texture_key or td.id
-                    if tk == key:
-                        self.atlas.invalidate(td.id)
-                st.toast(f"Imported texture: {dest.name}")
-            # else: user cancelled — no-op
-        elif action == "add_component":
-            if 0 <= st.selected_entity < len(st.entities):
-                self.modals.open(AddComponentModal(self.modals))
-        elif action.startswith("select_entity:"):
-            idx = int(action.split(":")[1])
-            st.selected_entity = idx
-            st.tool = Tool.ENTITY
+        Uses a dispatch table for exact-match actions and a prefix
+        table for parameterised ``prefix:value`` actions so new
+        actions can be added in one place.
+        """
+        # ── exact-match table ───────────────────────────────────
+        handler = self._ACTION_TABLE.get(action)
+        if handler is not None:
+            handler(self)
+            return
+
+        # ── prefix:value actions ────────────────────────────────
+        if ":" in action:
+            prefix, value = action.split(":", 1)
+            prefix_handler = self._PREFIX_TABLE.get(prefix)
+            if prefix_handler is not None:
+                prefix_handler(self, value)
+
+    # ── Action handlers (exact match) ───────────────────────────
+
+    def _act_save(self):
+        self.state.save_zone()
+
+    def _act_quit(self):
+        self._running = False
+
+    def _act_load(self):
+        self.modals.open(ZonePickerModal(self.modals))
+
+    def _act_new(self):
+        def _on_name(name: str):
+            self.state.new_zone(name, 30, 20)
             self.inspector.force_rebuild()
-        # View menu actions
-        elif action == "toggle_grid":
-            st.show_grid = not st.show_grid
-        elif action == "toggle_minimap":
-            st.show_minimap = not st.show_minimap
-        elif action == "fp_preview":
-            self._do_fp_preview()
-        elif action == "fp_edit":
-            self._do_fp_edit()
-        elif action == "brush_inc":
-            st.brush_size = min(9, st.brush_size + 1)
-        elif action == "brush_dec":
-            st.brush_size = max(1, st.brush_size - 1)
-        elif action == "panel:tiles":
+        self.modals.open(
+            TextInputModal(self.modals, "New zone name:",
+                           "untitled", _on_name))
+
+    def _act_loot(self):
+        self.loot_editor.open()
+
+    def _act_templates(self):
+        self.template_editor.open()
+
+    def _act_forge(self):
+        self.forge.open()
+
+    def _act_export_mpz(self):
+        self._export_current_mpz()
+
+    def _act_export_all_mpz(self):
+        self._export_all_mpz()
+
+    def _act_import_texture(self):
+        dest = browse_and_import()
+        if dest:
+            from core.tiles import TILE_REGISTRY as _reg
+            key = dest.stem
+            for td in _reg.values():
+                tk = td.texture_key or td.id
+                if tk == key:
+                    self.atlas.invalidate(td.id)
+            self.state.toast(f"Imported texture: {dest.name}")
+
+    def _act_add_component(self):
+        st = self.state
+        if 0 <= st.selected_entity < len(st.entities):
+            self.modals.open(AddComponentModal(self.modals))
+
+    def _act_toggle_grid(self):
+        self.state.show_grid = not self.state.show_grid
+
+    def _act_toggle_minimap(self):
+        self.state.show_minimap = not self.state.show_minimap
+
+    def _act_fp_preview(self):
+        self._do_fp_preview()
+
+    def _act_fp_edit(self):
+        self._do_fp_edit()
+
+    def _act_brush_inc(self):
+        self.state.brush_size = min(9, self.state.brush_size + 1)
+
+    def _act_brush_dec(self):
+        self.state.brush_size = max(1, self.state.brush_size - 1)
+
+    _ACTION_TABLE: dict[str, callable] = {
+        "save":            _act_save,
+        "quit":            _act_quit,
+        "undo":            lambda self: self._do_undo(),
+        "redo":            lambda self: self._do_redo(),
+        "delete_entity":   lambda self: self._do_delete_entity(),
+        "load":            _act_load,
+        "new":             _act_new,
+        "loot":            _act_loot,
+        "templates":       _act_templates,
+        "forge":           _act_forge,
+        "export_mpz":      _act_export_mpz,
+        "export_all_mpz":  _act_export_all_mpz,
+        "import_texture":  _act_import_texture,
+        "add_component":   _act_add_component,
+        "toggle_grid":     _act_toggle_grid,
+        "toggle_minimap":  _act_toggle_minimap,
+        "fp_preview":      _act_fp_preview,
+        "fp_edit":         _act_fp_edit,
+        "brush_inc":       _act_brush_inc,
+        "brush_dec":       _act_brush_dec,
+    }
+
+    # ── Action handlers (prefix:value) ──────────────────────────
+
+    def _pfx_select_entity(self, value: str):
+        try:
+            idx = int(value)
+        except ValueError:
+            return
+        self.state.selected_entity = idx
+        self.state.tool = Tool.ENTITY
+        self.inspector.force_rebuild()
+
+    def _pfx_panel(self, mode: str):
+        if mode in _PANEL_MODES:
+            self.menu_bar.panel_mode = mode
+
+    def _pfx_copy_tex(self, key: str):
+        self.state.toast(f"Texture key: {key}")
+
+    def _pfx_select_portal(self, value: str):
+        try:
+            idx = int(value)
+        except ValueError:
+            return
+        st = self.state
+        if 0 <= idx < len(st.portals):
+            tiles = st.portals[idx].get("tiles", [])
+            if tiles and len(tiles[0]) >= 2:
+                r, c = tiles[0][0], tiles[0][1]
+                st.hover_tile = (r, c)
+            dest = st.portals[idx].get("target_zone",
+                                       st.portals[idx].get("dest_zone", "?"))
+            st.toast(f"Portal #{idx} → {dest}")
+
+    def _pfx_select_template(self, fname: str):
+        self.state.toast(f"Template: {fname} (stamp placement TBD)")
+
+    def _pfx_select_prefab(self, name: str):
+        self.state.pending_prefab = name
+        self.state.tool = Tool.ENTITY
+        self.state.toast(f"Prefab: {name} — click canvas to place")
+
+    def _pfx_select_forge(self, fid: str):
+        self.state.pending_prefab = f"forge:{fid}"
+        self.state.tool = Tool.ENTITY
+        self.state.toast(f"Forge: {fid} — click canvas to place")
+
+    def _pfx_tool(self, tool_name: str):
+        st = self.state
+        if hasattr(Tool, tool_name.upper()):
+            st.tool = getattr(Tool, tool_name.upper())
+        else:
+            st.tool = tool_name
+        # Auto-switch left panel to match tool
+        if st.tool in (Tool.BRUSH, Tool.FILL, Tool.ERASER):
             self.menu_bar.panel_mode = "tiles"
-        elif action == "panel:zones":
-            self.menu_bar.panel_mode = "zones"
-        elif action == "panel:entities":
+        elif st.tool == Tool.ENTITY:
             self.menu_bar.panel_mode = "entities"
-        elif action == "panel:textures":
-            self.menu_bar.panel_mode = "textures"
-        elif action == "panel:portals":
-            self.menu_bar.panel_mode = "portals"
-        elif action == "panel:templates":
-            self.menu_bar.panel_mode = "templates"
-        # Texture browser
-        elif action.startswith("copy_tex:"):
-            key = action.split(":", 1)[1]
-            st.toast(f"Texture key: {key}")
-        # Portal selection
-        elif action.startswith("select_portal:"):
-            idx = int(action.split(":", 1)[1])
-            if 0 <= idx < len(st.portals):
-                tiles = st.portals[idx].get("tiles", [])
-                if tiles:
-                    r, c = tiles[0]
-                    st.hover_tile = (r, c)
-                st.toast(f"Portal #{idx} → {st.portals[idx].get('dest_zone', '?')}")
-        # Template selection
-        elif action.startswith("select_template:"):
-            fname = action.split(":", 1)[1]
-            st.toast(f"Template: {fname} (stamp placement TBD)")
-        # Entity preset selection
-        elif action.startswith("select_prefab:"):
-            name = action.split(":", 1)[1]
-            st.pending_prefab = name
-            st.tool = Tool.ENTITY
-            st.toast(f"Prefab: {name} — click canvas to place")
-        elif action.startswith("select_forge:"):
-            fid = action.split(":", 1)[1]
-            st.pending_prefab = f"forge:{fid}"
-            st.tool = Tool.ENTITY
-            st.toast(f"Forge: {fid} — click canvas to place")
-        # Tool actions
-        elif action.startswith("tool:"):
-            tool_name = action.split(":", 1)[1]
-            try:
-                st.tool = Tool(tool_name)
-            except ValueError:
-                pass
-            # Auto-switch left panel to match tool
-            if st.tool in (Tool.BRUSH, Tool.FILL, Tool.ERASER):
-                self.menu_bar.panel_mode = "tiles"
-            elif st.tool == Tool.ENTITY:
-                self.menu_bar.panel_mode = "entities"
+
+    _PREFIX_TABLE: dict[str, callable] = {
+        "select_entity":   _pfx_select_entity,
+        "panel":           _pfx_panel,
+        "copy_tex":        _pfx_copy_tex,
+        "select_portal":   _pfx_select_portal,
+        "select_template": _pfx_select_template,
+        "select_prefab":   _pfx_select_prefab,
+        "select_forge":    _pfx_select_forge,
+        "tool":            _pfx_tool,
+    }
 
     # ── FP Preview / Edit helpers ───────────────────────────────
 
@@ -486,9 +588,8 @@ class EditorApp:
                 if 0 <= idx < len(st.entities):
                     r, c = st.hover_tile
                     ent = st.entities[idx]
-                    pos = ent.setdefault("position", {})
-                    pos["x"] = float(c) + 0.5
-                    pos["y"] = float(r) + 0.5
+                    ent.position.x = float(c) + 0.5
+                    ent.position.y = float(r) + 0.5
                     st.dirty = True
 
             # Paint while dragging
@@ -639,61 +740,7 @@ class EditorApp:
             return
 
         st = self.state
-        existing_ids = {e.get("id", "") for e in st.entities}
-        base = f"{arch.id}_{len(st.entities)}"
-        uid = base
-        n = 0
-        while uid in existing_ids:
-            n += 1
-            uid = f"{arch.id}_{n}"
-
-        ent: dict = {
-            "id": uid,
-            "forge_archetype": arch.id,
-            "position": {"x": float(col) + 0.5, "y": float(row) + 0.5},
-            "identity": {
-                "name": arch.display_name or arch.id.replace("_", " ").title(),
-                "kind": arch.kind,
-            },
-            "sprite": {
-                "char": arch.sprite_char if arch.kind == "billboard" else (
-                    "\u25A3" if arch.kind == "tile" else "\u25A1"),
-                "color": list(arch.sprite_color if arch.kind == "billboard"
-                              else arch.color),
-                "layer": 5,
-            },
-        }
-        if arch.dev_notes:
-            ent["dev_notes"] = arch.dev_notes
-        if arch.tags:
-            ent["tags"] = list(arch.tags)
-
-        # Kind-specific components
-        if arch.kind == "tile":
-            ent["tile_entity"] = {"tile_type": "container",
-                                  "tiles": [[row, col]]}
-            if arch.texture_key:
-                ent["wall_sprite"] = {
-                    "texture_key": arch.texture_key,
-                    "width": 1.0,
-                    "height": arch.ceiling_z - arch.floor_z,
-                    "elevation": arch.floor_z,
-                }
-        elif arch.kind == "box":
-            if arch.solid:
-                ent["collider"] = {"w": arch.width, "h": arch.depth,
-                                   "solid": True}
-            if arch.texture_key:
-                ent["wall_sprite"] = {
-                    "texture_key": arch.texture_key,
-                    "width": arch.width,
-                    "height": arch.height,
-                    "elevation": arch.z_offset,
-                }
-        elif arch.kind == "billboard":
-            if arch.solid:
-                ent["collider"] = {"w": 0.4, "h": 0.4, "solid": True}
-
+        ent = create_forge_entity(arch, row, col, st.entities)
         st.entities.append(ent)
         st.selected_entity = len(st.entities) - 1
         st.push_undo()
@@ -732,11 +779,23 @@ class EditorApp:
         # Update FP preview camera movement
         if self.fp_preview.active:
             self.fp_preview.update(dt, st.tiles, st.map_w, st.map_h)
+        # Cursor: resize arrow when hovering a splitter
+        cur = self.splitter.cursor()
+        if cur is not None:
+            pygame.mouse.set_cursor(cur)
+        else:
+            pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_ARROW)
 
     # ── Draw ────────────────────────────────────────────────────
 
     def _draw(self, dt: float):
         screen = self.screen
+
+        # Recompute responsive layout for current window size
+        # (must be before anything else, including overlay early-returns)
+        Layout.update(*screen.get_size())
+        if Layout._fonts_dirty:
+            self._build_fonts()
 
         # Full-screen overlays
         if self.forge.active:
@@ -749,9 +808,6 @@ class EditorApp:
             self.template_editor.draw(screen, self.font, self.font_sm, dt)
             return
 
-        # Recompute responsive layout for current window size
-        Layout.update(*screen.get_size())
-
         screen.fill(Theme.BG)
 
         # Canvas (map)
@@ -761,18 +817,9 @@ class EditorApp:
         self.zone_nav.draw(screen, self.font_sm)
 
         # Left panel (content depends on menu bar mode)
-        if self.menu_bar.panel_mode == "tiles":
-            self.palette.draw(screen, self.font, self.font_sm)
-        elif self.menu_bar.panel_mode == "zones":
-            self.zone_panel.draw(screen, self.font, self.font_sm)
-        elif self.menu_bar.panel_mode == "entities":
-            self.entity_panel.draw(screen, self.font, self.font_sm)
-        elif self.menu_bar.panel_mode == "textures":
-            self.texture_panel.draw(screen, self.font, self.font_sm)
-        elif self.menu_bar.panel_mode == "portals":
-            self.portal_panel.draw(screen, self.font, self.font_sm)
-        elif self.menu_bar.panel_mode == "templates":
-            self.template_panel.draw(screen, self.font, self.font_sm)
+        panel_widget = self._panel_widgets.get(self.menu_bar.panel_mode)
+        if panel_widget is not None:
+            panel_widget.draw(screen, self.font, self.font_sm)
 
         self.minimap.draw(screen, self.font_sm)
         self.status.draw(screen, self.font_sm)
@@ -803,7 +850,11 @@ class EditorApp:
             self.fp_preview.draw(
                 screen, self.state.tiles,
                 self.state.map_w, self.state.map_h, fp_rect,
-                selected_tile=self.state.selected_tile)
+                selected_tile=self.state.selected_tile,
+                entities=self.state.entities)
+
+        # Panel splitter handles (drawn over panel borders)
+        self.splitter.draw(screen)
 
         # Menu bar drawn last so dropdowns overlap everything
         self.menu_bar.draw(screen, self.font, self.font_sm)

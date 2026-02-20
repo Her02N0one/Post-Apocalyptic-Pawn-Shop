@@ -18,7 +18,7 @@ import pygame
 
 from systems.raycaster import cast_walls
 from systems.textures import TEX_SIZE
-from core.tiles import tile_def as _tile_def
+from core.tiles import tile_def as _tile_def, tile_str_to_int, tile_int_to_str
 
 if TYPE_CHECKING:
     from scenes.world.fp_renderer import Renderer
@@ -174,7 +174,13 @@ def draw_walls(
         # Bulk-compute geometry in C — eliminates ~120 iterations
         # of Python-level float math + bitwise cache-key packing.
         _fog_bytes = bytes(fog_lut)
-        geom = _c_geom(slices, sh, half, _TEX, _fog_bytes, _step, sw)
+        # C ext needs int tile_ids — convert at the boundary
+        _s2i = tile_str_to_int
+        c_slices = [
+            (ws[0], ws[1], ws[2], _s2i(ws[3]), ws[4], ws[5], ws[6])
+            for ws in slices
+        ]
+        geom = _c_geom(c_slices, sh, half, _TEX, _fog_bytes, _step, sw)
 
         for gi, g in enumerate(geom):
             ws_sx     = g[0]
@@ -189,7 +195,7 @@ def draw_walls(
             fog       = g[9]
             tx_s      = g[10]
             cache_key = g[11]
-            tid       = g[12]
+            tid       = tile_int_to_str(g[12])  # int→str at boundary
             ws_side   = g[13]
             hs        = g[14]
             is_full   = g[15]
@@ -266,6 +272,7 @@ def draw_walls(
             ws_side = ws[_WS_SIDE]
 
             tid = ws[_WS_TID]
+            tid_int = tile_str_to_int(tid)
             tx = int(ws[_WS_TEX_X] * _TEX) & _TEX_M1
 
             full_half_h = ws_h * 0.5
@@ -305,7 +312,7 @@ def draw_walls(
             draw_h_q = max(8, (draw_h + 4) & ~7)
             tx_s = tx & ~3
             fog_q = fog >> 6
-            cache_key = (tid | (tx_s << 10) | ((tv1 - tv0) << 16) |
+            cache_key = (tid_int | (tx_s << 10) | ((tv1 - tv0) << 16) |
                          (draw_h_q << 23) | (col_w << 33) |
                          (ws_side << 37) | (fog_q << 38))
 

@@ -28,6 +28,7 @@ from editor.ui import (
 )
 from editor.forge_registry import ForgeArchetype, ForgeRegistry
 from editor.state import EditorState
+from editor.layout import Layout
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -609,7 +610,8 @@ class EntityForgeModal:
 
         elif kind == "billboard":
             # Draw sprite char large
-            big_font = pygame.font.SysFont("monospace", 36)
+            big_font = pygame.font.SysFont(
+                "monospace", max(24, round(36 * Layout.scale)))
             glyph = big_font.render(arch.sprite_char, True,
                                     arch.sprite_color)
             surface.blit(glyph, (cx - glyph.get_width() // 2,
@@ -707,7 +709,8 @@ class EntityForgeModal:
         top = 38
         fy = top + 4
         fx = 4
-        font_sm = pygame.font.SysFont("monospace", 12)
+        font_sm = pygame.font.SysFont(
+            "monospace", max(10, round(12 * Layout.scale)))
         filters = ["All", "tile", "box", "billboard"]
         for label in filters:
             tw = font_sm.size(label)[0] + 10
