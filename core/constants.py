@@ -79,27 +79,27 @@ from core.tiles import (                          # noqa: E402
 )
 
 # Legacy scalar aliases (prefer ``tile_def(id)`` for new code)
-TILE_VOID       = 0
-TILE_GRASS      = 1
-TILE_DIRT       = 2
-TILE_STONE      = 3
-TILE_WATER      = 4
-TILE_WOOD_FLOOR = 5
-TILE_WALL       = 6
-TILE_SAND       = 7
-TILE_RUBBLE     = 8
-TILE_DOOR       = 9   # was TILE_TELEPORTER
-TILE_WINDOW     = 10
-TILE_FARMLAND   = 11
-TILE_GATEWAY    = 12
-TILE_CONCRETE   = 13
-TILE_TILE_FLOOR = 14
-TILE_METAL_WALL = 15
-TILE_HALF_WALL  = 16
-TILE_LOW_WALL   = 17
-TILE_PILLAR     = 18
-TILE_COUNTER_TOP = 19
-TILE_RAILING    = 20
+TILE_VOID       = "void"
+TILE_GRASS      = "grass"
+TILE_DIRT       = "dirt"
+TILE_STONE      = "stone"
+TILE_WATER      = "water"
+TILE_WOOD_FLOOR = "wood_floor"
+TILE_WALL       = "wall"
+TILE_SAND       = "sand"
+TILE_RUBBLE     = "rubble"
+TILE_DOOR       = "door"   # was TILE_TELEPORTER
+TILE_WINDOW     = "window"
+TILE_FARMLAND   = "farmland"
+TILE_GATEWAY    = "gateway"
+TILE_CONCRETE   = "concrete"
+TILE_TILE_FLOOR = "tile_floor"
+TILE_METAL_WALL = "metal_wall"
+TILE_HALF_WALL  = "half_wall"
+TILE_LOW_WALL   = "low_wall"
+TILE_PILLAR     = "pillar"
+TILE_COUNTER_TOP = "counter_top"
+TILE_RAILING    = "railing"
 
 # Backward-compat alias
 TILE_TELEPORTER = TILE_DOOR

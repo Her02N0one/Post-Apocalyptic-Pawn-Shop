@@ -31,7 +31,7 @@ def resolve_coarse_combat(
     world: "World",
     eid_a: int, cp_a: CoarsePos,
     eid_b: int, cp_b: CoarsePos,
-    tiles: list[list[int]],
+    tiles: list[list[str]],
 ) -> None:
     """Resolve one round of combat between two visible entities.
 

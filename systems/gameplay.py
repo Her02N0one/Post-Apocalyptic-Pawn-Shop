@@ -276,7 +276,7 @@ def get_platform_entity(
     world: "World",
     col: int,
     row: int,
-    tid: int,
+    tid: str,
     zone: str,
 ) -> int:
     """Find or create an ECS entity for a platform tile at (col, row)."""
@@ -300,7 +300,7 @@ def get_platform_entity(
 
 def try_platform_interact_td(
     world: "World",
-    tiles: list[list[int]],
+    tiles: list[list[str]],
     modals: "ModalStack",
     registry: ItemRegistry,
     zone: str,
@@ -335,7 +335,7 @@ def try_platform_interact_td(
 
 def try_platform_interact_fp(
     world: "World",
-    tiles: list[list[int]],
+    tiles: list[list[str]],
     player_angle: float,
     modals: "ModalStack",
     registry: ItemRegistry,

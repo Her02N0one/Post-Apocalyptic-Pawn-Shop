@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import pygame
 
-from core.tiles import TILE_COLORS, TILE_NAMES
+from core.tiles import (
+    TILE_COLORS, TILE_NAMES, TILE_REGISTRY,
+    tiles_by_type, TileDef, TF, TileType,
+)
 from editor.ui import Theme, draw_text, UIContext
 from editor.state import EditorState, Tool, list_zones
 from editor.layout import Layout
@@ -44,12 +47,18 @@ _MENU_DEFS: list[tuple[str, list[tuple[str, str, str | None]]]] = [
     ("View", [
         ("Toggle Grid",         "G",   "toggle_grid"),
         ("Toggle Minimap",      "M",   "toggle_minimap"),
-        ("First Person",        "F",   "toggle_fp"),
+        _SEP,
+        ("FP Preview",          "P",   "fp_preview"),
+        ("FP Edit Mode",        "F",   "fp_edit"),
         _SEP,
         ("Brush Size +",        "]",   "brush_inc"),
         ("Brush Size -",        "[",   "brush_dec"),
         _SEP,
         ("Tile Palette",        "",    "panel:tiles"),
+        ("Entity Presets",       "",    "panel:entities"),
+        ("Texture Browser",     "",    "panel:textures"),
+        ("Portals",             "",    "panel:portals"),
+        ("Room Templates",      "",    "panel:templates"),
         ("Zone List",           "",    "panel:zones"),
     ]),
     ("Tools", [
@@ -64,6 +73,14 @@ _MENU_DEFS: list[tuple[str, list[tuple[str, str, str | None]]]] = [
     ("Editors", [
         ("Room Templates",       "", "templates"),
         ("Loot Tables",          "", "loot"),
+        _SEP,
+        ("Entity Forge",         "", "forge"),
+    ]),
+    ("Export", [
+        ("Import Texture...",    "", "import_texture"),
+        _SEP,
+        ("Export .mpz (bin)",    "", "export_mpz"),
+        ("Export All .mpz",     "", "export_all_mpz"),
     ]),
 ]
 
@@ -82,7 +99,7 @@ class MenuBar:
     def __init__(self, state: EditorState, ctx: UIContext):
         self.state = state
         self.ctx = ctx
-        self.panel_mode = "tiles"       # "tiles" | "zones"
+        self.panel_mode = "tiles"       # "tiles"|"entities"|"textures"|"portals"|"templates"|"zones"
 
         self._open_menu: int | None = None    # index into _MENU_DEFS
         self._hover_item: int = -1            # hovered dropdown row
@@ -190,11 +207,17 @@ class MenuBar:
                 prefix = "\u2713 "
             elif action == "toggle_minimap" and self.state.show_minimap:
                 prefix = "\u2713 "
-            elif action == "toggle_fp" and self.state.first_person:
-                prefix = "\u2713 "
             elif action == "panel:tiles" and self.panel_mode == "tiles":
                 prefix = "\u2022 "
             elif action == "panel:zones" and self.panel_mode == "zones":
+                prefix = "\u2022 "
+            elif action == "panel:entities" and self.panel_mode == "entities":
+                prefix = "\u2022 "
+            elif action == "panel:textures" and self.panel_mode == "textures":
+                prefix = "\u2022 "
+            elif action == "panel:portals" and self.panel_mode == "portals":
+                prefix = "\u2022 "
+            elif action == "panel:templates" and self.panel_mode == "templates":
                 prefix = "\u2022 "
             elif action.startswith("tool:"):
                 tool_name = action.split(":")[1]
@@ -309,11 +332,6 @@ class MenuBar:
             return None
         if action == "toggle_minimap":
             st.show_minimap = not st.show_minimap
-            return None
-        if action == "toggle_fp":
-            st.first_person = not st.first_person
-            st.dirty = True
-            st.toast(f"First Person: {'ON' if st.first_person else 'OFF'}")
             return None
         if action == "brush_inc":
             st.brush_size = min(9, st.brush_size + 1)
@@ -438,12 +456,80 @@ class ZoneNav:
 # ═════════════════════════════════════════════════════════════════════
 
 class TilePalette:
-    def __init__(self, state: EditorState):
+    """Left-side tile palette with grid-of-swatches layout grouped by
+    :class:`TileType`.  Each type section is collapsible.  Tiles are
+    displayed as thumbnail squares so more tiles are visible at once.
+    """
+
+    HEADER_H = 22         # type-group header row height
+    SWATCH   = 32         # swatch square size (px)
+    GAP      = 3          # gap between swatches
+    FILTER_H = 22         # search filter bar height
+    BTN_H    = 24         # bottom "Add Tile" button height
+    ICON_COLLAPSED = "▸"
+    ICON_EXPANDED  = "▾"
+
+    # Accent tints per TileType for the header bar
+    _TYPE_TINTS: dict[TileType, tuple[int, int, int]] = {
+        TileType.FLOOR:     (60, 90, 50),
+        TileType.WALL:      (90, 90, 100),
+        TileType.HALF_WALL: (110, 100, 80),
+        TileType.PLATFORM:  (120, 100, 60),
+        TileType.DOOR:      (140, 80, 50),
+        TileType.LIQUID:    (40, 70, 120),
+    }
+
+    def __init__(self, state: EditorState, ctx: UIContext,
+                 atlas=None):
         self.state = state
+        self.ctx = ctx
+        self.atlas = atlas
         self.scroll_y: float = 0.0
+        self._filter: str = ""
+        self._collapsed: set[str] = set()  # collapsed type names
+        self._add_tile_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
+        self._filter_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
+        self._filter_active: bool = False
+        self._cache_size: int = 0
+        self._type_groups: dict[TileType, list[TileDef]] = {}
+        self._tex_cache: dict[str, pygame.Surface] = {}
+        self._refresh_groups()
+
+    # ── helpers ──────────────────────────────────────────────────
+
+    def _refresh_groups(self):
+        self._type_groups = tiles_by_type()
+        self._cache_size = len(TILE_REGISTRY)
+        self._tex_cache.clear()
+
+    def _get_thumb(self, tile_id: str, size: int = 0) -> pygame.Surface | None:
+        sz = size or self.SWATCH
+        key = f"{tile_id}_{sz}"
+        if key not in self._tex_cache:
+            if self.atlas is None:
+                return None
+            try:
+                full = self.atlas.get(tile_id)
+                self._tex_cache[key] = pygame.transform.scale(full, (sz, sz))
+            except Exception:
+                return None
+        return self._tex_cache.get(key)
+
+    def _filtered_tiles(self, tiles: list[TileDef]) -> list[TileDef]:
+        if not self._filter:
+            return tiles
+        q = self._filter.lower()
+        return [t for t in tiles
+                if q in t.name.lower() or q in t.id
+                or (t.texture_key and q in t.texture_key.lower())]
+
+    # ── drawing ──────────────────────────────────────────────────
 
     def draw(self, surface: pygame.Surface, font: pygame.font.Font,
              font_sm: pygame.font.Font):
+        if len(TILE_REGISTRY) != self._cache_size:
+            self._refresh_groups()
+
         L = Layout
         sh = surface.get_height()
         top = L.canvas_y
@@ -459,66 +545,240 @@ class TilePalette:
                          (left + pw - 1, top),
                          (left + pw - 1, top + panel_h))
 
+        # ── Search filter bar ────────────────────────────────────
+        fy = top + 2
+        self._filter_rect = pygame.Rect(left + 4, fy, pw - 8, self.FILTER_H)
+        bg = Theme.FIELD_BG if not self._filter_active else (35, 35, 42)
+        pygame.draw.rect(surface, bg, self._filter_rect, border_radius=3)
+        pygame.draw.rect(surface, Theme.BORDER, self._filter_rect, 1,
+                         border_radius=3)
+        disp = self._filter if self._filter else "\U0001f50d Filter tiles..."
+        color = Theme.TEXT if self._filter else Theme.TEXT_DIM
+        draw_text(surface, disp, self._filter_rect.x + 4,
+                  self._filter_rect.y + 4, color, font_sm)
+        if self._filter_active:
+            cx = self._filter_rect.x + 4 + font_sm.size(self._filter)[0]
+            if pygame.time.get_ticks() % 1000 < 500:
+                pygame.draw.line(surface, Theme.ACCENT,
+                                 (cx, fy + 4), (cx, fy + self.FILTER_H - 4))
+
+        # ── Tile grids by type ───────────────────────────────────
+        content_top = fy + self.FILTER_H + 4
+        btn_area = self.BTN_H + 8
+        content_bot = sh - L.status_h - btn_area
+        clip = pygame.Rect(left, content_top, pw, content_bot - content_top)
+        surface.set_clip(clip)
+
+        y = int(content_top - self.scroll_y)
         st = self.state
-        item_h = 28
-        y = int(top + 6 - self.scroll_y)
+        mx, my = pygame.mouse.get_pos()
+        pad_x = 6  # left padding inside the palette panel
+        inner_w = pw - pad_x * 2
+        cols = max(1, (inner_w + self.GAP) // (self.SWATCH + self.GAP))
 
-        for tid in sorted(TILE_NAMES.keys()):
-            if y + item_h < top or y > sh - L.status_h:
-                y += item_h
+        self._hit_areas: list[tuple[pygame.Rect, TileDef]] = []
+        self._header_areas: list[tuple[pygame.Rect, TileType]] = []
+
+        for tt, tiles in self._type_groups.items():
+            filtered = self._filtered_tiles(tiles)
+            if not filtered and self._filter:
                 continue
-            color = TILE_COLORS.get(tid, (120, 120, 120))
-            sx = left + 4
-            swatch = pygame.Rect(sx, y, 20, 20)
-            if tid == st.selected_tile:
-                sel_rect = pygame.Rect(left + 2, y - 2, pw - 4, 24)
-                pygame.draw.rect(surface, Theme.ACCENT, sel_rect, 2,
-                                 border_radius=3)
-            pygame.draw.rect(surface, color, swatch, border_radius=3)
-            pygame.draw.rect(surface, (80, 80, 80), swatch, 1,
-                             border_radius=3)
-            name_text = TILE_NAMES[tid]
-            if pw < 140:
-                name_text = name_text[:6]
-            elif pw < 160:
-                name_text = name_text[:10]
-            draw_text(surface, f"{tid}:{name_text}",
-                      sx + 24, y + 4, Theme.TEXT, font_sm)
-            y += item_h
+            if not tiles:
+                continue
 
-        # Tool info at bottom
-        y = max(y + 4, sh - L.status_h - 42)
-        draw_text(surface, f"Brush:{st.brush_size}",
-                  left + 4, y, Theme.TEXT_DIM, font_sm)
-        y += 14
-        draw_text(surface, f"Tool:{st.tool.title()}",
-                  left + 4, y, Theme.ACCENT, font_sm)
+            # Type header
+            collapsed = tt.value in self._collapsed
+            hr = pygame.Rect(left, y, pw, self.HEADER_H)
+
+            if y + self.HEADER_H > clip.top and y < clip.bottom:
+                hov = hr.collidepoint(mx, my)
+                hbg = Theme.HIGHLIGHT if hov else Theme.PANEL_LITE
+                pygame.draw.rect(surface, hbg, hr)
+                tint = self._TYPE_TINTS.get(tt, Theme.ACCENT)
+                pygame.draw.rect(surface, tint, (left, y, 3, self.HEADER_H))
+                arrow = self.ICON_COLLAPSED if collapsed else self.ICON_EXPANDED
+                label = tt.value.replace("_", " ").title()
+                count = len(filtered) if self._filter else len(tiles)
+                draw_text(surface, f"{arrow} {label} ({count})",
+                          left + 8, y + 4, Theme.TEXT, font_sm)
+
+            self._header_areas.append((hr, tt))
+            y += self.HEADER_H
+
+            if collapsed:
+                continue
+
+            # Grid of swatches
+            gx = 0
+            row_y = y
+            for td in filtered:
+                if gx >= cols:
+                    gx = 0
+                    row_y += self.SWATCH + self.GAP
+
+                sx = left + pad_x + gx * (self.SWATCH + self.GAP)
+                sy = row_y
+                swatch_r = pygame.Rect(sx, sy, self.SWATCH, self.SWATCH)
+
+                if sy + self.SWATCH >= clip.top and sy < clip.bottom:
+                    # Selection highlight
+                    if td.id == st.selected_tile:
+                        sel_r = swatch_r.inflate(4, 4)
+                        pygame.draw.rect(surface, Theme.ACCENT, sel_r,
+                                         border_radius=3)
+
+                    # Thumbnail or flat colour
+                    thumb = self._get_thumb(td.id)
+                    if thumb:
+                        surface.blit(thumb, swatch_r.topleft)
+                    else:
+                        pygame.draw.rect(surface, td.color, swatch_r,
+                                         border_radius=2)
+                    pygame.draw.rect(surface, (80, 80, 80), swatch_r, 1,
+                                     border_radius=2)
+
+                    # Tooltip on hover
+                    if swatch_r.collidepoint(mx, my):
+                        # Draw tooltip below swatch
+                        tip = f"{td.name}"
+                        tw_px = font_sm.size(tip)[0] + 8
+                        tip_r = pygame.Rect(sx, sy + self.SWATCH + 2,
+                                            tw_px, 16)
+                        # Keep tooltip inside panel
+                        if tip_r.right > left + pw:
+                            tip_r.right = left + pw - 2
+                        pygame.draw.rect(surface, (30, 30, 36), tip_r,
+                                         border_radius=2)
+                        draw_text(surface, tip, tip_r.x + 4, tip_r.y + 2,
+                                  Theme.TEXT, font_sm)
+
+                self._hit_areas.append((swatch_r, td))
+                gx += 1
+
+            # Advance y past the last row of swatches
+            if filtered:
+                y = row_y + self.SWATCH + self.GAP + 4
+            else:
+                y += 4
+
+        self._total_h = y + self.scroll_y - content_top
+        surface.set_clip(None)
+
+        # ── Scrollbar ────────────────────────────────────────────
+        visible_h = content_bot - content_top
+        if self._total_h > visible_h:
+            sb_x = left + pw - 6
+            sb_h = max(16, int(visible_h * visible_h / self._total_h))
+            sb_y = content_top + int(self.scroll_y / self._total_h * visible_h)
+            sb_y = min(sb_y, content_bot - sb_h)
+            pygame.draw.rect(surface, Theme.SCROLLBAR,
+                             (sb_x, content_top, 4, visible_h),
+                             border_radius=2)
+            pygame.draw.rect(surface, Theme.SCROLLTHUMB,
+                             (sb_x, sb_y, 4, sb_h),
+                             border_radius=2)
+
+        # ── "Add Tile" button at bottom ──────────────────────────
+        btn_y = sh - L.status_h - self.BTN_H - 4
+        self._add_tile_rect = pygame.Rect(left + 6, btn_y,
+                                           pw - 12, self.BTN_H)
+        hov = self._add_tile_rect.collidepoint(mx, my)
+        btn_bg = Theme.BTN_HOVER if hov else Theme.PANEL_LITE
+        pygame.draw.rect(surface, btn_bg, self._add_tile_rect,
+                         border_radius=4)
+        pygame.draw.rect(surface, Theme.ACCENT, self._add_tile_rect, 1,
+                         border_radius=4)
+        draw_text(surface, "+ Add Tile",
+                  self._add_tile_rect.x + 10, self._add_tile_rect.y + 5,
+                  Theme.ACCENT, font_sm)
+
+    # ── event handling ───────────────────────────────────────────
 
     def handle_event(self, event: pygame.event.Event,
-                     surface: pygame.Surface) -> bool:
+                     surface: pygame.Surface) -> str | None:
         L = Layout
         left = 0
         pw = L.palette_w
         top = L.canvas_y
+        sh = surface.get_height()
 
+        # Filter bar typing
+        if self._filter_active:
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    self._filter_active = False
+                    self._filter = ""
+                    return "consumed"
+                elif event.key == pygame.K_BACKSPACE:
+                    self._filter = self._filter[:-1]
+                    return "consumed"
+                elif event.key == pygame.K_RETURN:
+                    self._filter_active = False
+                    return "consumed"
+                elif event.unicode and event.unicode.isprintable():
+                    self._filter += event.unicode
+                    return "consumed"
+
+        # Scroll
         if event.type == pygame.MOUSEWHEEL:
             mx, my = pygame.mouse.get_pos()
             if left <= mx < left + pw and my > top:
-                self.scroll_y = max(0, self.scroll_y - event.y * 24)
-                return True
+                self.scroll_y = max(0, self.scroll_y - event.y * 28)
+                visible_h = sh - L.status_h - (top + self.FILTER_H + 4 + self.BTN_H + 8)
+                max_scroll = max(0, getattr(self, '_total_h', 0) - visible_h)
+                self.scroll_y = min(self.scroll_y, max_scroll)
+                return "consumed"
+
+        # Left click
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mx, my = event.pos
-            if left <= mx < left + pw and my > top:
-                item_h = 28
-                idx = int((my - top - 6 + self.scroll_y) / item_h)
-                tile_ids = sorted(TILE_NAMES.keys())
-                if 0 <= idx < len(tile_ids):
-                    self.state.selected_tile = tile_ids[idx]
+            if not (left <= mx < left + pw and my > top):
+                if self._filter_active:
+                    self._filter_active = False
+                return None
+
+            # Filter bar
+            if self._filter_rect.collidepoint(mx, my):
+                self._filter_active = True
+                return "consumed"
+            else:
+                self._filter_active = False
+
+            # Add Tile
+            if self._add_tile_rect.collidepoint(mx, my):
+                return "add_tile"
+
+            # Type headers (collapse toggle)
+            for hr, tt in getattr(self, '_header_areas', []):
+                if hr.collidepoint(mx, my):
+                    key = tt.value
+                    if key in self._collapsed:
+                        self._collapsed.discard(key)
+                    else:
+                        self._collapsed.add(key)
+                    return "consumed"
+
+            # Swatch click → select tile
+            for swatch_r, td in getattr(self, '_hit_areas', []):
+                if swatch_r.collidepoint(mx, my):
+                    self.state.selected_tile = td.id
                     if self.state.tool not in (Tool.BRUSH, Tool.FILL,
                                                Tool.ERASER):
                         self.state.tool = Tool.BRUSH
-                return True
-        return False
+                    return "consumed"
+
+            return "consumed"
+
+        # Right-click → edit tile
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+            mx, my = event.pos
+            if not (left <= mx < left + pw and my > top):
+                return None
+            for swatch_r, td in getattr(self, '_hit_areas', []):
+                if swatch_r.collidepoint(mx, my):
+                    return f"edit_tile:{td.id}"
+
+        return None
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -606,6 +866,575 @@ class ZonePanel:
                 if 0 <= idx < len(self._zone_list):
                     return f"load:{self._zone_list[idx]}"
         return None
+
+
+# ═════════════════════════════════════════════════════════════════════
+#  Entity Panel  (left panel — entities mode)
+# ═════════════════════════════════════════════════════════════════════
+
+class EntityPanel:
+    """Left-panel entity browser with two sub-tabs: Prefabs and Forge.
+
+    Clicking an entry sets the editor to Entity tool with that prefab
+    ready to place on the next map click.
+    """
+
+    TAB_PREFABS = 0
+    TAB_FORGE = 1
+    TAB_H = 22
+    ITEM_H = 34
+
+    _KIND_ICONS = {
+        "npc": "\u263A", "item": "\u2726", "container": "\u25A1",
+        "door_trigger": "\u25A3", "beast": "\u2620",
+        "tile": "\u25A3", "box": "\u25A1", "billboard": "\u263A",
+    }
+
+    def __init__(self, state: EditorState):
+        self.state = state
+        self._tab = self.TAB_PREFABS
+        self.scroll_y: float = 0.0
+        self._prefab_cache: list[tuple[str, dict]] = []
+        self._forge_cache: list = []
+        self._cache_ready = False
+        self._tab_rects: list[tuple[int, pygame.Rect]] = []
+        self._item_rects: list[tuple[pygame.Rect, str, str]] = []
+
+    def _ensure_cache(self):
+        if self._cache_ready:
+            return
+        self._cache_ready = True
+        try:
+            from editor.canvas import get_prefab_defaults
+            defaults = get_prefab_defaults()
+            self._prefab_cache = sorted(defaults.items())
+        except Exception:
+            self._prefab_cache = []
+        try:
+            from editor.forge_registry import ForgeRegistry
+            reg = ForgeRegistry.instance()
+            self._forge_cache = sorted(reg.all().values(),
+                                       key=lambda a: a.id)
+        except Exception:
+            self._forge_cache = []
+
+    def refresh(self):
+        """Force refresh of cached data."""
+        self._cache_ready = False
+
+    def draw(self, surface: pygame.Surface, font: pygame.font.Font,
+             font_sm: pygame.font.Font):
+        self._ensure_cache()
+        L = Layout
+        sh = surface.get_height()
+        top = L.canvas_y
+        left = 0
+        pw = L.palette_w
+        panel_h = sh - top - L.status_h
+
+        # Background
+        panel_surf = pygame.Surface((pw, panel_h), pygame.SRCALPHA)
+        panel_surf.fill((*Theme.PANEL, 230))
+        surface.blit(panel_surf, (left, top))
+        pygame.draw.line(surface, Theme.BORDER,
+                         (left + pw - 1, top),
+                         (left + pw - 1, top + panel_h))
+
+        mx, my = pygame.mouse.get_pos()
+
+        # Sub-tab bar
+        self._tab_rects.clear()
+        tx = left + 4
+        tab_y = top + 2
+        for label, tab_id in [("Prefabs", self.TAB_PREFABS),
+                               ("Forge", self.TAB_FORGE)]:
+            tw = font_sm.size(label)[0] + 14
+            tr = pygame.Rect(tx, tab_y, tw, self.TAB_H)
+            sel = self._tab == tab_id
+            hov = tr.collidepoint(mx, my)
+            bg = Theme.SELECTED if sel else (Theme.HIGHLIGHT if hov else Theme.PANEL)
+            pygame.draw.rect(surface, bg, tr, border_radius=3)
+            draw_text(surface, label, tx + 7, tab_y + 5,
+                      Theme.ACCENT if sel else Theme.TEXT_DIM, font_sm)
+            self._tab_rects.append((tab_id, tr))
+            tx += tw + 3
+
+        # Badge for forge count
+        if self._forge_cache:
+            draw_text(surface, f"({len(self._forge_cache)})",
+                      tx + 2, tab_y + 5, Theme.TEXT_DIM, font_sm)
+
+        # Content area
+        content_top = tab_y + self.TAB_H + 4
+        content_bot = sh - L.status_h
+        clip = pygame.Rect(left, content_top, pw, content_bot - content_top)
+        surface.set_clip(clip)
+
+        self._item_rects.clear()
+        y = int(content_top - self.scroll_y)
+
+        if self._tab == self.TAB_PREFABS:
+            self._draw_prefab_list(surface, font_sm, left, pw, y,
+                                   clip, mx, my)
+        else:
+            self._draw_forge_list(surface, font_sm, left, pw, y,
+                                  clip, mx, my)
+
+        self._total_h = (y + self.scroll_y - content_top +
+                         self.ITEM_H * 2)
+        surface.set_clip(None)
+
+    def _draw_prefab_list(self, surface, font_sm, left, pw, y,
+                          clip, mx, my):
+        st = self.state
+        for name, pdef in self._prefab_cache:
+            kind = pdef.get("identity", {}).get("kind", "")
+            icon = self._KIND_ICONS.get(kind, "\u25CF")
+            sprite = pdef.get("sprite", {})
+            color = tuple(sprite.get("color", [200, 200, 200]))
+
+            ir = pygame.Rect(left + 3, y, pw - 6, self.ITEM_H - 2)
+            if ir.bottom >= clip.top and ir.top < clip.bottom:
+                # Highlight if this is the pending prefab
+                selected = (st.pending_prefab == name and
+                            st.tool == Tool.ENTITY)
+                hov = ir.collidepoint(mx, my)
+                if selected:
+                    pygame.draw.rect(surface, Theme.SELECTED, ir,
+                                     border_radius=3)
+                    pygame.draw.rect(surface, Theme.ACCENT, ir, 1,
+                                     border_radius=3)
+                elif hov:
+                    pygame.draw.rect(surface, Theme.HIGHLIGHT, ir,
+                                     border_radius=3)
+
+                draw_text(surface, icon, ir.x + 4, ir.y + 3,
+                          color, font_sm)
+                draw_text(surface, name.replace("_", " ").title(),
+                          ir.x + 18, ir.y + 3, Theme.TEXT, font_sm)
+                draw_text(surface, kind,
+                          ir.x + 18, ir.y + 17, Theme.TEXT_DIM, font_sm)
+
+            self._item_rects.append((ir, "prefab", name))
+            y += self.ITEM_H
+
+    def _draw_forge_list(self, surface, font_sm, left, pw, y,
+                         clip, mx, my):
+        if not self._forge_cache:
+            draw_text(surface, "No forge archetypes.",
+                      left + 8, y + 4, Theme.TEXT_DIM, font_sm)
+            draw_text(surface, "Editors \u2192 Entity Forge",
+                      left + 8, y + 18, Theme.TEXT_DIM, font_sm)
+            return
+
+        st = self.state
+        for arch in self._forge_cache:
+            icon = self._KIND_ICONS.get(arch.kind, "\u25CF")
+            color = tuple(getattr(arch, 'color', (200, 200, 200)))
+            ir = pygame.Rect(left + 3, y, pw - 6, self.ITEM_H - 2)
+
+            if ir.bottom >= clip.top and ir.top < clip.bottom:
+                selected = (st.pending_prefab == f"forge:{arch.id}" and
+                            st.tool == Tool.ENTITY)
+                hov = ir.collidepoint(mx, my)
+                if selected:
+                    pygame.draw.rect(surface, Theme.SELECTED, ir,
+                                     border_radius=3)
+                    pygame.draw.rect(surface, Theme.ACCENT, ir, 1,
+                                     border_radius=3)
+                elif hov:
+                    pygame.draw.rect(surface, Theme.HIGHLIGHT, ir,
+                                     border_radius=3)
+
+                draw_text(surface, icon, ir.x + 4, ir.y + 3,
+                          color, font_sm)
+                draw_text(surface, arch.display_name or arch.id,
+                          ir.x + 18, ir.y + 3, Theme.TEXT, font_sm)
+                draw_text(surface, arch.kind,
+                          ir.x + 18, ir.y + 17, Theme.TEXT_DIM, font_sm)
+
+            self._item_rects.append((ir, "forge", arch.id))
+            y += self.ITEM_H
+
+    def handle_event(self, event: pygame.event.Event,
+                     surface: pygame.Surface) -> str | None:
+        """Returns action string or None."""
+        L = Layout
+        left = 0
+        pw = L.palette_w
+        top = L.canvas_y
+
+        # Tab clicks
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            for tab_id, tr in self._tab_rects:
+                if tr.collidepoint(event.pos):
+                    self._tab = tab_id
+                    self.scroll_y = 0
+                    return "consumed"
+
+        # Scroll
+        if event.type == pygame.MOUSEWHEEL:
+            mx, my = pygame.mouse.get_pos()
+            if left <= mx < left + pw and my > top:
+                self.scroll_y = max(0, self.scroll_y - event.y * 28)
+                visible_h = surface.get_height() - L.status_h - top - self.TAB_H - 4
+                max_scroll = max(0, getattr(self, '_total_h', 0) - visible_h)
+                self.scroll_y = min(self.scroll_y, max_scroll)
+                return "consumed"
+
+        # Item click
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            mx, my = event.pos
+            if not (left <= mx < left + pw and my > top):
+                return None
+            for ir, source, name in self._item_rects:
+                if ir.collidepoint(mx, my):
+                    if source == "prefab":
+                        return f"select_prefab:{name}"
+                    elif source == "forge":
+                        return f"select_forge:{name}"
+            return "consumed"
+
+        return None
+
+
+# ═════════════════════════════════════════════════════════════════════
+#  Texture Browser Panel  (left panel — textures mode)
+# ═════════════════════════════════════════════════════════════════════
+
+class TextureBrowserPanel:
+    """Browse all imported texture PNGs as a grid of 32×32 thumbnails.
+
+    Clicking a texture copies its key name for pasting into face
+    texture fields.  Returns ``'copy_tex:{key}'`` on click.
+    """
+
+    THUMB = 32
+    PAD = 3
+
+    def __init__(self, state: EditorState, atlas=None):
+        self.state = state
+        self._atlas = atlas
+        self.scroll_y: float = 0.0
+        self._item_rects: list[tuple[pygame.Rect, str]] = []
+        self._tex_list: list[str] = []
+        self._cache_ready = False
+
+    def _ensure_cache(self):
+        if self._cache_ready:
+            return
+        self._cache_ready = True
+        from core.tiles import TILE_TEX_DIR
+        import os
+        try:
+            self._tex_list = sorted(
+                os.path.splitext(f)[0]
+                for f in os.listdir(TILE_TEX_DIR)
+                if f.endswith(".png")
+            )
+        except Exception:
+            self._tex_list = []
+
+    def refresh(self):
+        self._cache_ready = False
+
+    def draw(self, surface: pygame.Surface, font: pygame.font.Font,
+             font_sm: pygame.font.Font):
+        self._ensure_cache()
+        L = Layout
+        sh = surface.get_height()
+        top = L.canvas_y
+        left = 0
+        pw = L.palette_w
+        panel_h = sh - top - L.status_h
+
+        panel_surf = pygame.Surface((pw, panel_h), pygame.SRCALPHA)
+        panel_surf.fill((*Theme.PANEL, 230))
+        surface.blit(panel_surf, (left, top))
+        pygame.draw.line(surface, Theme.BORDER,
+                         (left + pw - 1, top),
+                         (left + pw - 1, top + panel_h))
+
+        draw_text(surface, "TEXTURES", left + 6, top + 4,
+                  Theme.ACCENT, font_sm)
+
+        cols = max(1, (pw - 6) // (self.THUMB + self.PAD))
+        content_top = top + 20
+        content_bot = sh - L.status_h
+        clip = pygame.Rect(left, content_top, pw, content_bot - content_top)
+        surface.set_clip(clip)
+
+        self._item_rects.clear()
+        mx, my = pygame.mouse.get_pos()
+        y = int(content_top - self.scroll_y)
+
+        for i, key in enumerate(self._tex_list):
+            col = i % cols
+            row_y = y + (i // cols) * (self.THUMB + self.PAD + 12)
+            tx = left + 3 + col * (self.THUMB + self.PAD)
+            ty = row_y
+
+            ir = pygame.Rect(tx, ty, self.THUMB, self.THUMB)
+            if ir.bottom >= clip.top and ir.top < clip.bottom:
+                # Draw thumbnail
+                if self._atlas:
+                    try:
+                        tex_surf = self._atlas.get_by_key(key)
+                        thumb = pygame.transform.scale(
+                            tex_surf, (self.THUMB, self.THUMB))
+                        surface.blit(thumb, ir.topleft)
+                    except Exception:
+                        pygame.draw.rect(surface, (60, 60, 60), ir)
+                else:
+                    pygame.draw.rect(surface, (60, 60, 60), ir)
+                if ir.collidepoint(mx, my):
+                    pygame.draw.rect(surface, Theme.ACCENT, ir, 2)
+                    # Show key name as tooltip
+                    draw_text(surface, key, tx,
+                              ty + self.THUMB + 1, Theme.TEXT, font_sm)
+
+            self._item_rects.append((ir, key))
+
+        self._total_h = ((len(self._tex_list) + cols - 1) // cols) * (
+            self.THUMB + self.PAD + 12)
+        surface.set_clip(None)
+
+    def handle_event(self, event: pygame.event.Event,
+                     surface: pygame.Surface) -> str | None:
+        L = Layout
+        left = 0
+        pw = L.palette_w
+        top = L.canvas_y
+
+        if event.type == pygame.MOUSEWHEEL:
+            mx, my = pygame.mouse.get_pos()
+            if left <= mx < left + pw and my > top:
+                self.scroll_y = max(0, self.scroll_y - event.y * 28)
+                visible_h = surface.get_height() - L.status_h - top - 20
+                max_scroll = max(0, getattr(self, '_total_h', 0) - visible_h)
+                self.scroll_y = min(self.scroll_y, max_scroll)
+                return "consumed"
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            for ir, key in self._item_rects:
+                if ir.collidepoint(event.pos):
+                    return f"copy_tex:{key}"
+        return None
+
+
+# ═════════════════════════════════════════════════════════════════════
+#  Portal Panel  (left panel — portals mode)
+# ═════════════════════════════════════════════════════════════════════
+
+class PortalPanel:
+    """List and manage portal connections in the current zone.
+
+    Shows each portal with its destination and tile count.
+    Click to select/highlight a portal on the map.
+    Returns ``'select_portal:{index}'`` on click.
+    """
+
+    ITEM_H = 38
+
+    def __init__(self, state: EditorState):
+        self.state = state
+        self.scroll_y: float = 0.0
+        self._item_rects: list[tuple[pygame.Rect, int]] = []
+
+    def draw(self, surface: pygame.Surface, font: pygame.font.Font,
+             font_sm: pygame.font.Font):
+        L = Layout
+        sh = surface.get_height()
+        top = L.canvas_y
+        left = 0
+        pw = L.palette_w
+        panel_h = sh - top - L.status_h
+
+        panel_surf = pygame.Surface((pw, panel_h), pygame.SRCALPHA)
+        panel_surf.fill((*Theme.PANEL, 230))
+        surface.blit(panel_surf, (left, top))
+        pygame.draw.line(surface, Theme.BORDER,
+                         (left + pw - 1, top),
+                         (left + pw - 1, top + panel_h))
+
+        draw_text(surface, "PORTALS", left + 6, top + 4,
+                  Theme.ACCENT, font_sm)
+
+        st = self.state
+        portals = st.portals
+        if not portals:
+            draw_text(surface, "No portals.", left + 8, top + 24,
+                      Theme.TEXT_DIM, font_sm)
+            draw_text(surface, "Use Portal tool", left + 8, top + 38,
+                      Theme.TEXT_DIM, font_sm)
+            return
+
+        content_top = top + 20
+        content_bot = sh - L.status_h
+        clip = pygame.Rect(left, content_top, pw, content_bot - content_top)
+        surface.set_clip(clip)
+
+        self._item_rects.clear()
+        mx, my = pygame.mouse.get_pos()
+        y = int(content_top - self.scroll_y)
+
+        for i, portal in enumerate(portals):
+            dest = portal.get("dest_zone", "?")
+            tiles = portal.get("tiles", [])
+            tile_count = len(tiles)
+
+            ir = pygame.Rect(left + 3, y, pw - 6, self.ITEM_H - 2)
+            if ir.bottom >= clip.top and ir.top < clip.bottom:
+                hov = ir.collidepoint(mx, my)
+                bg = Theme.HIGHLIGHT if hov else Theme.PANEL
+                pygame.draw.rect(surface, bg, ir, border_radius=3)
+                pygame.draw.rect(surface, Theme.BORDER, ir, 1, border_radius=3)
+
+                draw_text(surface, "\u25A3", ir.x + 4, ir.y + 3,
+                          Theme.PORTAL, font_sm)
+                dest_label = dest[:14] if pw < 160 else dest
+                draw_text(surface, f"\u2192 {dest_label}",
+                          ir.x + 18, ir.y + 3, Theme.TEXT, font_sm)
+                draw_text(surface, f"{tile_count} tile(s)",
+                          ir.x + 18, ir.y + 19, Theme.TEXT_DIM, font_sm)
+
+            self._item_rects.append((ir, i))
+            y += self.ITEM_H
+
+        self._total_h = len(portals) * self.ITEM_H
+        surface.set_clip(None)
+
+    def handle_event(self, event: pygame.event.Event,
+                     surface: pygame.Surface) -> str | None:
+        L = Layout
+        left = 0
+        pw = L.palette_w
+        top = L.canvas_y
+
+        if event.type == pygame.MOUSEWHEEL:
+            mx, my = pygame.mouse.get_pos()
+            if left <= mx < left + pw and my > top:
+                self.scroll_y = max(0, self.scroll_y - event.y * 28)
+                return "consumed"
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            for ir, idx in self._item_rects:
+                if ir.collidepoint(event.pos):
+                    return f"select_portal:{idx}"
+        return None
+
+
+# ═════════════════════════════════════════════════════════════════════
+#  Room Templates Panel  (left panel — templates mode)
+# ═════════════════════════════════════════════════════════════════════
+
+class RoomTemplatePanel:
+    """Browse and place room templates (JSON files from templates/).
+
+    Click to select a template for stamp-placement on the canvas.
+    Returns ``'select_template:{filename}'`` on click.
+    """
+
+    ITEM_H = 30
+
+    def __init__(self, state: EditorState):
+        self.state = state
+        self.scroll_y: float = 0.0
+        self._templates: list[str] = []
+        self._cache_ready = False
+        self._item_rects: list[tuple[pygame.Rect, str]] = []
+
+    def _ensure_cache(self):
+        if self._cache_ready:
+            return
+        self._cache_ready = True
+        import os
+        from editor.state import TEMPLATES_DIR
+        dirs = [TEMPLATES_DIR]
+        rooms_dir = TEMPLATES_DIR / "rooms"
+        if rooms_dir.exists():
+            dirs.append(rooms_dir)
+        self._templates = []
+        for d in dirs:
+            if d.exists():
+                for f in sorted(os.listdir(d)):
+                    if f.endswith(".json"):
+                        self._templates.append(f)
+
+    def refresh(self):
+        self._cache_ready = False
+
+    def draw(self, surface: pygame.Surface, font: pygame.font.Font,
+             font_sm: pygame.font.Font):
+        self._ensure_cache()
+        L = Layout
+        sh = surface.get_height()
+        top = L.canvas_y
+        left = 0
+        pw = L.palette_w
+        panel_h = sh - top - L.status_h
+
+        panel_surf = pygame.Surface((pw, panel_h), pygame.SRCALPHA)
+        panel_surf.fill((*Theme.PANEL, 230))
+        surface.blit(panel_surf, (left, top))
+        pygame.draw.line(surface, Theme.BORDER,
+                         (left + pw - 1, top),
+                         (left + pw - 1, top + panel_h))
+
+        draw_text(surface, "TEMPLATES", left + 6, top + 4,
+                  Theme.ACCENT, font_sm)
+
+        if not self._templates:
+            draw_text(surface, "No templates.", left + 8, top + 24,
+                      Theme.TEXT_DIM, font_sm)
+            draw_text(surface, "Editors \u2192 Room Templates",
+                      left + 8, top + 38, Theme.TEXT_DIM, font_sm)
+            return
+
+        content_top = top + 20
+        content_bot = sh - L.status_h
+        clip = pygame.Rect(left, content_top, pw, content_bot - content_top)
+        surface.set_clip(clip)
+
+        self._item_rects.clear()
+        mx, my = pygame.mouse.get_pos()
+        y = int(content_top - self.scroll_y)
+
+        for fname in self._templates:
+            label = os.path.splitext(fname)[0].replace("_", " ").title()
+            ir = pygame.Rect(left + 3, y, pw - 6, self.ITEM_H - 2)
+            if ir.bottom >= clip.top and ir.top < clip.bottom:
+                hov = ir.collidepoint(mx, my)
+                bg = Theme.HIGHLIGHT if hov else Theme.PANEL
+                pygame.draw.rect(surface, bg, ir, border_radius=3)
+                draw_text(surface, "\u2587", ir.x + 4, ir.y + 3,
+                          Theme.ACCENT, font_sm)
+                draw_text(surface, label[:18] if pw < 160 else label,
+                          ir.x + 18, ir.y + 6, Theme.TEXT, font_sm)
+            self._item_rects.append((ir, fname))
+            y += self.ITEM_H
+
+        self._total_h = len(self._templates) * self.ITEM_H
+        surface.set_clip(None)
+
+    def handle_event(self, event: pygame.event.Event,
+                     surface: pygame.Surface) -> str | None:
+        L = Layout
+        left = 0
+        pw = L.palette_w
+        top = L.canvas_y
+
+        if event.type == pygame.MOUSEWHEEL:
+            mx, my = pygame.mouse.get_pos()
+            if left <= mx < left + pw and my > top:
+                self.scroll_y = max(0, self.scroll_y - event.y * 28)
+                return "consumed"
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            for ir, fname in self._item_rects:
+                if ir.collidepoint(event.pos):
+                    return f"select_template:{fname}"
+        return None
+
+
+import os  # needed by RoomTemplatePanel
 
 
 # ═════════════════════════════════════════════════════════════════════

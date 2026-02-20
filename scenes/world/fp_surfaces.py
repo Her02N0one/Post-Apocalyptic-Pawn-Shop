@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 import pygame
 import numpy as np
 
-from core.tiles import SOLID_IDS, PLATFORM_IDS, TILE_COLORS
+from core.tiles import SOLID_IDS, PLATFORM_IDS, TILE_COLORS, color_lut, solid_int_set, grid_to_ints, platform_lut
 from scenes.world.fp_lighting import (
     lerp_color,
     CEILING_DAY, CEILING_NIGHT,
@@ -35,7 +35,7 @@ def draw_floor_ceiling(
     px: float, py: float, angle: float,
     fog_lut: list[int], dn: float,
     fov: float,
-    tiles: list[list[int]], map_w: int, map_h: int,
+    tiles: list[list[str]], map_w: int, map_h: int,
     is_interior: bool,
 ) -> None:
     """Per-row textured floor with checkerboard + gradient ceiling."""
@@ -91,11 +91,11 @@ def draw_floor_ceiling(
     half_sh = sh * 0.5
 
     _dflt = (50, 50, 45)
-    _solid = SOLID_IDS
-    max_tid = max(TILE_COLORS.keys()) if TILE_COLORS else 0
-    _pal: list[tuple[int, int, int]] = [_dflt] * (max_tid + 1)
-    for tid_p, col_p in TILE_COLORS.items():
-        _pal[tid_p] = _dflt if tid_p in _solid else col_p
+    _solid_ints = solid_int_set()
+    _clut = color_lut()
+    _pal: list[tuple[int, int, int]] = []
+    for i, c in enumerate(_clut):
+        _pal.append(_dflt if i in _solid_ints else c)
     _pal_len = len(_pal)
 
     floor_h = sh - half
@@ -106,7 +106,7 @@ def draw_floor_ceiling(
     fbw = max(1, sw // _FDIV)
     fbh = max(1, floor_h // _FDIV)
 
-    np_tiles = self._get_np_tiles(tiles, map_h, map_w)
+    np_tiles = self._get_np_tiles(grid_to_ints(tiles), map_h, map_w)
     ct = self._get_floor_ct(fog_lut, _pal, _pal_len)
 
     # Row geometry — vectorised over all rows at once.
@@ -156,7 +156,7 @@ def draw_visplane_tops(
     angle: float, fov: float,
     plat_col: dict[int, tuple[int, int, float, int]],
     fog_lut: list[int],
-    tiles: list[list[int]], map_w: int, map_h: int,
+    tiles: list[list[str]], map_w: int, map_h: int,
     *, offscreen: bool = False,
 ) -> tuple[pygame.Surface, int] | None:
     """Draw platform top surfaces at reduced resolution.
@@ -188,10 +188,8 @@ def draw_visplane_tops(
 
     # ── Palette + colour table ───────────────────────────────
     _dflt = (100, 95, 85)
-    max_tid = max(TILE_COLORS.keys()) if TILE_COLORS else 0
-    _pal: list[tuple[int, int, int]] = [_dflt] * (max_tid + 1)
-    for t, c in TILE_COLORS.items():
-        _pal[t] = c
+    _clut = color_lut()
+    _pal: list[tuple[int, int, int]] = [_dflt if not c else c for c in _clut] if _clut else [_dflt]
     _pal_len = len(_pal)
 
     vp_ct = self._get_vp_ct(fog_lut, _pal, _pal_len)
@@ -223,7 +221,7 @@ def draw_visplane_tops(
     col_dy = _col_dy[:_i]
     col_dh = _col_dh[:_i]
 
-    np_tiles = self._get_np_tiles(tiles, map_h, map_w)
+    np_tiles = self._get_np_tiles(grid_to_ints(tiles), map_h, map_w)
 
     # ── Vectorised row / column sweep ────────────────────────
     by_arr = np.arange(buf_h, dtype=np.float64)
@@ -244,15 +242,16 @@ def draw_visplane_tops(
     swy = np.clip(wy, 0, max(0, map_h - 1))
     grid_tid = np_tiles[swy, swx]
 
-    # Platform-ID check via boolean LUT
+    # Platform-ID check via boolean LUT (compact int space)
+    _plut = platform_lut()
     plat_lut_len = max(
         int(grid_tid.max()) + 1 if grid_tid.size else 0,
-        max_tid + 1,
+        len(_plut),
     )
     plat_lut = np.zeros(plat_lut_len, dtype=bool)
-    for pid in PLATFORM_IDS:
-        if pid < plat_lut_len:
-            plat_lut[pid] = True
+    for i in range(min(len(_plut), plat_lut_len)):
+        if _plut[i]:
+            plat_lut[i] = True
     valid &= plat_lut[np.clip(grid_tid, 0, plat_lut_len - 1)]
     valid &= grid_tid < _pal_len
 

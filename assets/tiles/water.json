@@ -1,0 +1,11 @@
+{
+  "name": "Water",
+  "type": "liquid",
+  "category": "Terrain",
+  "sound": "water",
+  "color": [
+    30,
+    60,
+    90
+  ]
+}

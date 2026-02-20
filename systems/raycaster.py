@@ -22,7 +22,7 @@ import math
 import operator
 from collections import namedtuple
 
-from core.tiles import WALL_IDS, HALF_WALL_IDS, tile_def
+from core.tiles import WALL_IDS, HALF_WALL_IDS, tile_def, grid_to_ints, wall_lut, half_wall_lut, hs_lut, tile_int_to_str
 
 # ── Try to load C-accelerated raycaster ──────────────────────────
 try:
@@ -54,19 +54,19 @@ BillboardSprite.__doc__ = """An entity projected into screen space."""
 #  Wall raycasting (DDA)
 # ═════════════════════════════════════════════════════════════════════
 
-_WALL_TILES: frozenset[int] = WALL_IDS
-_HALF_TILES: frozenset[int] = HALF_WALL_IDS
+_WALL_TILES: frozenset[str] = WALL_IDS
+_HALF_TILES: frozenset[str] = HALF_WALL_IDS
 _MAX_STEPS = 32
 
 # Height-scale cache — avoids repeated tile_def() lookups per frame
-_HS_CACHE: dict[int, float] = {}
+_HS_CACHE: dict[str, float] = {}
 
 # Pre-computed trig table: (angle_q, fov_q, n_rays) → (cos[], sin[])
 _TRIG_CACHE: dict[tuple, tuple[list[float], list[float]]] = {}
 _TRIG_Q = 2048  # quantisation granularity for angle caching
 
 
-def _get_hs(tid: int) -> float:
+def _get_hs(tid: str) -> float:
     """Get height_scale for a tile id, cached."""
     hs = _HS_CACHE.get(tid)
     if hs is None:
@@ -81,9 +81,9 @@ def cast_walls(
     angle: float,
     fov: float,
     screen_w: int, screen_h: int,
-    tiles: list[list[int]],
+    tiles: list[list[str]],
     *,
-    wall_tiles: frozenset[int] = _WALL_TILES,
+    wall_tiles: frozenset[str] | None = None,
     step: int = 1,
 ) -> list[WallSlice]:
     """Cast one ray per *step* screen columns and return wall slices.
@@ -98,14 +98,16 @@ def cast_walls(
         Horizontal field of view in radians.
     screen_w, screen_h : int
         Viewport pixel dimensions.
-    tiles : list[list[int]]
-        2-D tile grid (``tiles[row][col]``).
-    wall_tiles : frozenset[int]
-        Tile IDs treated as solid walls.
+    tiles : list[list[str]]
+        2-D tile grid (``tiles[row][col]``, string IDs).
+    wall_tiles : frozenset[str] | None
+        Tile IDs treated as solid walls.  ``None`` → use default set.
     step : int
         Cast every *step*-th column (1 = full res, 2 = half, …).
     """
     # ── C-accelerated fast path ──────────────────────────────
+    if wall_tiles is None:
+        wall_tiles = _WALL_TILES
     if _USE_C_CAST and wall_tiles is _WALL_TILES:
         return _cast_walls_c(px, py, angle, fov,
                              screen_w, screen_h, tiles, step)
@@ -257,7 +259,7 @@ def cast_walls(
             wx = px + perp * rd_x
         wx_frac = wx - _floor(wx)
 
-        tid_hit = tiles[my][mx] if (0 <= my < map_h and 0 <= mx < map_w) else 0
+        tid_hit = tiles[my][mx] if (0 <= my < map_h and 0 <= mx < map_w) else "void"
 
         # Emit background (full) wall FIRST, then half-walls
         # farthest-to-nearest (painter's order).
@@ -283,38 +285,41 @@ _c_tiles_flat: _array.array | None = None
 
 
 def _ensure_c_luts() -> tuple[bytearray, bytearray, _array.array]:
-    """Build/return wall, half-wall, and height-scale lookup tables."""
+    """Build/return wall, half-wall, and height-scale lookup tables.
+
+    Uses the compact-int mapping from core.tiles so the C extension
+    can work with its integer grid representation.
+    """
     global _c_wall_lut, _c_half_lut, _c_hs_lut
     if _c_wall_lut is not None:
         return _c_wall_lut, _c_half_lut, _c_hs_lut  # type: ignore[return-value]
-    n = _C_LUT_LEN
-    wl = bytearray(n)
-    for wid in _WALL_TILES:
-        if wid < n:
-            wl[wid] = 1
-    hl = bytearray(n)
-    for hid in _HALF_TILES:
-        if hid < n:
-            hl[hid] = 1
+    wl = wall_lut()
+    hl = half_wall_lut()
+    hs_raw = hs_lut()
+    n = max(len(wl), _C_LUT_LEN)
+    # Pad to _C_LUT_LEN
+    if len(wl) < n:
+        wl.extend(bytearray(n - len(wl)))
+    if len(hl) < n:
+        hl.extend(bytearray(n - len(hl)))
     hs = _array.array('d', [1.0] * n)
-    for tid in range(n):
-        td = tile_def(tid)
-        if td:
-            hs[tid] = td.height_scale
+    for i, v in enumerate(hs_raw):
+        hs[i] = v
     _c_wall_lut = wl
     _c_half_lut = hl
     _c_hs_lut = hs
     return wl, hl, hs
 
 
-def _flatten_tiles(tiles: list[list[int]]) -> _array.array:
-    """Return *tiles* as a flat int32 array, cached by identity."""
+def _flatten_tiles(tiles: list[list[str]]) -> _array.array:
+    """Return string tile grid as a flat int32 array using compact mapping."""
     global _c_tiles_id, _c_tiles_flat
     tid = id(tiles)
     if tid == _c_tiles_id and _c_tiles_flat is not None:
         return _c_tiles_flat
+    int_grid = grid_to_ints(tiles)
     flat = _array.array('i')
-    for row in tiles:
+    for row in int_grid:
         flat.extend(row)
     _c_tiles_id = tid
     _c_tiles_flat = flat
@@ -325,10 +330,14 @@ def _cast_walls_c(
     px: float, py: float,
     angle: float, fov: float,
     sw: int, sh: int,
-    tiles: list[list[int]],
+    tiles: list[list[str]],
     step: int,
 ) -> list[WallSlice]:
-    """Call the C extension and wrap results as WallSlice namedtuples."""
+    """Call the C extension and wrap results as WallSlice namedtuples.
+
+    The C extension returns compact-int tile IDs which we convert
+    back to string IDs in the WallSlice.
+    """
     map_h = len(tiles)
     map_w = len(tiles[0]) if map_h else 0
     wl, hl, hs = _ensure_c_luts()
@@ -338,7 +347,13 @@ def _cast_walls_c(
         flat, wl, hl, hs, step,
     )
     _WS = WallSlice
-    return [_WS._make(t) for t in raw]
+    # Convert compact-int tile_id (index 3) back to string
+    result = []
+    for t in raw:
+        lst = list(t)
+        lst[3] = tile_int_to_str(lst[3])
+        result.append(_WS._make(lst))
+    return result
 
 
 # ═════════════════════════════════════════════════════════════════════

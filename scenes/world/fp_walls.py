@@ -18,6 +18,7 @@ import pygame
 
 from systems.raycaster import cast_walls
 from systems.textures import TEX_SIZE
+from core.tiles import tile_def as _tile_def
 
 if TYPE_CHECKING:
     from scenes.world.fp_renderer import Renderer
@@ -42,9 +43,39 @@ _WS_TID = 3         # tile_id
 _WS_SIDE = 4        # side
 _WS_TEX_X = 5       # tex_x
 _WS_HS = 6          # height_scale
+_WS_RDX = 7         # ray_dir_x
+_WS_RDY = 8         # ray_dir_y
 
 # AO distance cutoff — skip AO shadows for walls farther than this
 _AO_MAX_DIST = 6.0
+
+# Face name derivation from side + ray direction
+def _face_name(side: int, rdx: float, rdy: float) -> str:
+    """Derive cardinal face name from DDA side + ray direction."""
+    if side == 0:  # X boundary
+        return "west" if rdx > 0 else "east"
+    else:  # Y boundary
+        return "north" if rdy > 0 else "south"
+
+# Per-tile face override cache:  tile_id -> dict[face, tex_key] or None
+_face_cache: dict[str, dict[str, str] | None] = {}
+
+def _get_face_overrides(tid: str) -> dict[str, str] | None:
+    """Return face_textures dict for a tile, or None if no overrides."""
+    cached = _face_cache.get(tid)
+    if cached is not None or tid in _face_cache:
+        return cached
+    td = _tile_def(tid)
+    if td and td.face_textures:
+        result = dict(td.face_textures)
+        _face_cache[tid] = result
+        return result
+    _face_cache[tid] = None
+    return None
+
+def invalidate_face_cache() -> None:
+    """Clear the face override cache (call after tile edits)."""
+    _face_cache.clear()
 
 
 def draw_walls(
@@ -53,7 +84,7 @@ def draw_walls(
     sw: int, sh: int, half: int,
     px: float, py: float,
     angle: float, fov: float,
-    tiles: list[list[int]],
+    tiles: list[list[str]],
     fog_lut: list[int], dn: float,
 ) -> tuple[list, dict, list[float], list[tuple]]:
     """Cast rays, draw wall columns.
@@ -135,13 +166,17 @@ def draw_walls(
     _ao_max_dist = _AO_MAX_DIST
 
     # ── Choose C or Python geometry path ─────────────────────
+    _get_face = _get_face_overrides
+    _get_by_key = atlas.get_by_key
+    _face_nm = _face_name
+
     if _USE_C_WALLS:
         # Bulk-compute geometry in C — eliminates ~120 iterations
         # of Python-level float math + bitwise cache-key packing.
         _fog_bytes = bytes(fog_lut)
         geom = _c_geom(slices, sh, half, _TEX, _fog_bytes, _step, sw)
 
-        for g in geom:
+        for gi, g in enumerate(geom):
             ws_sx     = g[0]
             ws_dist   = g[1]
             cy0       = g[2]
@@ -162,6 +197,17 @@ def draw_walls(
             ao_h      = g[17]
             has_vp    = g[18]
 
+            # Face-texture override check
+            face_overrides = _get_face(tid)
+            face_key = None
+            if face_overrides:
+                _ws = slices[gi]
+                face = _face_nm(ws_side, _ws[_WS_RDX], _ws[_WS_RDY])
+                face_key = face_overrides.get(face)
+                if face_key:
+                    cache_key = hash((face_key, tx_s, tv0, tv1,
+                                      draw_h_q, col_w, ws_side, fog >> 6))
+
             # Two-generation lookup: current first, then previous.
             cached = _cache_get(cache_key)
             if cached is not None:
@@ -171,7 +217,7 @@ def draw_walls(
                 if prev_hit is not None:
                     strip_surf = prev_hit
                 else:
-                    tex_surf = _atlas_get(tid)
+                    tex_surf = _get_by_key(face_key) if face_key else _atlas_get(tid)
                     strip = tex_surf.subsurface((tx_s, tv0, 1, tv1 - tv0))
 
                     _sz = (col_w, draw_h_q)
@@ -263,6 +309,16 @@ def draw_walls(
                          (draw_h_q << 23) | (col_w << 33) |
                          (ws_side << 37) | (fog_q << 38))
 
+            # Face-texture override check
+            face_overrides = _get_face(tid)
+            face_key = None
+            if face_overrides:
+                face = _face_nm(ws_side, ws[_WS_RDX], ws[_WS_RDY])
+                face_key = face_overrides.get(face)
+                if face_key:
+                    cache_key = hash((face_key, tx_s, tv0, tv1,
+                                      draw_h_q, col_w, ws_side, fog_q))
+
             # Two-generation lookup — NO prev-hit promotion.
             cached = _cache_get(cache_key)
             if cached is not None:
@@ -272,7 +328,7 @@ def draw_walls(
                 if prev_hit is not None:
                     strip_surf = prev_hit
                 else:
-                    tex_surf = _atlas_get(tid)
+                    tex_surf = _get_by_key(face_key) if face_key else _atlas_get(tid)
                     strip = tex_surf.subsurface((tx_s, tv0, 1, tv1 - tv0))
 
                     _sz = (col_w, draw_h_q)

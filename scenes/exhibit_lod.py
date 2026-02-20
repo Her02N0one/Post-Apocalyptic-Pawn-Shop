@@ -98,7 +98,7 @@ class ExhibitLOD(Scene):
         self._flash_text: str = ""
         self._flash_color: tuple[int, int, int] = COL_TEXT
         # Active zone tile/portal cache (for physics)
-        self._active_tiles: list[list[int]] = []
+        self._active_tiles: list[list[str]] = []
         self._portal_positions: set[tuple[int, int]] = set()
         # Portal transition state
         self._fade_alpha: float = 0.0
@@ -193,7 +193,7 @@ class ExhibitLOD(Scene):
         walkable: list[tuple[int, int]] = []
         for r in range(1, zc.height - 1):
             for c in range(1, zc.width - 1):
-                if zc.tiles[r][c] not in SOLID_IDS and zc.tiles[r][c] != 0:
+                if zc.tiles[r][c] not in SOLID_IDS and zc.tiles[r][c] != "void":
                     # Don't spawn on portal tiles
                     if (r, c) not in zc.portals:
                         walkable.append((r, c))

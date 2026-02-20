@@ -39,12 +39,12 @@ from scenes.world.fp_lighting import build_fog_lut
 #  Stress-test map  (20×30 with mixed full / half walls)
 # ═════════════════════════════════════════════════════════════════════
 
-_W = 6   # full wall
-_F = 0   # floor
-_H = 27  # half-wall (stone platform)
+_W = "wall"   # full wall
+_F = "void"   # floor
+_H = "stone_platform"  # half-wall (stone platform)
 
 MAP_H, MAP_W = 20, 30
-TILES: list[list[int]] = []
+TILES: list[list[str]] = []
 for r in range(MAP_H):
     row: list[int] = []
     for c in range(MAP_W):
@@ -224,7 +224,7 @@ def bench_cache_miss_storm(n_frames: int = 200) -> list[float]:
 def bench_subsurface_scale(n_frames: int = 200) -> list[float]:
     """Bench the raw cost of subsurface + scale — the cache-miss penalty."""
     atlas = TextureAtlas()
-    tex = atlas.get(6)  # wall tile
+    tex = atlas.get("wall")  # wall tile
     _scale = pygame.transform.scale
     times: list[float] = []
     for i in range(n_frames):

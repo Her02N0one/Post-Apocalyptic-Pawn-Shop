@@ -1,0 +1,11 @@
+{
+  "name": "Dirt",
+  "type": "floor",
+  "category": "Terrain",
+  "sound": "gravel",
+  "color": [
+    80,
+    70,
+    50
+  ]
+}

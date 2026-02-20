@@ -1,0 +1,12 @@
+{
+  "name": "Counter Top",
+  "type": "half_wall",
+  "category": "Platforms",
+  "sound": "wood",
+  "color": [
+    120,
+    100,
+    70
+  ],
+  "height": 0.35
+}

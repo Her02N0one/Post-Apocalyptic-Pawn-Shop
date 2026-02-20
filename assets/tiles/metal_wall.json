@@ -1,0 +1,12 @@
+{
+  "name": "Metal Wall",
+  "type": "wall",
+  "category": "Walls",
+  "sound": "metal",
+  "color": [
+    80,
+    85,
+    95
+  ],
+  "texture_key": "metal"
+}

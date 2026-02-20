@@ -1,0 +1,11 @@
+{
+  "name": "Wood Panel",
+  "type": "wall",
+  "category": "Walls",
+  "sound": "wood",
+  "color": [
+    100,
+    75,
+    50
+  ]
+}

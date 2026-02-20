@@ -57,7 +57,7 @@ class LiveLOD(Scene):
         self.world = session.world
         self._selected: int = 0          # index into _zone_names
         self._zone_names: list[str] = []
-        self._zone_tiles: dict[str, list[list[int]]] = {}
+        self._zone_tiles: dict[str, list[list[str]]] = {}
 
     # ── Lifecycle ─────────────────────────────────────────────────
 

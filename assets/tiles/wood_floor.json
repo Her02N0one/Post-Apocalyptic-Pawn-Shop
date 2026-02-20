@@ -1,0 +1,12 @@
+{
+  "name": "Wood Floor",
+  "type": "floor",
+  "category": "Floors",
+  "sound": "wood",
+  "color": [
+    70,
+    50,
+    35
+  ],
+  "texture_key": "wood"
+}

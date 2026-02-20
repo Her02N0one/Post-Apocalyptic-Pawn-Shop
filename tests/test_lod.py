@@ -263,7 +263,7 @@ class TestTickTimers:
 class TestTileLOS:
     def _open_grid(self, h: int = 10, w: int = 10):
         """Create a fully open tile grid (all walkable, tile id 1)."""
-        return [[1] * w for _ in range(h)]
+        return [["grass"] * w for _ in range(h)]
 
     def test_clear_line(self):
         tiles = self._open_grid()
@@ -328,14 +328,14 @@ class TestZoneSim:
         # Create a simple 10x10 zone with walkable interior
         from core.tiles import SOLID_IDS
         solid_id = next(iter(SOLID_IDS))
-        tiles: list[list[int]] = []
+        tiles: list[list[str]] = []
         for r in range(10):
             row = []
             for c in range(10):
                 if r == 0 or r == 9 or c == 0 or c == 9:
                     row.append(solid_id)  # border walls
                 else:
-                    row.append(1)  # walkable
+                    row.append("grass")  # walkable
             tiles.append(row)
 
         from core.zones import Zone, Portal
@@ -438,7 +438,7 @@ class TestZoneSimPortal:
         from core.tiles import SOLID_IDS
         solid_id = next(iter(SOLID_IDS))
 
-        def make_zone(name: str) -> list[list[int]]:
+        def make_zone(name: str) -> list[list[str]]:
             tiles = []
             for r in range(8):
                 row = []
@@ -446,7 +446,7 @@ class TestZoneSimPortal:
                     if r == 0 or r == 7 or c == 0 or c == 7:
                         row.append(solid_id)
                     else:
-                        row.append(1)
+                        row.append("grass")
                 tiles.append(row)
             return tiles
 
@@ -464,7 +464,7 @@ class TestZoneSimPortal:
             )],
         )
         # Make portal tile walkable
-        zone_a.tiles[3][7] = 1
+        zone_a.tiles[3][7] = "grass"
 
         zone_b = Zone(
             name="zone_b", width=8, height=8,
@@ -477,7 +477,7 @@ class TestZoneSimPortal:
                 exit_direction="left",
             )],
         )
-        zone_b.tiles[3][0] = 1
+        zone_b.tiles[3][0] = "grass"
 
         sim.load_zone("zone_a", zone_a)
         sim.load_zone("zone_b", zone_b)

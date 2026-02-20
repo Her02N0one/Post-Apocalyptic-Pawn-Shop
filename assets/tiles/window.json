@@ -1,0 +1,12 @@
+{
+  "name": "Window",
+  "type": "wall",
+  "category": "Walls",
+  "sound": "glass",
+  "color": [
+    100,
+    140,
+    180
+  ],
+  "transparent": true
+}

@@ -430,7 +430,6 @@ def _get_prop_surface(self: "Renderer", key: str) -> pygame.Surface:
     cached = self._prop_surfaces.get(key)
     if cached is not None:
         return cached
-    from systems.textures import _KEY_GENERATORS
     from core.tiles import TILE_REGISTRY
     src = None
     for tid, td in TILE_REGISTRY.items():
@@ -438,10 +437,6 @@ def _get_prop_surface(self: "Renderer", key: str) -> pygame.Surface:
             src = self._atlas.get(tid)
             break
     if src is None:
-        gen = _KEY_GENERATORS.get(key)
-        if gen:
-            src = gen((120, 100, 80))
-        else:
-            src = self._atlas.get(0)
+        src = self._atlas.get("void")
     self._prop_surfaces[key] = src
     return src

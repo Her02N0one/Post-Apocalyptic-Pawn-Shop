@@ -11,7 +11,7 @@ from core.constants import TILE_WALL, TILE_GRASS
 
 def _box_map(w: int = 10, h: int = 10) -> list[list[int]]:
     """Create a walled box with grass interior."""
-    tiles: list[list[int]] = []
+    tiles: list[list[str]] = []
     for r in range(h):
         row = []
         for c in range(w):

@@ -105,7 +105,7 @@ def _try_platform_interact(self: "FirstPerson", app: "App") -> bool:
 
 
 def _get_platform_entity(
-    self: "FirstPerson", app: "App", col: int, row: int, tid: int,
+    self: "FirstPerson", app: "App", col: int, row: int, tid: str,
 ) -> int:
     """Find or create an entity for a platform tile at (col, row)."""
     return get_platform_entity(

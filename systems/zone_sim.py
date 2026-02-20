@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 class ZoneCache:
     """Pre-loaded zone data needed by the coarse sim."""
     name: str
-    tiles: list[list[int]]
+    tiles: list[list[str]]
     height: int
     width: int
     # portal tile → (target_zone, target_row, target_col)
@@ -49,7 +49,7 @@ class ZoneCache:
 
 # ── Sight check ───────────────────────────────────────────────────────
 
-def _tile_los(tiles: list[list[int]], r0: int, c0: int,
+def _tile_los(tiles: list[list[str]], r0: int, c0: int,
               r1: int, c1: int, max_range: int = 18) -> bool:
     """Bresenham line-of-sight on the tile grid.
 
@@ -106,7 +106,7 @@ def _step_toward(r: int, c: int, tr: int, tc: int) -> tuple[int, int]:
     return (r, c + (1 if dc > 0 else -1)) if dc != 0 else (r, c)
 
 
-def _tile_walkable(tiles: list[list[int]], r: int, c: int) -> bool:
+def _tile_walkable(tiles: list[list[str]], r: int, c: int) -> bool:
     """Check if a tile is walkable (in bounds and not solid)."""
     h = len(tiles)
     w = len(tiles[0]) if h else 0

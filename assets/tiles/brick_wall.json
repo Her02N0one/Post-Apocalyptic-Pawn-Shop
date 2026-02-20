@@ -1,0 +1,10 @@
+{
+  "name": "Brick Wall",
+  "type": "wall",
+  "category": "Walls",
+  "color": [
+    130,
+    75,
+    55
+  ]
+}

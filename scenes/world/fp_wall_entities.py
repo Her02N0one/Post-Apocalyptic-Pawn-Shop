@@ -137,7 +137,6 @@ def draw_wall_entities(
         # Get texture
         tex_surf = None
         if ws.texture_key:
-            from systems.textures import _KEY_GENERATORS
             from core.tiles import TILE_REGISTRY
             if ws.texture_key not in self._prop_surfaces:
                 src = None
@@ -146,15 +145,7 @@ def draw_wall_entities(
                         src = self._atlas.get(tid)
                         break
                 if src is None:
-                    gen = _KEY_GENERATORS.get(ws.texture_key)
-                    if gen:
-                        base_color = (120, 100, 80)
-                        sprite = app.world.get(eid, Sprite)
-                        if sprite:
-                            base_color = sprite.color
-                        src = gen(base_color)
-                    else:
-                        src = self._atlas.get(0)
+                    src = self._atlas.get("void")
                 self._prop_surfaces[ws.texture_key] = src
             tex_surf = self._prop_surfaces[ws.texture_key]
 

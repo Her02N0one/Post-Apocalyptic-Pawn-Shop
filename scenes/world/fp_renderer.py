@@ -51,14 +51,8 @@ class Renderer:
 
     def __init__(self) -> None:
         self._atlas = TextureAtlas()
-        # Eagerly generate all tiles and save atlas to disk if needed
+        # Eagerly generate all tiles in memory
         self._atlas.ensure_all()
-        try:
-            from systems.textures import _ATLAS_PATH
-            if not _ATLAS_PATH.exists():
-                self._atlas.save_atlas()
-        except Exception:
-            pass
 
         # ── Strip / column caches (generational) ─────────────
         self._strip_cache: dict[tuple, pygame.Surface] = {}

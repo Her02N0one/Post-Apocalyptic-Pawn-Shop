@@ -8,21 +8,21 @@ import unittest
 from core.tiles import SOLID_IDS
 
 
-def _solid_id() -> int:
+def _solid_id() -> str:
     return next(iter(SOLID_IDS))
 
 
-def _open_grid(h: int = 10, w: int = 10) -> list[list[int]]:
+def _open_grid(h: int = 10, w: int = 10) -> list[list[str]]:
     """Fully walkable interior with wall borders."""
     sid = _solid_id()
-    grid: list[list[int]] = []
+    grid: list[list[str]] = []
     for r in range(h):
-        row: list[int] = []
+        row: list[str] = []
         for c in range(w):
             if r == 0 or r == h - 1 or c == 0 or c == w - 1:
                 row.append(sid)
             else:
-                row.append(1)
+                row.append("grass")
         grid.append(row)
     return grid
 

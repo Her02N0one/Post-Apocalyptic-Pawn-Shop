@@ -20,6 +20,32 @@ DATA_DIR      = _PROJECT_ROOT / "data"
 TEMPLATES_DIR = _PROJECT_ROOT / "templates"
 ROOMS_DIR     = TEMPLATES_DIR / "rooms"
 
+import re as _re
+
+
+def _sanitize_name(name: str) -> str:
+    """Strip path traversal and dangerous chars from a user-supplied name.
+
+    Allows only alphanumerics, underscores, hyphens, and spaces.
+    Collapses multiple spaces, strips leading/trailing whitespace.
+    """
+    name = name.replace("..", "").replace("/", "").replace("\\", "")
+    name = _re.sub(r"[^\w\s-]", "", name)
+    name = _re.sub(r"\s+", " ", name).strip()
+    return name or "untitled"
+
+
+def _safe_zone_path(name: str) -> Path:
+    """Return a safe path inside ZONES_DIR for a zone name.
+
+    Raises ValueError if the resolved path escapes ZONES_DIR.
+    """
+    clean = _sanitize_name(name)
+    path = (ZONES_DIR / f"{clean}.json").resolve()
+    if not str(path).startswith(str(ZONES_DIR.resolve())):
+        raise ValueError(f"Invalid zone name: {name!r}")
+    return path
+
 
 # ── Tools ────────────────────────────────────────────────────────────
 
@@ -111,7 +137,7 @@ class EditorState:
     def __init__(self):
         # Zone data
         self.zone_name: str = ""
-        self.tiles: list[list[int]] = []
+        self.tiles: list[list[str]] = []
         self.map_w: int = 0
         self.map_h: int = 0
         self.anchor: tuple[float, float] = (15.0, 10.0)
@@ -128,12 +154,13 @@ class EditorState:
 
         # Tool state
         self.tool: str = Tool.BRUSH
-        self.selected_tile: int = 1
+        self.selected_tile: str = "grass"
         self.brush_size: int = 1
 
         # Entity state
         self.selected_entity: int = -1
         self.entity_dragging: bool = False
+        self.pending_prefab: str = ""  # name of prefab/forge ready to place
 
         # Panning
         self._panning: bool = False
@@ -161,7 +188,11 @@ class EditorState:
 
     def load_zone(self, name: str) -> bool:
         """Load zone from JSON. Returns True on success."""
-        path = ZONES_DIR / f"{name}.json"
+        try:
+            path = _safe_zone_path(name)
+        except ValueError:
+            self.toast(f"Invalid zone name: {name}")
+            return False
         if not path.exists():
             self.toast(f"Zone not found: {name}")
             return False
@@ -173,7 +204,7 @@ class EditorState:
             return False
 
         self.zone_name = name
-        self.tiles = data.get("tiles", [[1] * 30 for _ in range(20)])
+        self.tiles = data.get("tiles", [["grass"] * 30 for _ in range(20)])
         self.map_h = len(self.tiles)
         self.map_w = len(self.tiles[0]) if self.tiles else 0
 
@@ -220,7 +251,7 @@ class EditorState:
     def load_zone_data(self, data: dict) -> bool:
         """Load zone from an in-memory dict (e.g. baked template)."""
         self.zone_name = data.get("name", "untitled")
-        self.tiles = data.get("tiles", [[1] * 30 for _ in range(20)])
+        self.tiles = data.get("tiles", [["grass"] * 30 for _ in range(20)])
         self.map_h = len(self.tiles)
         self.map_w = len(self.tiles[0]) if self.tiles else 0
 
@@ -259,7 +290,7 @@ class EditorState:
         if self.first_person:
             data["first_person"] = True
 
-        path = ZONES_DIR / f"{self.zone_name}.json"
+        path = _safe_zone_path(self.zone_name)
         try:
             with open(path, "w") as f:
                 json.dump(data, f, indent=2)
@@ -271,11 +302,53 @@ class EditorState:
         self.toast(f"Saved: {path.name}")
         return True
 
+    def save_zone_msgpack(self) -> bool:
+        """Export current zone as .mpz (MessagePack Palette Pattern).
+
+        Saves both JSON (canonical) and .mpz (binary) side by side.
+        Returns True on success.
+        """
+        if not self.zone_name:
+            self.toast("No zone name set")
+            return False
+        # Save JSON first
+        if not self.save_zone():
+            return False
+        try:
+            from editor.msgpack_io import export_zone_file
+            out = export_zone_file(self.zone_name)
+            if out:
+                self.toast(f"Exported: {out.name}")
+                return True
+            self.toast("Export failed")
+            return False
+        except ImportError:
+            self.toast("msgpack not installed")
+            return False
+
+    def get_zone_data(self) -> dict[str, Any]:
+        """Return the current zone as a plain dict (for export)."""
+        data: dict[str, Any] = {
+            "name": self.zone_name,
+            "width": self.map_w,
+            "height": self.map_h,
+            "anchor": list(self.anchor),
+            "tiles": self.tiles,
+            "portals": self.portals,
+            "entities": self.entities,
+        }
+        if self.first_person:
+            data["first_person"] = True
+        return data
+
     def save_portal_to_dest(self, portal: dict,
                             dest_zone: str,
                             dest_tile: tuple[int, int]):
         """Add a return portal in the destination zone file."""
-        path = ZONES_DIR / f"{dest_zone}.json"
+        try:
+            path = _safe_zone_path(dest_zone)
+        except ValueError:
+            return
         if not path.exists():
             return
         with open(path) as f:
@@ -290,17 +363,17 @@ class EditorState:
 
         tiles = data.get("tiles", [])
         if 0 <= dr < len(tiles) and 0 <= dc < len(tiles[0]):
-            tiles[dr][dc] = 9
+            tiles[dr][dc] = "door"
 
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
 
     def new_zone(self, name: str, width: int = 30, height: int = 20):
         """Create a blank zone."""
-        self.zone_name = name
+        self.zone_name = _sanitize_name(name)
         self.map_w = width
         self.map_h = height
-        self.tiles = [[1] * width for _ in range(height)]
+        self.tiles = [["grass"] * width for _ in range(height)]
         self.anchor = (float(width) / 2, float(height) / 2)
         self.portals = []
         self.entities = []
@@ -317,7 +390,7 @@ class EditorState:
         """Resize zone, preserving existing tiles."""
         new_w = max(5, min(new_w, 200))
         new_h = max(5, min(new_h, 200))
-        new_tiles = [[1] * new_w for _ in range(new_h)]
+        new_tiles = [["grass"] * new_w for _ in range(new_h)]
         for r in range(min(new_h, self.map_h)):
             for c in range(min(new_w, self.map_w)):
                 new_tiles[r][c] = self.tiles[r][c]
@@ -329,7 +402,7 @@ class EditorState:
 
     # ── Painting ────────────────────────────────────────────────
 
-    def paint(self, row: int, col: int, tile_id: int | None = None):
+    def paint(self, row: int, col: int, tile_id: str | None = None):
         tid = tile_id if tile_id is not None else self.selected_tile
         half = self.brush_size // 2
         for rr in range(row - half, row - half + self.brush_size):
@@ -338,7 +411,17 @@ class EditorState:
                     self.tiles[rr][cc] = tid
 
     def erase(self, row: int, col: int):
-        self.paint(row, col, 1)
+        """Erase to the zone's default floor tile (first floor-type tile found)."""
+        self.paint(row, col, self.erase_tile)
+
+    @property
+    def erase_tile(self) -> str:
+        """The tile ID used for erasing — defaults to 'grass'."""
+        return getattr(self, '_erase_tile', 'grass')
+
+    @erase_tile.setter
+    def erase_tile(self, value: str):
+        self._erase_tile = value
 
     def flood_fill(self, row: int, col: int):
         target = self.tiles[row][col]
@@ -392,7 +475,7 @@ class EditorState:
                 p["tiles"].remove([row, col])
                 if not p["tiles"]:
                     self.portals.pop(i)
-                self.tiles[row][col] = 1
+                self.tiles[row][col] = "grass"
                 self.push_undo()
                 self.toast("Portal removed")
                 return True
@@ -503,6 +586,10 @@ def load_loot_tables() -> dict[str, Any]:
 
 def save_loot_tables(tables: dict[str, Any]) -> bool:
     """Save loot tables back to TOML."""
+    def _q(s: str) -> str:
+        """Escape a string for TOML double-quoted value."""
+        return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
     path = DATA_DIR / "loot_tables.toml"
     lines = ["# Loot tables — visual editor output",
              "# Each table has pools. Each pool rolls entries by weight.\n"]
@@ -510,19 +597,19 @@ def save_loot_tables(tables: dict[str, Any]) -> bool:
         desc = table.get("description", "")
         lines.append(f'[tables.{table_id}]')
         if desc:
-            lines.append(f'description = "{desc}"')
+            lines.append(f'description = "{_q(desc)}"')
         lines.append("")
         for pool in table.get("pools", []):
             lines.append(f'[[tables.{table_id}.pools]]')
             pname = pool.get("name", "loot")
-            lines.append(f'name = "{pname}"')
+            lines.append(f'name = "{_q(pname)}"')
             lines.append(f'rolls = {pool.get("rolls", 1)}')
             bonus = pool.get("bonus_rolls", 0)
             lines.append(f'bonus_rolls = {bonus}')
             lines.append("")
             for entry in pool.get("entries", []):
                 lines.append(f'[[tables.{table_id}.pools.entries]]')
-                lines.append(f'item = "{entry.get("item", "")}"')
+                lines.append(f'item = "{_q(entry.get("item", ""))}"')
                 lines.append(f'weight = {entry.get("weight", 1)}')
                 lines.append(f'min_count = {entry.get("min_count", 1)}')
                 lines.append(f'max_count = {entry.get("max_count", 1)}')

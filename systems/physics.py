@@ -24,8 +24,8 @@ if TYPE_CHECKING:
 def _hits_wall(x: float, y: float,
                hw: float, hh: float,
                map_h: int, map_w: int,
-               tiles: list[list[int]],
-               solid_ids: frozenset[int] = SOLID_IDS) -> bool:
+               tiles: list[list[str]],
+               solid_ids: frozenset[str] = SOLID_IDS) -> bool:
     """Return True if an AABB centred at (x, y) overlaps a wall or OOB."""
     left  = x - hw * 0.5
     right = x + hw * 0.5 - 0.001
@@ -67,7 +67,7 @@ def _doorway_nudge(pos_x: float, pos_y: float,
                    vel_x: float, vel_y: float,
                    hw: float, hh: float,
                    map_h: int, map_w: int,
-                   tiles: list[list[int]],
+                   tiles: list[list[str]],
                    portal_tiles: set[tuple[int, int]],
                    dt: float) -> tuple[float, float]:
     """Apply a gentle centering nudge when approaching a doorway.
@@ -120,7 +120,7 @@ def _doorway_nudge(pos_x: float, pos_y: float,
 # ── Movement system ──────────────────────────────────────────────────
 
 def movement_system(world: "World", dt: float,
-                    tiles: list[list[int]],
+                    tiles: list[list[str]],
                     portal_tiles: set[tuple[int, int]] | None = None) -> None:
     """Apply velocities to positions with axis-separated wall collision.
 

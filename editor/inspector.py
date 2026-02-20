@@ -1,8 +1,12 @@
-"""editor/inspector.py — Entity property inspector panel.
+"""editor/inspector.py — Tabbed inspector panel (Zone + Tile).
 
-When an entity is selected, shows ALL its component properties as
-editable fields.  Also shows zone-level properties when no entity
-is selected.
+Two tabs at the top of the right panel:
+  **Zone** — entity / zone property editor (the original inspector)
+  **Tile** — contextual tile info showing type, textures, and colour
+
+The Tile tab is populated from:
+  1. ``core.tiles.tile_def()`` — tile type, flags, textures
+  2. ``systems.textures.TextureAtlas`` — 64×64 texture Surfaces
 """
 
 from __future__ import annotations
@@ -21,21 +25,38 @@ from editor.state import (
 )
 from editor.canvas import get_prefab_defaults
 from editor.layout import Layout
+from core.tiles import tile_def, TILE_REGISTRY, TILE_NAMES, TILE_COLORS, TILE_CATEGORIES
+
+# ── Tab constants ────────────────────────────────────────────────
+
+TAB_ZONE = "zone"
+TAB_TILE = "tile"
+_TAB_LABELS = {TAB_ZONE: "Zone", TAB_TILE: "Tile"}
+_TAB_H = 26  # height of the tab bar
 
 
 class Inspector:
-    """Right-side panel showing editable properties of the selected
-    entity, or zone properties when nothing is selected.
+    """Right-side panel with **Zone** and **Tile** tabs.
+
+    Zone tab — editable entity / zone properties (original inspector).
+    Tile tab — tile info, flags, face-model cube net with texture previews.
     """
 
-    def __init__(self, state: EditorState, ctx: UIContext):
+    def __init__(self, state: EditorState, ctx: UIContext,
+                 atlas=None):
         self.state = state
         self.ctx = ctx
+        self._atlas = atlas  # TextureAtlas or None
+        self._tab: str = TAB_ZONE  # active tab
         self._scroll = ScrollPanel(pygame.Rect(0, 0, Layout.inspector_w, 600),
                                    content_height=800)
-        # Cached widget instances — rebuilt when selection changes
+        # Zone-tab widget cache
         self._widgets: list[Any] = []
         self._last_entity_idx: int = -2  # sentinel
+        # Tile-tab widget cache
+        self._tile_widgets: list[Any] = []
+        self._last_tile_id: str = ""
+        # Lazy data
         self._prefab_list: list[str] = []
         self._loot_tables: list[str] = []
         self._item_ids: list[str] = []
@@ -164,7 +185,37 @@ class Inspector:
             options=kind_options, selected=kind_idx)
         kind_dd.on_change = lambda i, v, _d=ident: _d.__setitem__("kind", v)
         self._widgets.append(("labeled_widget", "Kind:", kind_dd, px, y))
-        y += 32
+        y += 28
+
+        # ── Dev Notes / Tags ──────────────────────────────
+        # Show forge archetype reference if present
+        forge_ref = ent.get("forge_archetype", "")
+        if forge_ref:
+            self._widgets.append(("kv", "Forge:", forge_ref, px, y))
+            y += 20
+
+        # Dev notes — always editable
+        self._widgets.append(("section", "Dev Notes", px, y, w))
+        y += 22
+        notes_field = TextField(
+            pygame.Rect(px + 10, y, w - 10, 22), self.ctx,
+            value=ent.get("dev_notes", ""),
+            placeholder="e.g. rustic crate, needs wood texture")
+        notes_field.on_change = lambda v, _e=ent: _e.__setitem__("dev_notes", v)
+        self._widgets.append(("labeled_widget", "Notes:", notes_field, px, y))
+        y += 26
+
+        tags_val = ent.get("tags", [])
+        tags_str = ", ".join(tags_val) if isinstance(tags_val, list) else str(tags_val)
+        tags_field = TextField(
+            pygame.Rect(px + 10, y, w - 10, 22), self.ctx,
+            value=tags_str,
+            placeholder="tag1, tag2, ...")
+        def _set_tags(v, _e=ent):
+            _e["tags"] = [t.strip() for t in v.split(",") if t.strip()]
+        tags_field.on_change = _set_tags
+        self._widgets.append(("labeled_widget", "Tags:", tags_field, px, y))
+        y += 30
 
         # ── Position ───────────────────────────────────────
         self._widgets.append(("section", "Position", px, y, w))
@@ -417,6 +468,93 @@ class Inspector:
 
         self._scroll.content_height = y - Layout.canvas_y
 
+    # ── Tile tab builders ────────────────────────────────────────
+
+    def _rebuild_tile_widgets(self, surface: pygame.Surface):
+        """Rebuild the tile-tab widget list for the currently selected tile."""
+        self._tile_widgets.clear()
+        sw, sh = surface.get_size()
+        L = Layout
+        px = sw - L.inspector_w + 8
+        w = L.inspector_w - 24
+        st = self.state
+        tid = st.selected_tile
+        td = tile_def(tid)
+        y = L.canvas_y + _TAB_H + 8
+
+        if td is None:
+            self._tile_widgets.append(("label", "No tile selected", px, y,
+                                       Theme.TEXT_DIM))
+            self._scroll.content_height = 60
+            return
+
+        # ── Header ─────────────────────────────────────────
+        self._tile_widgets.append(("label", f"TILE: {td.name[:22]}", px, y,
+                                   Theme.ACCENT))
+        y += 24
+
+        # ── Basic info ─────────────────────────────────────
+        self._tile_widgets.append(("section", "Properties", px, y, w))
+        y += 22
+        self._tile_widgets.append(("kv", "ID:", str(td.id), px, y))
+        y += 20
+        self._tile_widgets.append(("kv", "Type:", td.type.value, px, y))
+        y += 20
+        self._tile_widgets.append(("kv", "Category:", td.category, px, y))
+        y += 20
+
+        # Flags (derived from type + extras)
+        flag_bits = []
+        if td.solid:
+            flag_bits.append("solid")
+        if td.wall:
+            flag_bits.append("wall")
+        if td.transparent:
+            flag_bits.append("transp")
+        if td.half_wall:
+            flag_bits.append("half")
+        if td.platform:
+            flag_bits.append("platform")
+        if td.liquid:
+            flag_bits.append("liquid")
+        if td.farmland:
+            flag_bits.append("farmland")
+        flags_str = ", ".join(flag_bits) if flag_bits else "(none)"
+        self._tile_widgets.append(("kv", "Flags:", flags_str, px, y))
+        y += 20
+        self._tile_widgets.append(("kv", "Height:",
+                                   f"{td.height_scale:.2f}", px, y))
+        y += 28
+
+        # ── Textures ──────────────────────────────────────
+        self._tile_widgets.append(("section", "Textures", px, y, w))
+        y += 22
+        self._tile_widgets.append(("kv", "Default:", td.wall_tex(), px, y))
+        y += 20
+        if td.face_textures:
+            _FACE_LABELS = {"north": "N", "south": "S",
+                            "east": "E", "west": "W", "top": "Top"}
+            for face, key in sorted(td.face_textures):
+                label = _FACE_LABELS.get(face, face)
+                self._tile_widgets.append(("kv", f"{label}:", key, px, y))
+                y += 20
+        y += 8
+
+        # ── Texture preview ────────────────────────────────
+        if self._atlas:
+            self._tile_widgets.append(("tex_preview", td.id, px, y, 64))
+            y += 72
+
+        # ── Tile colour swatch ─────────────────────────────
+        colour = TILE_COLORS.get(tid, (128, 128, 128))
+        self._tile_widgets.append(("color_swatch", colour, px, y, 18))
+        self._tile_widgets.append(("kv", "Color:",
+                                   f"({colour[0]}, {colour[1]}, {colour[2]})",
+                                   px + 24, y))
+        y += 28
+
+        self._scroll.content_height = y - L.canvas_y
+
     # ── Drawing ──────────────────────────────────────────────────
 
     def draw(self, surface: pygame.Surface,
@@ -433,21 +571,37 @@ class Inspector:
         pygame.draw.line(surface, Theme.BORDER,
                          (panel_x, L.canvas_y), (panel_x, sh - L.status_h))
 
-        # Header
-        st = self.state
-        if st.selected_entity != self._last_entity_idx:
-            self._last_entity_idx = st.selected_entity
-            self._rebuild_widgets(surface)
+        # ── Tab bar ──────────────────────────────────────────
+        self._draw_tab_bar(surface, font_sm, panel_x, L.canvas_y,
+                           L.inspector_w, _TAB_H)
 
-        # Draw widgets
-        self._scroll.rect = pygame.Rect(panel_x, L.canvas_y,
-                                        L.inspector_w, panel_h)
+        # ── Content area (below tabs) ───────────────────────
+        content_y = L.canvas_y + _TAB_H
+        content_h = panel_h - _TAB_H
+        self._scroll.rect = pygame.Rect(panel_x, content_y,
+                                        L.inspector_w, content_h)
+
+        st = self.state
+
+        if self._tab == TAB_ZONE:
+            # Rebuild zone widgets if selection changed
+            if st.selected_entity != self._last_entity_idx:
+                self._last_entity_idx = st.selected_entity
+                self._rebuild_widgets(surface)
+            widgets = self._widgets
+        else:
+            # Rebuild tile widgets if selected tile changed
+            if st.selected_tile != self._last_tile_id:
+                self._last_tile_id = st.selected_tile
+                self._rebuild_tile_widgets(surface)
+            widgets = self._tile_widgets
+
         offset = int(self._scroll.scroll_y)
 
-        surface.set_clip(pygame.Rect(panel_x, L.canvas_y,
-                                     L.inspector_w, panel_h))
+        surface.set_clip(pygame.Rect(panel_x, content_y,
+                                     L.inspector_w, content_h))
 
-        for entry in self._widgets:
+        for entry in widgets:
             kind = entry[0]
 
             if kind == "label":
@@ -468,7 +622,6 @@ class Inspector:
             elif kind == "labeled_widget":
                 _, label, widget, x, y = entry
                 draw_label(surface, label, x, y - offset, font_sm)
-                # Offset the widget rect for scrolling
                 orig_y = widget.rect.y
                 widget.rect.y -= offset
                 if hasattr(widget, 'draw'):
@@ -525,13 +678,32 @@ class Inspector:
                              (rect.centerx - rendered.get_width() // 2,
                               rect.centery - rendered.get_height() // 2))
 
+            elif kind == "tex_preview":
+                _, tid, x, y, sz = entry
+                rect = pygame.Rect(x, y - offset, sz, sz)
+                pygame.draw.rect(surface, (30, 30, 35), rect)
+                if self._atlas:
+                    try:
+                        tex_surf = self._atlas.get(tid)
+                        thumb = pygame.transform.scale(tex_surf, (sz, sz))
+                        surface.blit(thumb, rect.topleft)
+                    except Exception:
+                        pass
+                pygame.draw.rect(surface, Theme.BORDER, rect, 1)
+
+            elif kind == "color_swatch":
+                _, colour, x, y, sz = entry
+                rect = pygame.Rect(x, y - offset, sz, sz)
+                pygame.draw.rect(surface, colour, rect)
+                pygame.draw.rect(surface, Theme.BORDER, rect, 1)
+
         surface.set_clip(None)
 
         # Draw scrollbar
         self._scroll.draw_scrollbar(surface)
 
         # Draw any open dropdowns ON TOP of everything
-        for entry in self._widgets:
+        for entry in widgets:
             if entry[0] == "labeled_widget":
                 widget = entry[2]
                 if isinstance(widget, Dropdown) and widget.is_open:
@@ -539,6 +711,49 @@ class Inspector:
                     widget.rect.y -= offset
                     widget.draw_dropdown(surface, font_sm)
                     widget.rect.y = orig_y
+
+    def _draw_tab_bar(self, surface: pygame.Surface,
+                      font: pygame.font.Font,
+                      x: int, y: int, w: int, h: int):
+        """Draw the Zone / Tile tab bar at the top of the inspector."""
+        tabs = [TAB_ZONE, TAB_TILE]
+        tab_w = w // len(tabs)
+        mouse_pos = pygame.mouse.get_pos()
+
+        for i, tab_id in enumerate(tabs):
+            tx = x + i * tab_w
+            rect = pygame.Rect(tx, y, tab_w, h)
+            active = (self._tab == tab_id)
+            hov = rect.collidepoint(mouse_pos)
+
+            if active:
+                bg = Theme.PANEL_LITE if hasattr(Theme, 'PANEL_LITE') else (55, 55, 65)
+            elif hov:
+                bg = (50, 50, 58)
+            else:
+                bg = (38, 38, 46)
+            pygame.draw.rect(surface, bg, rect)
+
+            # Bottom highlight for active tab
+            if active:
+                pygame.draw.line(surface, Theme.ACCENT,
+                                 (tx, y + h - 2), (tx + tab_w - 1, y + h - 2), 2)
+            else:
+                pygame.draw.line(surface, Theme.BORDER,
+                                 (tx, y + h - 1), (tx + tab_w - 1, y + h - 1))
+
+            # Label
+            lbl = _TAB_LABELS[tab_id]
+            rendered = font.render(lbl, True,
+                                   Theme.TEXT if active else Theme.TEXT_DIM)
+            surface.blit(rendered,
+                         (rect.centerx - rendered.get_width() // 2,
+                          rect.centery - rendered.get_height() // 2))
+
+        # Vertical border between tabs
+        for i in range(1, len(tabs)):
+            bx = x + i * tab_w
+            pygame.draw.line(surface, Theme.BORDER, (bx, y), (bx, y + h))
 
     # ── Event handling ───────────────────────────────────────────
 
@@ -558,6 +773,21 @@ class Inspector:
             if pos[0] < panel_x:
                 return None
 
+        # ── Tab clicks ───────────────────────────────────────
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            tab_y = L.canvas_y
+            tabs = [TAB_ZONE, TAB_TILE]
+            tab_w = L.inspector_w // len(tabs)
+            mx, my = event.pos
+            if tab_y <= my < tab_y + _TAB_H and mx >= panel_x:
+                idx = (mx - panel_x) // tab_w
+                if 0 <= idx < len(tabs):
+                    new_tab = tabs[idx]
+                    if new_tab != self._tab:
+                        self._tab = new_tab
+                        self._scroll.scroll_y = 0.0
+                    return None
+
         # Scrolling
         if self._scroll.handle_event(event):
             return None
@@ -565,7 +795,17 @@ class Inspector:
         offset = int(self._scroll.scroll_y)
         st = self.state
 
-        # Handle widget events
+        # --- Zone tab events ---
+        if self._tab == TAB_ZONE:
+            return self._handle_zone_events(event, offset, st, panel_x)
+
+        # --- Tile tab events ---
+        # (read-only for now — no interactive widgets)
+        return None
+
+    def _handle_zone_events(self, event, offset, st, panel_x):
+        """Process events for the zone/entity tab."""
+        L = Layout
         for entry in self._widgets:
             kind = entry[0]
 
@@ -631,4 +871,5 @@ class Inspector:
     def force_rebuild(self):
         """Force widget rebuild on next draw."""
         self._last_entity_idx = -2
+        self._last_tile_id = -999
         self._loaded_data = False

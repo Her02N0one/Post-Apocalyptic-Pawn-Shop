@@ -1,0 +1,10 @@
+{
+  "name": "Concrete",
+  "type": "floor",
+  "category": "Terrain",
+  "color": [
+    130,
+    130,
+    130
+  ]
+}

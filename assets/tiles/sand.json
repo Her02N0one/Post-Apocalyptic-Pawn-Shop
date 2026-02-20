@@ -1,0 +1,11 @@
+{
+  "name": "Sand",
+  "type": "floor",
+  "category": "Terrain",
+  "sound": "sand",
+  "color": [
+    140,
+    130,
+    90
+  ]
+}

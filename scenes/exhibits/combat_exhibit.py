@@ -33,7 +33,7 @@ class CombatExhibit(Exhibit):
     def __init__(self):
         self.running = False
 
-    def setup(self, app: App, zone: str, tiles: list[list[int]]) -> list[int]:
+    def setup(self, app: App, zone: str, tiles: list[list[str]]) -> list[int]:
         self.running = False
         self._zone = zone
 
@@ -123,7 +123,7 @@ class CombatExhibit(Exhibit):
             return "reset"
         return None
 
-    def update(self, app: App, dt: float, tiles: list[list[int]],
+    def update(self, app: App, dt: float, tiles: list[list[str]],
                eids: list[int]):
         if not self.running:
             return

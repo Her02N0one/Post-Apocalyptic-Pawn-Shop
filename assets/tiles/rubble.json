@@ -1,0 +1,11 @@
+{
+  "name": "Rubble",
+  "type": "floor",
+  "category": "Terrain",
+  "sound": "gravel",
+  "color": [
+    100,
+    85,
+    70
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "name": "Metal Platform",
+  "type": "platform",
+  "category": "Platforms",
+  "sound": "metal",
+  "color": [
+    100,
+    105,
+    115
+  ],
+  "height": 0.4
+}

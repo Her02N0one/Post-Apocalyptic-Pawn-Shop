@@ -1,7 +1,7 @@
 """systems/pathfinding.py — Tile-grid pathfinding and spatial queries.
 
 Provides A* search, BFS flood-fill (reachable area), and line-of-sight
-based visibility queries.  All operate on the integer tile grid.
+based visibility queries.  All operate on the string tile grid.
 
     from systems.pathfinding import astar, bfs_reachable, visible_tiles
 
@@ -25,7 +25,7 @@ from core.tiles import SOLID_IDS
 #  A* pathfinding
 # ═══════════════════════════════════════════════════════════════════
 
-def _walkable(tiles: list[list[int]], r: int, c: int) -> bool:
+def _walkable(tiles: list[list[str]], r: int, c: int) -> bool:
     """True if (r,c) is in-bounds and not solid."""
     if r < 0 or c < 0:
         return False
@@ -38,7 +38,7 @@ _DIRS_4 = ((-1, 0), (1, 0), (0, -1), (0, 1))
 
 
 def astar(
-    tiles: list[list[int]],
+    tiles: list[list[str]],
     start_r: int, start_c: int,
     goal_r: int, goal_c: int,
     max_steps: int = 800,
@@ -103,7 +103,7 @@ def astar(
 # ═══════════════════════════════════════════════════════════════════
 
 def bfs_reachable(
-    tiles: list[list[int]],
+    tiles: list[list[str]],
     start_r: int, start_c: int,
     max_dist: int,
 ) -> set[tuple[int, int]]:
@@ -136,7 +136,7 @@ def bfs_reachable(
 # ═══════════════════════════════════════════════════════════════════
 
 def random_walkable(
-    tiles: list[list[int]],
+    tiles: list[list[str]],
     origin_r: int, origin_c: int,
     min_dist: int = 3,
     max_dist: int = 10,
@@ -169,7 +169,7 @@ def random_walkable(
 # ═══════════════════════════════════════════════════════════════════
 
 def _bresenham_los(
-    tiles: list[list[int]],
+    tiles: list[list[str]],
     r0: int, c0: int,
     r1: int, c1: int,
 ) -> bool:
@@ -203,7 +203,7 @@ def _bresenham_los(
 
 
 def visible_tiles(
-    tiles: list[list[int]],
+    tiles: list[list[str]],
     origin_r: int, origin_c: int,
     max_range: int = 12,
 ) -> set[tuple[int, int]]:
@@ -238,7 +238,7 @@ def visible_tiles(
 
 
 def _collect_ray(
-    tiles: list[list[int]],
+    tiles: list[list[str]],
     r0: int, c0: int,
     r1: int, c1: int,
     out: set[tuple[int, int]],
@@ -272,7 +272,7 @@ def _collect_ray(
 
 
 def entities_in_los(
-    tiles: list[list[int]],
+    tiles: list[list[str]],
     origin_r: int, origin_c: int,
     entities: list[tuple[int, int, int]],
     max_range: int = 12,

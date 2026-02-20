@@ -1,0 +1,10 @@
+{
+  "name": "Stone Floor",
+  "type": "floor",
+  "category": "Floors",
+  "color": [
+    125,
+    120,
+    115
+  ]
+}

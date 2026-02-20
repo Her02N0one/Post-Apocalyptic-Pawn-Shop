@@ -1,0 +1,11 @@
+{
+  "name": "Carpet",
+  "type": "floor",
+  "category": "Floors",
+  "sound": "cloth",
+  "color": [
+    120,
+    50,
+    50
+  ]
+}

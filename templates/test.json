@@ -1,0 +1,19 @@
+{
+  "name": "test",
+  "width": 16,
+  "height": 14,
+  "base_tiles": [],
+  "slots": [
+    {
+      "name": "slot_0",
+      "x": 2,
+      "y": 2,
+      "w": 6,
+      "h": 6,
+      "tags": [],
+      "required": true
+    }
+  ],
+  "fixed_entities": [],
+  "portals": []
+}

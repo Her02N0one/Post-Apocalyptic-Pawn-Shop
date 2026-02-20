@@ -217,7 +217,7 @@ class MapEditor(Scene):
         self._cam_start: tuple[float, float] = (0.0, 0.0)
 
         # Tile painting
-        self.selected_tile: int = 1
+        self.selected_tile: str = "grass"
         self.brush_size: int = 1
 
         # Mode flags
@@ -234,8 +234,8 @@ class MapEditor(Scene):
         self._text_callback: Any = None
 
         # Undo / redo
-        self._undo_stack: deque[list[list[int]]] = deque(maxlen=50)
-        self._redo_stack: deque[list[list[int]]] = deque(maxlen=50)
+        self._undo_stack: deque[list[list[str]]] = deque(maxlen=50)
+        self._redo_stack: deque[list[list[str]]] = deque(maxlen=50)
         self._push_undo()
 
         # Status toast
@@ -270,7 +270,7 @@ class MapEditor(Scene):
         """Load zone data from JSON into editor state."""
         zone = load_zone(name)
         self.zone_name = name
-        self.tiles: list[list[int]] = zone.tiles
+        self.tiles: list[list[str]] = zone.tiles
         self.map_h: int = zone.height
         self.map_w: int = zone.width
         self.anchor: tuple[float, float] = zone.anchor
@@ -344,7 +344,7 @@ class MapEditor(Scene):
         # Also ensure the tile is set to 9 (portal)
         tiles = data.get("tiles", [])
         if 0 <= dr < len(tiles) and 0 <= dc < len(tiles[0]):
-            tiles[dr][dc] = 9
+            tiles[dr][dc] = "door"
 
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
@@ -410,7 +410,7 @@ class MapEditor(Scene):
         for rr in range(row - half, row - half + self.brush_size):
             for cc in range(col - half, col - half + self.brush_size):
                 if 0 <= rr < self.map_h and 0 <= cc < self.map_w:
-                    self.tiles[rr][cc] = 1
+                    self.tiles[rr][cc] = "grass"
 
     def _flood_fill(self, row: int, col: int) -> None:
         target = self.tiles[row][col]
@@ -442,14 +442,14 @@ class MapEditor(Scene):
                 return
 
         # New portal -- set tile to portal type
-        self.tiles[row][col] = 9
+        self.tiles[row][col] = "door"
         self._wizard = PortalWizard([row, col])
 
     def _cancel_wizard(self) -> None:
         """Cancel the wizard, reverting tile if it was a new portal."""
         if self._wizard and not self._wizard.editing:
             r, c = self._wizard.source_tile
-            self.tiles[r][c] = 1
+            self.tiles[r][c] = "grass"
         self._wizard = None
         self._toast("Portal cancelled")
 
@@ -486,7 +486,7 @@ class MapEditor(Scene):
                 p["tiles"].remove([row, col])
                 if not p["tiles"]:
                     self.portals.pop(i)
-                self.tiles[row][col] = 1
+                self.tiles[row][col] = "grass"
                 self._toast("Portal removed")
                 self._push_undo()
                 return
@@ -613,7 +613,7 @@ class MapEditor(Scene):
         self.zone_name = name
         self.map_w = 30
         self.map_h = 20
-        self.tiles = [[1] * self.map_w for _ in range(self.map_h)]
+        self.tiles = [["grass"] * self.map_w for _ in range(self.map_h)]
         self.anchor = (10.0, 15.0)
         self.portals = []
         self.entities = []
@@ -638,7 +638,7 @@ class MapEditor(Scene):
             return
         nw = max(5, min(nw, 100))
         nh = max(5, min(nh, 100))
-        new_tiles = [[1] * nw for _ in range(nh)]
+        new_tiles = [["grass"] * nw for _ in range(nh)]
         for r in range(min(nh, self.map_h)):
             for c in range(min(nw, self.map_w)):
                 new_tiles[r][c] = self.tiles[r][c]

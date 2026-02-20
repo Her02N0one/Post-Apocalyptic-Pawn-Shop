@@ -1,0 +1,10 @@
+{
+  "name": "Pillar",
+  "type": "wall",
+  "category": "Walls",
+  "color": [
+    110,
+    105,
+    100
+  ]
+}

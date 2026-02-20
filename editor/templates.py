@@ -483,7 +483,7 @@ class TemplateEditor:
             base = t.get("base_tiles", [])
             for ry, row in enumerate(base):
                 for rx, tid in enumerate(row):
-                    if tid != 0:
+                    if tid != "void":
                         c = (60, 50, 40) if tid == 1 else (50, 60, 50)
                         pygame.draw.rect(surface, c,
                                          (int(ox + rx * scale),

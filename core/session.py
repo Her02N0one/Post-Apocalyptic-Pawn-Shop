@@ -53,7 +53,7 @@ class Session:
     def __init__(self, world: "World") -> None:
         self.world = world
         self.zone_name: str = ""
-        self.tiles: list[list[int]] = []
+        self.tiles: list[list[str]] = []
         self.map_w: int = 0
         self.map_h: int = 0
         self.visited_zones: set[str] = set()

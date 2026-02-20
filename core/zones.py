@@ -3,11 +3,12 @@
 A ``Zone`` is a named tile grid with an anchor point, portal definitions,
 and entity descriptors.  Zones are loaded from JSON files in ``zones/``.
 
+Tile grids use **string IDs** (e.g. ``"grass"``, ``"wall"``).
+Old integer grids are auto-migrated on load via ``migrate_int_grid``.
+
     from core.zones import load_zone, Zone
     zone = load_zone("playground")
-    scene.tiles = zone.tiles
-    for desc in zone.entities:
-        spawn(world, desc, zone.name)
+    scene.tiles = zone.tiles   # list[list[str]]
 """
 
 from __future__ import annotations
@@ -16,6 +17,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from core.tiles import migrate_int_grid
 
 
 ZONES_DIR = Path(__file__).resolve().parent.parent / "zones"
@@ -38,7 +41,7 @@ class Zone:
     width: int
     height: int
     anchor: tuple[float, float]
-    tiles: list[list[int]]
+    tiles: list[list[str]]
     portals: list[Portal] = field(default_factory=list)
     entities: list[dict[str, Any]] = field(default_factory=list)
     first_person: bool = False  # True → zone can be viewed in first-person
@@ -61,7 +64,11 @@ def load_zone(name: str) -> Zone:
         anchor_raw = [15.0, 15.0]
     anchor = (float(anchor_raw[0]), float(anchor_raw[1]))
 
-    tiles: list[list[int]] = data.get("tiles", [])
+    raw_tiles = data.get("tiles", [])
+    # Auto-migrate old integer grids to string IDs
+    if raw_tiles and raw_tiles[0] and isinstance(raw_tiles[0][0], int):
+        raw_tiles = migrate_int_grid(raw_tiles)
+    tiles: list[list[str]] = raw_tiles
     height = len(tiles)
     width = len(tiles[0]) if tiles else 0
 
