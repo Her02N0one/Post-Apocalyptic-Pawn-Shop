@@ -59,10 +59,14 @@ class EntityForgeModal:
         forge.draw(surface, font, font_sm, dt)
     """
 
-    LIST_W = 220
-    FIELD_H = 28
-    ROW_H = 34
-    PAD = 10
+    @staticmethod
+    def _s_list_w():  return Layout.s(220)
+    @staticmethod
+    def _s_field_h(): return Layout.s(28)
+    @staticmethod
+    def _s_row_h():   return Layout.s(34)
+    @staticmethod
+    def _s_pad():     return Layout.s(10)
 
     def __init__(self, ctx: UIContext, state: EditorState):
         self.ctx = ctx
@@ -115,21 +119,21 @@ class EntityForgeModal:
         W = 260  # field width
 
         self._form_widgets["id_field"] = TextField(
-            pygame.Rect(0, 0, W, self.FIELD_H), self.ctx, value=arch.id)
+            pygame.Rect(0, 0, W, self._s_field_h()), self.ctx, value=arch.id)
         self._form_widgets["name_field"] = TextField(
-            pygame.Rect(0, 0, W, self.FIELD_H), self.ctx,
+            pygame.Rect(0, 0, W, self._s_field_h()), self.ctx,
             value=arch.display_name)
         self._form_widgets["notes_field"] = TextField(
-            pygame.Rect(0, 0, W, self.FIELD_H), self.ctx,
+            pygame.Rect(0, 0, W, self._s_field_h()), self.ctx,
             value=arch.dev_notes)
         self._form_widgets["tags_field"] = TextField(
-            pygame.Rect(0, 0, W, self.FIELD_H), self.ctx,
+            pygame.Rect(0, 0, W, self._s_field_h()), self.ctx,
             value=", ".join(arch.tags))
 
         # Kind dropdown
         kind_idx = _KIND_OPTIONS.index(arch.kind) if arch.kind in _KIND_OPTIONS else 0
         self._form_widgets["kind_dd"] = Dropdown(
-            pygame.Rect(0, 0, W, self.FIELD_H),
+            pygame.Rect(0, 0, W, self._s_field_h()),
             options=_KIND_OPTIONS, selected=kind_idx)
 
         # Solid checkbox
@@ -140,46 +144,46 @@ class EntityForgeModal:
 
         # ── Tile props ──
         self._form_widgets["texture_key"] = TextField(
-            pygame.Rect(0, 0, W, self.FIELD_H), self.ctx,
+            pygame.Rect(0, 0, W, self._s_field_h()), self.ctx,
             value=arch.texture_key)
         self._form_widgets["floor_z"] = NumberField(
-            pygame.Rect(0, 0, 80, self.FIELD_H), self.ctx,
+            pygame.Rect(0, 0, 80, self._s_field_h()), self.ctx,
             value=arch.floor_z, min_val=0.0, max_val=10.0, step=0.05)
         self._form_widgets["ceiling_z"] = NumberField(
-            pygame.Rect(0, 0, 80, self.FIELD_H), self.ctx,
+            pygame.Rect(0, 0, 80, self._s_field_h()), self.ctx,
             value=arch.ceiling_z, min_val=0.0, max_val=10.0, step=0.05)
 
         # ── Box props ──
         self._form_widgets["box_w"] = NumberField(
-            pygame.Rect(0, 0, 80, self.FIELD_H), self.ctx,
+            pygame.Rect(0, 0, 80, self._s_field_h()), self.ctx,
             value=arch.width, min_val=0.05, max_val=4.0, step=0.05)
         self._form_widgets["box_d"] = NumberField(
-            pygame.Rect(0, 0, 80, self.FIELD_H), self.ctx,
+            pygame.Rect(0, 0, 80, self._s_field_h()), self.ctx,
             value=arch.depth, min_val=0.05, max_val=4.0, step=0.05)
         self._form_widgets["box_h"] = NumberField(
-            pygame.Rect(0, 0, 80, self.FIELD_H), self.ctx,
+            pygame.Rect(0, 0, 80, self._s_field_h()), self.ctx,
             value=arch.height, min_val=0.05, max_val=4.0, step=0.05)
         self._form_widgets["z_offset"] = NumberField(
-            pygame.Rect(0, 0, 80, self.FIELD_H), self.ctx,
+            pygame.Rect(0, 0, 80, self._s_field_h()), self.ctx,
             value=arch.z_offset, min_val=0.0, max_val=4.0, step=0.05)
         self._form_widgets["color_field"] = ColorField(
-            pygame.Rect(0, 0, W, self.FIELD_H), self.ctx,
+            pygame.Rect(0, 0, W, self._s_field_h()), self.ctx,
             color=arch.color)
 
         # ── Billboard props ──
         self._form_widgets["sprite_char"] = TextField(
-            pygame.Rect(0, 0, 60, self.FIELD_H), self.ctx,
+            pygame.Rect(0, 0, 60, self._s_field_h()), self.ctx,
             value=arch.sprite_char)
         self._form_widgets["sprite_color"] = ColorField(
-            pygame.Rect(0, 0, W, self.FIELD_H), self.ctx,
+            pygame.Rect(0, 0, W, self._s_field_h()), self.ctx,
             color=arch.sprite_color)
         self._form_widgets["scale"] = NumberField(
-            pygame.Rect(0, 0, 80, self.FIELD_H), self.ctx,
+            pygame.Rect(0, 0, 80, self._s_field_h()), self.ctx,
             value=arch.scale, min_val=0.1, max_val=4.0, step=0.1)
         self._form_widgets["directional_cb"] = Checkbox(
             pygame.Rect(0, 0, 20, 20), "Directional", checked=arch.directional)
         self._form_widgets["sprite_sheet"] = TextField(
-            pygame.Rect(0, 0, W, self.FIELD_H), self.ctx,
+            pygame.Rect(0, 0, W, self._s_field_h()), self.ctx,
             value=arch.sprite_sheet)
 
     def _current(self) -> ForgeArchetype | None:
@@ -330,8 +334,8 @@ class EntityForgeModal:
         self._draw_list(surface, font, font_sm, list_top, list_h)
 
         # Right: property editor
-        prop_x = self.LIST_W + 1
-        prop_w = sw - self.LIST_W
+        prop_x = self._s_list_w() + 1
+        prop_w = sw - self._s_list_w()
         self._draw_props(surface, font, font_sm, prop_x, list_top,
                          prop_w, list_h)
 
@@ -342,7 +346,7 @@ class EntityForgeModal:
                    font: pygame.font.Font, font_sm: pygame.font.Font,
                    top: int, height: int):
         """Draw the left-side archetype list."""
-        lw = self.LIST_W
+        lw = self._s_list_w()
         pygame.draw.rect(surface, Theme.PANEL, (0, top, lw, height))
         pygame.draw.line(surface, Theme.BORDER, (lw, top), (lw, top + height))
 
@@ -437,88 +441,90 @@ class EntityForgeModal:
         # Clip to property area
         clip = pygame.Rect(x, top, w, h)
         surface.set_clip(clip)
+        try:
+            PAD = self._s_pad()
+            ROW = self._s_row_h()
+            col1 = x + PAD                     # labels
+            col2 = x + Layout.s(130)           # fields
+            fw = min(Layout.s(260), w - Layout.s(150))  # field width
+            y = top + PAD - self._form_scroll
 
-        PAD = self.PAD
-        ROW = self.ROW_H
-        col1 = x + PAD                     # labels
-        col2 = x + 130                     # fields
-        fw = min(260, w - 150)             # field width
-        y = top + PAD - self._form_scroll
+            # ── Section: Identity ──
+            y = self._section_header(surface, font_sm, "IDENTITY", col1, y)
+            y = self._field_row(surface, font_sm, "ID", form["id_field"],
+                                col1, col2, y, fw)
+            y = self._field_row(surface, font_sm, "Name", form["name_field"],
+                                col1, col2, y, fw)
+            y = self._field_row(surface, font_sm, "Kind", form["kind_dd"],
+                                col1, col2, y, fw)
+            y = self._field_row(surface, font_sm, "Tags", form["tags_field"],
+                                col1, col2, y, fw)
 
-        # ── Section: Identity ──
-        y = self._section_header(surface, font_sm, "IDENTITY", col1, y)
-        y = self._field_row(surface, font_sm, "ID", form["id_field"],
-                            col1, col2, y, fw)
-        y = self._field_row(surface, font_sm, "Name", form["name_field"],
-                            col1, col2, y, fw)
-        y = self._field_row(surface, font_sm, "Kind", form["kind_dd"],
-                            col1, col2, y, fw)
-        y = self._field_row(surface, font_sm, "Tags", form["tags_field"],
-                            col1, col2, y, fw)
+            # ── Section: Dev Notes (stub) ──
+            y += 6
+            y = self._section_header(surface, font_sm, "DEV NOTES (Stub)",
+                                     col1, y)
+            y = self._field_row(surface, font_sm, "Notes",
+                                form["notes_field"], col1, col2, y, fw)
 
-        # ── Section: Dev Notes (stub) ──
-        y += 6
-        y = self._section_header(surface, font_sm, "DEV NOTES (Stub)", col1, y)
-        y = self._field_row(surface, font_sm, "Notes", form["notes_field"],
-                            col1, col2, y, fw)
+            # ── Section: Kind-specific ──
+            kind_dd: Dropdown = form["kind_dd"]
+            kind = _KIND_OPTIONS[kind_dd.selected]
 
-        # ── Section: Kind-specific ──
-        kind_dd: Dropdown = form["kind_dd"]
-        kind = _KIND_OPTIONS[kind_dd.selected]
+            y += 6
+            if kind == "tile":
+                y = self._section_header(surface, font_sm,
+                                         "TILE PROPERTIES", col1, y)
+                y = self._field_row(surface, font_sm, "Texture",
+                                    form["texture_key"], col1, col2, y, fw)
+                y = self._field_row(surface, font_sm, "Floor Z",
+                                    form["floor_z"], col1, col2, y, 80)
+                y = self._field_row(surface, font_sm, "Ceiling Z",
+                                    form["ceiling_z"], col1, col2, y, 80)
+                y = self._field_row(surface, font_sm, "Solid",
+                                    form["solid_cb"], col1, col2, y, 24)
+                y = self._field_row(surface, font_sm, "Transparent",
+                                    form["transparent_cb"], col1, col2, y, 24)
 
-        y += 6
-        if kind == "tile":
-            y = self._section_header(surface, font_sm,
-                                     "TILE PROPERTIES", col1, y)
-            y = self._field_row(surface, font_sm, "Texture",
-                                form["texture_key"], col1, col2, y, fw)
-            y = self._field_row(surface, font_sm, "Floor Z",
-                                form["floor_z"], col1, col2, y, 80)
-            y = self._field_row(surface, font_sm, "Ceiling Z",
-                                form["ceiling_z"], col1, col2, y, 80)
-            y = self._field_row(surface, font_sm, "Solid",
-                                form["solid_cb"], col1, col2, y, 24)
-            y = self._field_row(surface, font_sm, "Transparent",
-                                form["transparent_cb"], col1, col2, y, 24)
+            elif kind == "box":
+                y = self._section_header(surface, font_sm,
+                                         "BOX PROPERTIES", col1, y)
+                y = self._field_row(surface, font_sm, "Width",
+                                    form["box_w"], col1, col2, y, 80)
+                y = self._field_row(surface, font_sm, "Depth",
+                                    form["box_d"], col1, col2, y, 80)
+                y = self._field_row(surface, font_sm, "Height",
+                                    form["box_h"], col1, col2, y, 80)
+                y = self._field_row(surface, font_sm, "Z Offset",
+                                    form["z_offset"], col1, col2, y, 80)
+                y = self._field_row(surface, font_sm, "Color",
+                                    form["color_field"], col1, col2, y, fw)
+                y = self._field_row(surface, font_sm, "Solid",
+                                    form["solid_cb"], col1, col2, y, 24)
+                y = self._field_row(surface, font_sm, "Texture",
+                                    form["texture_key"], col1, col2, y, fw)
 
-        elif kind == "box":
-            y = self._section_header(surface, font_sm,
-                                     "BOX PROPERTIES", col1, y)
-            y = self._field_row(surface, font_sm, "Width",
-                                form["box_w"], col1, col2, y, 80)
-            y = self._field_row(surface, font_sm, "Depth",
-                                form["box_d"], col1, col2, y, 80)
-            y = self._field_row(surface, font_sm, "Height",
-                                form["box_h"], col1, col2, y, 80)
-            y = self._field_row(surface, font_sm, "Z Offset",
-                                form["z_offset"], col1, col2, y, 80)
-            y = self._field_row(surface, font_sm, "Color",
-                                form["color_field"], col1, col2, y, fw)
-            y = self._field_row(surface, font_sm, "Solid",
-                                form["solid_cb"], col1, col2, y, 24)
-            y = self._field_row(surface, font_sm, "Texture",
-                                form["texture_key"], col1, col2, y, fw)
+            elif kind == "billboard":
+                y = self._section_header(surface, font_sm,
+                                         "BILLBOARD PROPERTIES", col1, y)
+                y = self._field_row(surface, font_sm, "Char",
+                                    form["sprite_char"], col1, col2, y, 60)
+                y = self._field_row(surface, font_sm, "Color",
+                                    form["sprite_color"], col1, col2, y, fw)
+                y = self._field_row(surface, font_sm, "Scale",
+                                    form["scale"], col1, col2, y, 80)
+                y = self._field_row(surface, font_sm, "Directional",
+                                    form["directional_cb"], col1, col2, y, 24)
+                y = self._field_row(surface, font_sm, "Sheet",
+                                    form["sprite_sheet"], col1, col2, y, fw)
 
-        elif kind == "billboard":
-            y = self._section_header(surface, font_sm,
-                                     "BILLBOARD PROPERTIES", col1, y)
-            y = self._field_row(surface, font_sm, "Char",
-                                form["sprite_char"], col1, col2, y, 60)
-            y = self._field_row(surface, font_sm, "Color",
-                                form["sprite_color"], col1, col2, y, fw)
-            y = self._field_row(surface, font_sm, "Scale",
-                                form["scale"], col1, col2, y, 80)
-            y = self._field_row(surface, font_sm, "Directional",
-                                form["directional_cb"], col1, col2, y, 24)
-            y = self._field_row(surface, font_sm, "Sheet",
-                                form["sprite_sheet"], col1, col2, y, fw)
-
-        # ── Preview box ──
-        y += 12
-        y = self._section_header(surface, font_sm, "PREVIEW", col1, y)
-        self._draw_preview(surface, font, arch, kind, col1, y, fw + 120)
-
-        surface.set_clip(None)
+            # ── Preview box ──
+            y += 12
+            y = self._section_header(surface, font_sm, "PREVIEW", col1, y)
+            self._draw_preview(surface, font, arch, kind, col1, y,
+                               fw + Layout.s(120))
+        finally:
+            surface.set_clip(None)
 
     # ── Drawing helpers ─────────────────────────────────────────
 
@@ -534,7 +540,7 @@ class EntityForgeModal:
         """Draw one label + widget row.  Repositions widget and its
         sub-widgets so NumberField/ColorField render correctly."""
         draw_text(surface, label, col1, y + 6, Theme.TEXT_DIM, font_sm)
-        new_rect = pygame.Rect(col2, y, fw, self.FIELD_H)
+        new_rect = pygame.Rect(col2, y, fw, self._s_field_h())
         # Reposition sub-widgets when rect changes
         if widget.rect != new_rect:
             dx = new_rect.x - widget.rect.x
@@ -553,7 +559,7 @@ class EntityForgeModal:
                     nf._btn_up.move_ip(dx, dy)
                     nf._btn_dn.move_ip(dx, dy)
         widget.draw(surface, font_sm)
-        return y + self.ROW_H
+        return y + self._s_row_h()
 
     @staticmethod
     def _draw_preview(surface: pygame.Surface, font: pygame.font.Font,
@@ -654,7 +660,7 @@ class EntityForgeModal:
         # Mouse wheel scrolling
         if event.type == pygame.MOUSEWHEEL:
             mx, _ = pygame.mouse.get_pos()
-            if mx < self.LIST_W:
+            if mx < self._s_list_w():
                 self._list_scroll = max(0,
                                         self._list_scroll - event.y * 30)
             else:
@@ -691,7 +697,7 @@ class EntityForgeModal:
                     return None
 
             # List area
-            if mx < self.LIST_W and my >= 38:
+            if mx < self._s_list_w() and my >= 38:
                 self._handle_list_click(mx, my)
                 return None
 
@@ -743,7 +749,7 @@ class EntityForgeModal:
         )
         for i, arch in enumerate(filtered):
             iy = list_y + i * item_h - self._list_scroll
-            ir = pygame.Rect(2, iy, self.LIST_W - 4, item_h - 2)
+            ir = pygame.Rect(2, iy, self._s_list_w() - 4, item_h - 2)
             if ir.collidepoint(mx, my):
                 # Apply current form before switching
                 if self._selected_id:

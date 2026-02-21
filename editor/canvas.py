@@ -72,38 +72,38 @@ class Canvas:
         vp = self.viewport_rect(surface)
         # Clip to viewport
         surface.set_clip(vp)
-        # Background
-        pygame.draw.rect(surface, Theme.BG, vp)
+        try:
+            # Background
+            pygame.draw.rect(surface, Theme.BG, vp)
 
-        st = self.state
-        ts = int(TILE_SIZE * st.zoom)
-        if ts < 1:
+            st = self.state
+            ts = int(TILE_SIZE * st.zoom)
+            if ts < 1:
+                return
+
+            sw, sh = surface.get_size()
+
+            # Draw tiles
+            for r in range(st.map_h):
+                for c in range(st.map_w):
+                    sx, sy = self.world_to_screen(c * TILE_SIZE, r * TILE_SIZE,
+                                                  surface)
+                    if sx + ts < vp.x or sy + ts < vp.y or sx > vp.right or sy > vp.bottom:
+                        continue
+                    tid = st.tiles[r][c]
+                    color = TILE_COLORS.get(tid, (120, 120, 120))
+                    rect = pygame.Rect(sx, sy, ts, ts)
+                    pygame.draw.rect(surface, color, rect)
+                    if st.show_grid and ts >= 8:
+                        pygame.draw.rect(surface, Theme.GRID, rect, 1)
+
+            # Draw entities (portals are entities with a portal component)
+            self._draw_entities(surface, font, font_sm, ts)
+
+            # Draw cursor
+            self._draw_cursor(surface, ts, font_sm)
+        finally:
             surface.set_clip(None)
-            return
-
-        sw, sh = surface.get_size()
-
-        # Draw tiles
-        for r in range(st.map_h):
-            for c in range(st.map_w):
-                sx, sy = self.world_to_screen(c * TILE_SIZE, r * TILE_SIZE,
-                                              surface)
-                if sx + ts < vp.x or sy + ts < vp.y or sx > vp.right or sy > vp.bottom:
-                    continue
-                tid = st.tiles[r][c]
-                color = TILE_COLORS.get(tid, (120, 120, 120))
-                rect = pygame.Rect(sx, sy, ts, ts)
-                pygame.draw.rect(surface, color, rect)
-                if st.show_grid and ts >= 8:
-                    pygame.draw.rect(surface, Theme.GRID, rect, 1)
-
-        # Draw entities (portals are entities with a portal component)
-        self._draw_entities(surface, font, font_sm, ts)
-
-        # Draw cursor
-        self._draw_cursor(surface, ts, font_sm)
-
-        surface.set_clip(None)
 
     def _draw_entities(self, surface: pygame.Surface,
                        font: pygame.font.Font,

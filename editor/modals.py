@@ -362,62 +362,138 @@ from core.tiles import (
     TF, TileDef, TileType, TILE_REGISTRY, TILE_CATEGORIES, TC_CUSTOM,
     register_tile, update_tile, delete_tile, save_tiles,
     add_category, TILE_TEX_DIR,
-    _TYPE_FLAGS, _TYPE_DEFAULT_HEIGHT,
+    _TYPE_FLAGS, _TYPE_DEFAULT_HEIGHT, _next_tile_key,
     # Backward-compat aliases so old call-sites don't break
     register_custom_tile, delete_custom_tile, save_custom_tiles,
 )
 
 _TILE_TYPES = list(TileType)
 _TILE_TYPE_LABELS = [t.value for t in _TILE_TYPES]
+_KNOWN_SOUNDS = ["stone", "grass", "water", "sand", "wood",
+                 "glass", "gravel", "metal", "cloth"]
 
 
 class TileEditorModal(_BaseModal):
-    """Full tile editor — create, edit, or delete ANY tile.
+    """Full tile editor — create, edit, duplicate, or delete ANY tile.
 
-    Shows a 64x64 texture preview, lets the user browse for a
-    texture PNG, export the procedural texture, and manage categories.
+    Scrollable body with all TileDef fields exposed.  Uses safe widgets
+    (TextField, Slider, Dropdown) exclusively — no manual text handling.
+    All pixel values go through ``Layout.s()`` for DPI scaling.
     """
 
-    # Extra flag options (not covered by type)
     EXTRA_FLAG_OPTIONS = [
-        ("TRANSPARENT", TF.TRANSPARENT, "See-through wall"),
-        ("FARMLAND", TF.FARMLAND, "Tillable soil"),
+        ("Transparent", TF.TRANSPARENT, "See-through wall"),
+        ("Farmland", TF.FARMLAND, "Tillable soil"),
     ]
+
+    @staticmethod
+    def _key_filter(text: str) -> str:
+        """Allow only filename-safe characters for texture keys."""
+        return "".join(c for c in text
+                       if c.isalnum() or c in ("_", "-", "."))
+
+    # ── init ─────────────────────────────────────────────────────
 
     def __init__(self, manager: ModalManager,
                  edit_tile: TileDef | None = None,
-                 atlas=None):
+                 atlas=None,
+                 *,
+                 duplicate: bool = False):
         super().__init__(manager)
-        self._editing = edit_tile
+        self._editing: TileDef | None = None if duplicate else edit_tile
         self._atlas = atlas
-        # Form state
-        self._name = edit_tile.name if edit_tile else ""
-        self._color = list(edit_tile.color) if edit_tile else [120, 120, 120]
-        self._tile_type: TileType = edit_tile.type if edit_tile else TileType.FLOOR
-        self._extra_flags: TF = TF.NONE
-        if edit_tile:
-            if edit_tile.transparent:
-                self._extra_flags |= TF.TRANSPARENT
-            if edit_tile.farmland:
-                self._extra_flags |= TF.FARMLAND
-        self._texture_key = edit_tile.texture_key or "" if edit_tile else ""
-        # Directional texture overrides (front / back)
-        self._texture_front = edit_tile.texture_front if edit_tile else ""
-        self._texture_back = edit_tile.texture_back if edit_tile else ""
-        self._height_scale = edit_tile.height_scale if edit_tile else 1.0
-        self._category = edit_tile.category if edit_tile else TC_CUSTOM
-        # UI state
-        self._name_active = False
-        self._tex_active = False
-        self._cat_active = False   # free-text category input
-        self._cat_open = False
-        self._cat_text = ""        # typed category (for "new category")
         self._error: str = ""
         self._tex_preview: pygame.Surface | None = None
+        self._type_open: bool = False
+        self._confirm_delete: bool = False
+
+        src = edit_tile  # source tile (for edit OR duplicate)
+        z = pygame.Rect(0, 0, 0, 0)  # repositioned in draw
+
+        # Scroll state (body only — not header/buttons)
+        self._scroll_y: float = 0.0
+        self._content_h: int = 0  # set each frame in draw
+
+        # ── Text fields ──────────────────────────────────────────
+        self._name_field = TextField(
+            z, self.ctx,
+            value=(src.name + " (copy)" if duplicate else src.name) if src else "",
+            placeholder="e.g. Mossy Stone", maxlen=48)
+
+        self._tex_field = TextField(
+            z, self.ctx,
+            value=(src.texture_key or "") if src else "",
+            placeholder="e.g. mossy_stone", maxlen=64,
+            filter_fn=self._key_filter)
+
+        self._front_field = TextField(
+            z, self.ctx,
+            value=src.texture_front if src else "",
+            placeholder="(none)", maxlen=64,
+            filter_fn=self._key_filter)
+
+        self._back_field = TextField(
+            z, self.ctx,
+            value=src.texture_back if src else "",
+            placeholder="(none)", maxlen=64,
+            filter_fn=self._key_filter)
+
+        self._cat_field = TextField(
+            z, self.ctx, value="",
+            placeholder="type category name...", maxlen=32)
+
+        self.ctx.take_focus(self._name_field.uid)
+
+        # ── Color sliders ────────────────────────────────────────
+        col = list(src.color) if src else [120, 120, 120]
+        _scolors = [(200, 80, 80), (80, 200, 80), (80, 80, 200)]
+        self._color_sliders: list[Slider] = [
+            Slider(z, value=float(col[i]), min_val=0, max_val=255,
+                   step=1, bar_color=_scolors[i], fmt="{:.0f}")
+            for i in range(3)]
+
+        # ── Height slider ────────────────────────────────────────
+        self._height_slider = Slider(
+            z, value=src.height_scale if src else 1.0,
+            min_val=0.05, max_val=1.0, step=0.01,
+            bar_color=Theme.ACCENT, fmt="{:.2f}")
+
+        # ── Tile type ────────────────────────────────────────────
+        self._tile_type: TileType = src.type if src else TileType.FLOOR
+
+        # ── Extra flags ──────────────────────────────────────────
+        self._extra_flags: TF = TF.NONE
+        if src:
+            if src.transparent:
+                self._extra_flags |= TF.TRANSPARENT
+            if src.farmland:
+                self._extra_flags |= TF.FARMLAND
+
+        # ── Sound ────────────────────────────────────────────────
+        self._sound: str = src.sound if src else "stone"
+        self._sound_open: bool = False
+
+        # ── Category ─────────────────────────────────────────────
+        self._category = src.category if src else TC_CUSTOM
+        self._cat_open: bool = False
+        self._cat_active: bool = False
+
+        # ── Hit-test rects (set each frame) ──────────────────────
+        self._type_rect = z
+        self._flag_rects: list[tuple[pygame.Rect, TF]] = []
+        self._sound_rect = z
+        self._cat_rect = z
+        self._save_rect = z
+        self._del_rect = z
+        self._dup_rect = z
+        self._cancel_rect = z
+        self._import_rect = z
+        self._import_front_rect = z
+        self._import_back_rect = z
+
         self._build_preview()
 
     def _build_preview(self):
-        """Build the 64x64 texture preview from the atlas."""
         if self._atlas and self._editing:
             try:
                 self._tex_preview = self._atlas.get(self._editing.id).copy()
@@ -426,308 +502,534 @@ class TileEditorModal(_BaseModal):
         else:
             self._tex_preview = None
 
-    def _tex_file_path(self) -> str:
-        """Return the expected texture PNG path for current texture_key."""
-        key = self._texture_key.strip()
+    def _tex_exists(self, key: str) -> bool:
         if not key:
-            return ""
-        return _os.path.join(TILE_TEX_DIR, f"{key}.png")
+            return False
+        p = _os.path.join(TILE_TEX_DIR, f"{key}.png")
+        return _os.path.exists(p)
 
-    def _tex_file_exists(self) -> bool:
-        p = self._tex_file_path()
-        return bool(p and _os.path.exists(p))
+    def _predicted_id(self) -> str:
+        """Show what the tile key *would* be for a new tile."""
+        name = self._name_field.value.strip()
+        if not name:
+            return "\u2014"
+        return _next_tile_key(name)
 
-    # ── drawing ──────────────────────────────────────────────────
+    def _name_collision(self) -> bool:
+        """Return True if another tile already has this display name."""
+        name = self._name_field.value.strip().lower()
+        if not name:
+            return False
+        for tid, td in TILE_REGISTRY.items():
+            if self._editing and tid == self._editing.id:
+                continue
+            if td.name.lower() == name:
+                return True
+        return False
+
+    # ── draw ─────────────────────────────────────────────────────
 
     def draw(self, surface, font, font_sm, dt):
         super().draw(surface, font, font_sm, dt)
-        W, H = 400, 620
-        rect = self._centered_rect(surface, W, H)
-        title = f"Edit Tile (ID {self._editing.id})" if self._editing else "New Tile"
+        s = _L.s
+        rect = self._centered_rect(surface, 440, 680)
+        title = (f"Edit Tile ({self._editing.id})" if self._editing
+                 else "New Tile")
         self._draw_panel(surface, rect, title)
 
-        x0 = rect.x + 16
-        y = rect.y + 38
-        rw = rect.w - 32
+        pad = s(16)
+        x0 = rect.x + pad
+        rw = rect.w - pad * 2
+        field_h = s(24)
+        row = s(20)
+        gap = s(6)
         mx, my = pygame.mouse.get_pos()
 
-        # ── Texture preview (64x64) ─────────────────────────────
-        prev_r = pygame.Rect(x0, y, 64, 64)
+        # Fixed header zone (title already drawn by _draw_panel)
+        header_bottom = rect.y + s(36)
+
+        # Fixed button zone at bottom
+        btn_zone_h = s(44)
+        btn_top = rect.bottom - btn_zone_h
+
+        # Scrollable body area between header and buttons
+        body_r = pygame.Rect(rect.x, header_bottom, rect.w,
+                             btn_top - header_bottom)
+
+        # ── begin scroll clip ────────────────────────────────────
+        surface.set_clip(body_r)
+        y = body_r.y - int(self._scroll_y)
+
+        # ── Texture preview ──────────────────────────────────────
+        psz = s(64)
+        prev_r = pygame.Rect(x0, y, psz, psz)
         pygame.draw.rect(surface, (30, 30, 35), prev_r)
+        col = [int(sl.value) for sl in self._color_sliders]
         if self._tex_preview:
-            surface.blit(self._tex_preview, prev_r.topleft)
+            try:
+                preview = pygame.transform.scale(
+                    self._tex_preview, (psz, psz))
+                surface.blit(preview, prev_r.topleft)
+            except (pygame.error, ValueError):
+                pygame.draw.rect(surface, tuple(col),
+                                 prev_r.inflate(-4, -4))
         else:
-            # Fallback: draw colour swatch
-            pygame.draw.rect(surface, tuple(self._color),
-                             prev_r.inflate(-4, -4))
+            pygame.draw.rect(surface, tuple(col), prev_r.inflate(-4, -4))
         pygame.draw.rect(surface, Theme.BORDER, prev_r, 1)
 
-        # File path info beside preview
-        tx = x0 + 72
-        key = self._texture_key.strip() or "—"
-        exists = self._tex_file_exists()
+        # File info beside preview
+        tx = x0 + psz + s(8)
+        key = self._tex_field.value.strip() or "\u2014"
+        exists = self._tex_exists(self._tex_field.value.strip())
         file_col = Theme.SUCCESS if exists else Theme.TEXT_DIM
-        draw_text(surface, f"tex: {key}.png", tx, y + 2, file_col, font_sm)
-        status = "found" if exists else "not found (procedural)"
-        draw_text(surface, status, tx, y + 16, file_col, font_sm)
+        draw_text(surface, f"tex: {key}.png", tx, y + s(2),
+                  file_col, font_sm)
+        status = "\u2713 found" if exists else "not found (procedural)"
+        draw_text(surface, status, tx, y + s(16), file_col, font_sm)
 
-        self._export_rect = pygame.Rect(0, 0, 0, 0)  # disabled
-
-        # Import button
-        imp_r = pygame.Rect(tx, y + 34, 110, 22)
+        # Import main-tex button
+        imp_w = s(110)
+        imp_r = pygame.Rect(tx, y + s(34), imp_w, field_h)
         ihov = imp_r.collidepoint(mx, my)
-        pygame.draw.rect(surface, Theme.BTN_HOVER if ihov else Theme.PANEL_LITE,
+        pygame.draw.rect(surface,
+                         Theme.BTN_HOVER if ihov else Theme.PANEL_LITE,
                          imp_r, border_radius=3)
-        pygame.draw.rect(surface, Theme.ACCENT2 if Theme.ACCENT2 else Theme.ACCENT,
-                         imp_r, 1, border_radius=3)
-        draw_text(surface, "Import PNG", imp_r.x + 8, imp_r.y + 5,
-                  Theme.ACCENT2 if Theme.ACCENT2 else Theme.ACCENT, font_sm)
+        pygame.draw.rect(surface, Theme.ACCENT2, imp_r, 1,
+                         border_radius=3)
+        draw_text_centered(surface, "Import PNG", imp_r,
+                           Theme.ACCENT2, font_sm)
         self._import_rect = imp_r
+        y += psz + gap
 
-        y += 72
+        # ── Tile ID preview (new tiles) / ID display (existing) ──
+        if self._editing:
+            draw_text(surface, f"ID: {self._editing.id}",
+                      x0, y + s(2), Theme.TEXT_DIM, font_sm)
+        else:
+            pid = self._predicted_id()
+            draw_text(surface, f"ID will be: {pid}",
+                      x0, y + s(2), Theme.TEXT_DIM, font_sm)
+        y += s(16)
 
         # ── Name ────────────────────────────────────────────────
-        draw_text(surface, "Name:", x0, y, Theme.TEXT_DIM, font_sm)
-        y += 16
-        name_r = pygame.Rect(x0, y, rw, 22)
-        bg = (35, 35, 42) if self._name_active else Theme.FIELD_BG
-        pygame.draw.rect(surface, bg, name_r, border_radius=3)
-        pygame.draw.rect(surface, Theme.BORDER, name_r, 1, border_radius=3)
-        disp_name = self._name or "e.g. Mossy Stone"
-        nc = Theme.TEXT if self._name else Theme.TEXT_DIM
-        draw_text(surface, disp_name, name_r.x + 4, name_r.y + 4, nc, font_sm)
-        if self._name_active and pygame.time.get_ticks() % 1000 < 500:
-            cx = name_r.x + 4 + font_sm.size(self._name)[0]
-            pygame.draw.line(surface, Theme.ACCENT,
-                             (cx, name_r.y + 3), (cx, name_r.y + 19))
-        self._name_rect = name_r
-        y += 28
+        draw_text(surface, "Name:", x0, y + s(2), Theme.TEXT_DIM, font_sm)
+        y += s(16)
+        self._name_field.rect = pygame.Rect(x0, y, rw, field_h)
+        self._name_field.draw(surface, font_sm, dt)
+        y += field_h
+        # Name collision warning
+        if self._name_collision():
+            draw_text(surface, "\u26A0 A tile with this name exists",
+                      x0, y + s(1), Theme.ACCENT2, font_sm)
+            y += s(14)
+        y += gap
 
-        # ── Colour preview + RGB sliders ────────────────────────
-        draw_text(surface, "Color:", x0, y, Theme.TEXT_DIM, font_sm)
-        swatch_r = pygame.Rect(x0 + 50, y - 2, 24, 18)
-        pygame.draw.rect(surface, tuple(self._color), swatch_r,
+        # ── Color + swatch ──────────────────────────────────────
+        draw_text(surface, "Color:", x0, y + s(2), Theme.TEXT_DIM, font_sm)
+        swatch_r = pygame.Rect(x0 + s(50), y, s(24), s(18))
+        pygame.draw.rect(surface, tuple(col), swatch_r, border_radius=3)
+        pygame.draw.rect(surface, Theme.BORDER, swatch_r, 1,
                          border_radius=3)
-        pygame.draw.rect(surface, (80, 80, 80), swatch_r, 1,
-                         border_radius=3)
-        y += 18
-        self._color_slider_rects = []
-        for i, label in enumerate(("R", "G", "B")):
-            lbl_color = [(200, 80, 80), (80, 200, 80), (80, 80, 200)][i]
-            draw_text(surface, label, x0, y + 2, lbl_color, font_sm)
-            bar_r = pygame.Rect(x0 + 16, y + 2, rw - 60, 12)
-            pygame.draw.rect(surface, Theme.FIELD_BG, bar_r, border_radius=3)
-            frac = self._color[i] / 255.0
-            fill_r = pygame.Rect(bar_r.x, bar_r.y,
-                                 int(bar_r.w * frac), bar_r.h)
-            pygame.draw.rect(surface, lbl_color, fill_r, border_radius=3)
-            draw_text(surface, str(self._color[i]),
-                      bar_r.right + 4, y + 1, Theme.TEXT, font_sm)
-            self._color_slider_rects.append((bar_r, i))
-            y += 18
+        y += row
+        _clabels = ["R", "G", "B"]
+        _clcolors = [(200, 80, 80), (80, 200, 80), (80, 80, 200)]
+        bar_w = rw - s(60)
+        for i in range(3):
+            draw_text(surface, _clabels[i], x0, y + s(2),
+                      _clcolors[i], font_sm)
+            self._color_sliders[i].rect = pygame.Rect(
+                x0 + s(16), y + s(2), bar_w, s(12))
+            self._color_sliders[i].draw(surface, font_sm)
+            y += s(18)
 
-        # ── Tile Type (dropdown) ─────────────────────────────────
-        y += 4
-        draw_text(surface, "Type:", x0, y, Theme.TEXT_DIM, font_sm)
-        y += 16
-        type_r = pygame.Rect(x0, y, rw, 22)
-        pygame.draw.rect(surface, Theme.FIELD_BG, type_r, border_radius=3)
-        pygame.draw.rect(surface, Theme.BORDER, type_r, 1, border_radius=3)
-        draw_text(surface, self._tile_type.value, type_r.x + 6, type_r.y + 4,
-                  Theme.TEXT, font_sm)
-        draw_text(surface, "\u25BE", type_r.right - 16, type_r.y + 4,
-                  Theme.TEXT_DIM, font_sm)
+        # ── Tile Type ────────────────────────────────────────────
+        y += s(4)
+        draw_text(surface, "Type:", x0, y + s(2), Theme.TEXT_DIM, font_sm)
+        y += s(16)
+        type_r = pygame.Rect(x0, y, rw, field_h)
+        hov = type_r.collidepoint(mx, my)
+        pygame.draw.rect(surface,
+                         Theme.BTN_HOVER if hov else Theme.FIELD_BG,
+                         type_r, border_radius=3)
+        pygame.draw.rect(surface,
+                         Theme.ACCENT if self._type_open else Theme.BORDER,
+                         type_r, 1, border_radius=3)
+        draw_text(surface, self._tile_type.value, type_r.x + s(6),
+                  type_r.y + s(4), Theme.TEXT, font_sm)
+        draw_text(surface, "\u25BE", type_r.right - s(16),
+                  type_r.y + s(4), Theme.TEXT_DIM, font_sm)
         self._type_rect = type_r
-        # Type dropdown items (rendered when open)
-        if getattr(self, '_type_open', False):
-            for ti, tt in enumerate(_TILE_TYPES):
-                ir = pygame.Rect(type_r.x, type_r.bottom + ti * 22,
-                                 type_r.w, 22)
-                bg = Theme.BTN_HOVER if ir.collidepoint(mx, my) else Theme.PANEL_LITE
-                pygame.draw.rect(surface, bg, ir)
-                pygame.draw.rect(surface, Theme.BORDER, ir, 1)
-                draw_text(surface, tt.value, ir.x + 6, ir.y + 4,
-                          Theme.TEXT, font_sm)
-        y += 28
+        y += field_h + gap
 
-        # ── Extra flags (TRANSPARENT, FARMLAND) ─────────────────
-        self._flag_rects = []
+        # ── Extra flags ─────────────────────────────────────────
+        self._flag_rects.clear()
         col_w = rw // 2
-        for idx, (fname, fval, fdesc) in enumerate(self.EXTRA_FLAG_OPTIONS):
-            col = idx % 2
-            if col == 0:
+        for idx, (fname, fval, _fdesc) in enumerate(self.EXTRA_FLAG_OPTIONS):
+            col_i = idx % 2
+            if col_i == 0:
                 row_y = y
-            fx = x0 + col * col_w
+            fx = x0 + col_i * col_w
             fy = row_y
-            cb_r = pygame.Rect(fx, fy, 14, 14)
+            cb_sz = s(14)
+            cb_r = pygame.Rect(fx, fy, cb_sz, cb_sz)
             checked = bool(self._extra_flags & fval)
             bg = Theme.ACCENT if checked else Theme.FIELD_BG
             pygame.draw.rect(surface, bg, cb_r, border_radius=2)
-            pygame.draw.rect(surface, Theme.BORDER, cb_r, 1, border_radius=2)
+            pygame.draw.rect(surface, Theme.BORDER, cb_r, 1,
+                             border_radius=2)
             if checked:
-                draw_text(surface, "\u2713", cb_r.x + 2, cb_r.y, (255, 255, 255), font_sm)
-            draw_text(surface, fname, fx + 18, fy + 1, Theme.TEXT, font_sm)
+                draw_text(surface, "\u2713", cb_r.x + s(2), cb_r.y,
+                          (255, 255, 255), font_sm)
+            draw_text(surface, fname, fx + cb_sz + s(4), fy + s(1),
+                      Theme.TEXT, font_sm)
             self._flag_rects.append((cb_r, fval))
-            if col == 1:
-                y += 20
+            if col_i == 1:
+                y += row
         if len(self.EXTRA_FLAG_OPTIONS) % 2 == 1:
-            y += 20
-        y += 4
+            y += row
+        y += s(4)
+
+        # ── Sound ───────────────────────────────────────────────
+        draw_text(surface, "Sound:", x0, y + s(2), Theme.TEXT_DIM, font_sm)
+        snd_r = pygame.Rect(x0 + s(60), y, rw - s(60), field_h)
+        shov = snd_r.collidepoint(mx, my)
+        pygame.draw.rect(surface,
+                         Theme.BTN_HOVER if shov else Theme.FIELD_BG,
+                         snd_r, border_radius=3)
+        pygame.draw.rect(surface,
+                         Theme.ACCENT if self._sound_open else Theme.BORDER,
+                         snd_r, 1, border_radius=3)
+        draw_text(surface, self._sound, snd_r.x + s(6),
+                  snd_r.y + s(4), Theme.TEXT, font_sm)
+        draw_text(surface, "\u25BE", snd_r.right - s(14),
+                  snd_r.y + s(4), Theme.TEXT_DIM, font_sm)
+        self._sound_rect = snd_r
+        y += field_h + gap
 
         # ── Texture key ─────────────────────────────────────────
-        draw_text(surface, "Texture Key:", x0, y, Theme.TEXT_DIM, font_sm)
-        y += 16
-        tex_r = pygame.Rect(x0, y, rw, 22)
-        bg = (35, 35, 42) if self._tex_active else Theme.FIELD_BG
-        pygame.draw.rect(surface, bg, tex_r, border_radius=3)
-        pygame.draw.rect(surface, Theme.BORDER, tex_r, 1, border_radius=3)
-        disp_tex = self._texture_key or "e.g. mossy_stone"
-        tc = Theme.TEXT if self._texture_key else Theme.TEXT_DIM
-        draw_text(surface, disp_tex, tex_r.x + 4, tex_r.y + 4, tc, font_sm)
-        if self._tex_active and pygame.time.get_ticks() % 1000 < 500:
-            cx = tex_r.x + 4 + font_sm.size(self._texture_key)[0]
-            pygame.draw.line(surface, Theme.ACCENT,
-                             (cx, tex_r.y + 3), (cx, tex_r.y + 19))
-        self._tex_rect = tex_r
-        y += 26
+        draw_text(surface, "Texture Key:", x0, y + s(2),
+                  Theme.TEXT_DIM, font_sm)
+        draw_text(surface, "(a-z 0-9 _ - .)", x0 + s(100), y + s(2),
+                  (100, 100, 110), font_sm)
+        y += s(16)
+        self._tex_field.rect = pygame.Rect(x0, y, rw, field_h)
+        self._tex_field.draw(surface, font_sm, dt)
+        y += field_h + gap
 
-        # ── Directional textures (front / back) ─────────────────
-        if not hasattr(self, '_front_rect'):
-            self._front_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
-            self._back_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
-            self._front_active: bool = False
-            self._back_active: bool = False
+        # ── Front texture ───────────────────────────────────────
+        draw_text(surface, "Front Tex:", x0, y + s(2),
+                  Theme.TEXT_DIM, font_sm)
+        fval = self._front_field.value.strip()
+        if fval:
+            fcol = Theme.SUCCESS if self._tex_exists(fval) else Theme.DANGER
+            fmark = "\u2713" if self._tex_exists(fval) else "\u2717"
+            draw_text(surface, fmark, x0 + s(75), y + s(2), fcol, font_sm)
+        # Small import button
+        ib_w = s(18)
+        ifr = pygame.Rect(x0 + rw - ib_w, y, ib_w, s(16))
+        ihov_f = ifr.collidepoint(mx, my)
+        pygame.draw.rect(surface,
+                         Theme.BTN_HOVER if ihov_f else Theme.PANEL_LITE,
+                         ifr, border_radius=2)
+        draw_text(surface, "\U0001F4C2", ifr.x + s(2), ifr.y,
+                  Theme.ACCENT2, font_sm)
+        self._import_front_rect = ifr
+        y += s(16)
+        self._front_field.rect = pygame.Rect(x0, y, rw, field_h)
+        self._front_field.draw(surface, font_sm, dt)
+        y += field_h + gap
 
-        draw_text(surface, "Front Tex:", x0, y, Theme.TEXT_DIM, font_sm)
-        fr = pygame.Rect(x0 + 75, y - 2, rw - 75, 20)
-        bg = (35, 35, 42) if self._front_active else Theme.FIELD_BG
-        pygame.draw.rect(surface, bg, fr, border_radius=3)
-        pygame.draw.rect(surface, Theme.BORDER, fr, 1, border_radius=3)
-        val_f = self._texture_front or "(none)"
-        tc_f = Theme.TEXT if self._texture_front else Theme.TEXT_DIM
-        draw_text(surface, val_f, fr.x + 4, fr.y + 3, tc_f, font_sm)
-        if self._front_active and pygame.time.get_ticks() % 1000 < 500:
-            cx = fr.x + 4 + font_sm.size(self._texture_front)[0]
-            pygame.draw.line(surface, Theme.ACCENT,
-                             (cx, fr.y + 2), (cx, fr.y + 17))
-        self._front_rect = fr
-        y += 22
-
-        draw_text(surface, "Back Tex:", x0, y, Theme.TEXT_DIM, font_sm)
-        br = pygame.Rect(x0 + 75, y - 2, rw - 75, 20)
-        bg = (35, 35, 42) if self._back_active else Theme.FIELD_BG
-        pygame.draw.rect(surface, bg, br, border_radius=3)
-        pygame.draw.rect(surface, Theme.BORDER, br, 1, border_radius=3)
-        val_b = self._texture_back or "(none)"
-        tc_b = Theme.TEXT if self._texture_back else Theme.TEXT_DIM
-        draw_text(surface, val_b, br.x + 4, br.y + 3, tc_b, font_sm)
-        if self._back_active and pygame.time.get_ticks() % 1000 < 500:
-            cx = br.x + 4 + font_sm.size(self._texture_back)[0]
-            pygame.draw.line(surface, Theme.ACCENT,
-                             (cx, br.y + 2), (cx, br.y + 17))
-        self._back_rect = br
-        y += 26
+        # ── Back texture ────────────────────────────────────────
+        draw_text(surface, "Back Tex:", x0, y + s(2),
+                  Theme.TEXT_DIM, font_sm)
+        bval = self._back_field.value.strip()
+        if bval:
+            bcol = Theme.SUCCESS if self._tex_exists(bval) else Theme.DANGER
+            bmark = "\u2713" if self._tex_exists(bval) else "\u2717"
+            draw_text(surface, bmark, x0 + s(75), y + s(2), bcol, font_sm)
+        ibr = pygame.Rect(x0 + rw - ib_w, y, ib_w, s(16))
+        ibhov = ibr.collidepoint(mx, my)
+        pygame.draw.rect(surface,
+                         Theme.BTN_HOVER if ibhov else Theme.PANEL_LITE,
+                         ibr, border_radius=2)
+        draw_text(surface, "\U0001F4C2", ibr.x + s(2), ibr.y,
+                  Theme.ACCENT2, font_sm)
+        self._import_back_rect = ibr
+        y += s(16)
+        self._back_field.rect = pygame.Rect(x0, y, rw, field_h)
+        self._back_field.draw(surface, font_sm, dt)
+        y += field_h + gap
 
         # ── Height scale ────────────────────────────────────────
-        draw_text(surface, "Height:", x0, y, Theme.TEXT_DIM, font_sm)
-        hs_bar = pygame.Rect(x0 + 60, y + 2, rw - 100, 12)
-        pygame.draw.rect(surface, Theme.FIELD_BG, hs_bar, border_radius=3)
-        frac = min(1.0, self._height_scale)
-        fill_r = pygame.Rect(hs_bar.x, hs_bar.y,
-                             int(hs_bar.w * frac), hs_bar.h)
-        pygame.draw.rect(surface, Theme.ACCENT, fill_r, border_radius=3)
-        draw_text(surface, f"{self._height_scale:.2f}",
-                  hs_bar.right + 4, y, Theme.TEXT, font_sm)
-        self._hs_rect = hs_bar
-        y += 22
+        draw_text(surface, "Height:", x0, y + s(2),
+                  Theme.TEXT_DIM, font_sm)
+        self._height_slider.rect = pygame.Rect(
+            x0 + s(60), y + s(2), rw - s(100), s(12))
+        self._height_slider.draw(surface, font_sm)
+        y += row + gap
 
-        # ── Category (dropdown + free-text for new) ─────────────
-        draw_text(surface, "Category:", x0, y, Theme.TEXT_DIM, font_sm)
-        cat_r = pygame.Rect(x0 + 80, y - 2, rw - 80, 22)
-        hov = cat_r.collidepoint(mx, my)
-        pygame.draw.rect(surface, Theme.BTN_HOVER if hov else Theme.FIELD_BG,
-                         cat_r, border_radius=3)
-        pygame.draw.rect(surface, Theme.BORDER, cat_r, 1, border_radius=3)
+        # ── Category ────────────────────────────────────────────
+        draw_text(surface, "Category:", x0, y + s(2),
+                  Theme.TEXT_DIM, font_sm)
+        cat_r = pygame.Rect(x0 + s(80), y, rw - s(80), field_h)
         if self._cat_active:
-            disp_cat = self._cat_text or "type new category..."
-            cc = Theme.TEXT if self._cat_text else Theme.TEXT_DIM
-            draw_text(surface, disp_cat, cat_r.x + 6, cat_r.y + 4, cc, font_sm)
-            if pygame.time.get_ticks() % 1000 < 500:
-                cx = cat_r.x + 6 + font_sm.size(self._cat_text)[0]
-                pygame.draw.line(surface, Theme.ACCENT,
-                                 (cx, cat_r.y + 3), (cx, cat_r.y + 19))
+            self._cat_field.rect = cat_r
+            self._cat_field.draw(surface, font_sm, dt)
         else:
-            draw_text(surface, self._category, cat_r.x + 6, cat_r.y + 4,
-                      Theme.TEXT, font_sm)
-            draw_text(surface, "\u25be", cat_r.right - 14, cat_r.y + 4,
-                      Theme.TEXT_DIM, font_sm)
+            chov = cat_r.collidepoint(mx, my)
+            pygame.draw.rect(surface,
+                             Theme.BTN_HOVER if chov else Theme.FIELD_BG,
+                             cat_r, border_radius=3)
+            pygame.draw.rect(surface,
+                             Theme.ACCENT if self._cat_open
+                             else Theme.BORDER,
+                             cat_r, 1, border_radius=3)
+            draw_text(surface, self._category, cat_r.x + s(6),
+                      cat_r.y + s(4), Theme.TEXT, font_sm)
+            draw_text(surface, "\u25BE", cat_r.right - s(14),
+                      cat_r.y + s(4), Theme.TEXT_DIM, font_sm)
         self._cat_rect = cat_r
-        y += 28
-
-        # Category dropdown overlay
-        if self._cat_open:
-            cat_items = list(TILE_CATEGORIES) + ["+ New Category..."]
-            dy = cat_r.bottom
-            for ci, cname in enumerate(cat_items):
-                cr = pygame.Rect(cat_r.x, dy + ci * 22, cat_r.w, 22)
-                chov = cr.collidepoint(mx, my)
-                pygame.draw.rect(surface,
-                                 Theme.HIGHLIGHT if chov else Theme.PANEL, cr)
-                pygame.draw.rect(surface, Theme.BORDER, cr, 1)
-                if cname.startswith("+"):
-                    col = Theme.ACCENT2
-                else:
-                    col = Theme.ACCENT if cname == self._category else Theme.TEXT
-                draw_text(surface, cname, cr.x + 6, cr.y + 4, col, font_sm)
+        y += field_h + gap
 
         # ── Error message ───────────────────────────────────────
         if self._error:
             draw_text(surface, self._error, x0, y, Theme.DANGER, font_sm)
-            y += 16
+            y += s(16)
 
-        # ── Action buttons ──────────────────────────────────────
-        y = rect.bottom - 40
-        # Save/Create button
-        save_r = pygame.Rect(x0, y, 100, 28)
+        # Record content height for scroll
+        self._content_h = int((y + self._scroll_y) - body_r.y) + s(8)
+
+        # End body clip
+        surface.set_clip(None)
+
+        # ── Scrollbar ───────────────────────────────────────────
+        max_scroll = max(0, self._content_h - body_r.h)
+        if max_scroll > 0:
+            thumb_h = max(s(20), int(body_r.h * body_r.h /
+                                     max(1, self._content_h)))
+            track_range = body_r.h - thumb_h
+            if max_scroll > 0:
+                thumb_y = body_r.y + int(track_range *
+                                         self._scroll_y / max_scroll)
+            else:
+                thumb_y = body_r.y
+            sb_x = rect.right - s(10)
+            pygame.draw.rect(surface, Theme.SCROLLBAR,
+                             (sb_x, body_r.y, s(6), body_r.h),
+                             border_radius=3)
+            pygame.draw.rect(surface, Theme.SCROLLTHUMB,
+                             (sb_x, thumb_y, s(6), thumb_h),
+                             border_radius=3)
+
+        # ── Delete confirmation overlay ─────────────────────────
+        if self._confirm_delete:
+            ov = pygame.Surface((rect.w, btn_zone_h + s(40)),
+                                pygame.SRCALPHA)
+            ov.fill((30, 30, 34, 230))
+            surface.blit(ov, (rect.x, btn_top - s(40)))
+            draw_text(surface, "Delete this tile permanently?",
+                      x0, btn_top - s(32), Theme.DANGER, font_sm)
+            yes_r = pygame.Rect(x0, btn_top - s(10), s(80), s(26))
+            no_r = pygame.Rect(x0 + s(100), btn_top - s(10),
+                               s(80), s(26))
+            for r, label, c in [(yes_r, "Yes, Delete", Theme.DANGER),
+                                (no_r, "Cancel", Theme.TEXT)]:
+                rhov = r.collidepoint(mx, my)
+                pygame.draw.rect(surface,
+                                 Theme.BTN_HOVER if rhov
+                                 else Theme.PANEL_LITE,
+                                 r, border_radius=4)
+                pygame.draw.rect(surface, c, r, 1, border_radius=4)
+                draw_text_centered(surface, label, r, c, font_sm)
+            self._del_yes_rect = yes_r
+            self._del_no_rect = no_r
+            return  # skip normal button rendering
+
+        # ── Action buttons (fixed at bottom) ─────────────────────
+        btn_y = btn_top + s(8)
+        btn_h = s(28)
+
+        # Save / Create
+        save_r = pygame.Rect(x0, btn_y, s(100), btn_h)
         hov = save_r.collidepoint(mx, my)
-        pygame.draw.rect(surface, Theme.BTN_HOVER if hov else Theme.PANEL_LITE,
+        pygame.draw.rect(surface,
+                         Theme.BTN_HOVER if hov else Theme.PANEL_LITE,
                          save_r, border_radius=5)
-        pygame.draw.rect(surface, Theme.SUCCESS, save_r, 1, border_radius=5)
+        pygame.draw.rect(surface, Theme.SUCCESS, save_r, 1,
+                         border_radius=5)
         save_label = "Update" if self._editing else "Create"
-        draw_text(surface, save_label,
-                  save_r.x + 20, save_r.y + 7, Theme.SUCCESS, font_sm)
+        draw_text_centered(surface, save_label, save_r,
+                           Theme.SUCCESS, font_sm)
         self._save_rect = save_r
 
-        # Delete button (available for ANY tile when editing)
+        bx = save_r.right + s(8)
+
+        # Duplicate (only when editing)
         if self._editing:
-            del_r = pygame.Rect(save_r.right + 12, y, 80, 28)
+            dup_r = pygame.Rect(bx, btn_y, s(80), btn_h)
+            hov = dup_r.collidepoint(mx, my)
+            pygame.draw.rect(surface,
+                             Theme.BTN_HOVER if hov else Theme.PANEL_LITE,
+                             dup_r, border_radius=5)
+            pygame.draw.rect(surface, Theme.ACCENT, dup_r, 1,
+                             border_radius=5)
+            draw_text_centered(surface, "Duplicate", dup_r,
+                               Theme.ACCENT, font_sm)
+            self._dup_rect = dup_r
+            bx = dup_r.right + s(8)
+        else:
+            self._dup_rect = pygame.Rect(0, 0, 0, 0)
+
+        # Delete (only when editing)
+        if self._editing:
+            del_r = pygame.Rect(bx, btn_y, s(70), btn_h)
             hov = del_r.collidepoint(mx, my)
-            pygame.draw.rect(surface, Theme.BTN_HOVER if hov else Theme.PANEL_LITE,
+            pygame.draw.rect(surface,
+                             Theme.BTN_HOVER if hov else Theme.PANEL_LITE,
                              del_r, border_radius=5)
-            pygame.draw.rect(surface, Theme.DANGER, del_r, 1, border_radius=5)
-            draw_text(surface, "Delete",
-                      del_r.x + 16, del_r.y + 7, Theme.DANGER, font_sm)
+            pygame.draw.rect(surface, Theme.DANGER, del_r, 1,
+                             border_radius=5)
+            draw_text_centered(surface, "Delete", del_r,
+                               Theme.DANGER, font_sm)
             self._del_rect = del_r
         else:
             self._del_rect = pygame.Rect(0, 0, 0, 0)
 
         # Cancel
-        cancel_r = pygame.Rect(rect.right - 90, y, 74, 28)
+        cancel_r = pygame.Rect(rect.right - s(80), btn_y, s(64), btn_h)
         hov = cancel_r.collidepoint(mx, my)
-        pygame.draw.rect(surface, Theme.BTN_HOVER if hov else Theme.PANEL_LITE,
+        pygame.draw.rect(surface,
+                         Theme.BTN_HOVER if hov else Theme.PANEL_LITE,
                          cancel_r, border_radius=5)
-        pygame.draw.rect(surface, Theme.BORDER, cancel_r, 1, border_radius=5)
-        draw_text(surface, "Cancel",
-                  cancel_r.x + 14, cancel_r.y + 7, Theme.TEXT, font_sm)
+        pygame.draw.rect(surface, Theme.BORDER, cancel_r, 1,
+                         border_radius=5)
+        draw_text_centered(surface, "Cancel", cancel_r,
+                           Theme.TEXT, font_sm)
         self._cancel_rect = cancel_r
+
+        # ── Deferred dropdown overlays (rendered AFTER scroll clip) ──
+        # These float above all body content and action buttons so
+        # they are never clipped by the scroll region.
+        _dbr = _L.s(4)
+
+        if self._type_open:
+            n = len(_TILE_TYPES)
+            dr = pygame.Rect(self._type_rect.x,
+                             self._type_rect.bottom,
+                             self._type_rect.w, n * field_h)
+            pygame.draw.rect(surface, Theme.PANEL, dr,
+                             border_radius=_dbr)
+            pygame.draw.rect(surface, Theme.BORDER, dr, 1,
+                             border_radius=_dbr)
+            for ti, tt in enumerate(_TILE_TYPES):
+                ir = pygame.Rect(dr.x + 2, dr.y + ti * field_h,
+                                 dr.w - 4, field_h)
+                ihov = ir.collidepoint(mx, my)
+                if ihov:
+                    pygame.draw.rect(surface, Theme.HIGHLIGHT,
+                                     ir, border_radius=2)
+                elif tt == self._tile_type:
+                    pygame.draw.rect(surface, Theme.SELECTED,
+                                     ir, border_radius=2)
+                tc = (Theme.ACCENT if tt == self._tile_type
+                      else Theme.TEXT)
+                draw_text(surface, tt.value, ir.x + s(6),
+                          ir.y + s(4), tc, font_sm)
+
+        if self._sound_open:
+            n = len(_KNOWN_SOUNDS)
+            dr = pygame.Rect(self._sound_rect.x,
+                             self._sound_rect.bottom,
+                             self._sound_rect.w, n * field_h)
+            pygame.draw.rect(surface, Theme.PANEL, dr,
+                             border_radius=_dbr)
+            pygame.draw.rect(surface, Theme.BORDER, dr, 1,
+                             border_radius=_dbr)
+            for si, sname in enumerate(_KNOWN_SOUNDS):
+                ir = pygame.Rect(dr.x + 2, dr.y + si * field_h,
+                                 dr.w - 4, field_h)
+                ihov = ir.collidepoint(mx, my)
+                if ihov:
+                    pygame.draw.rect(surface, Theme.HIGHLIGHT,
+                                     ir, border_radius=2)
+                elif sname == self._sound:
+                    pygame.draw.rect(surface, Theme.SELECTED,
+                                     ir, border_radius=2)
+                tc = (Theme.ACCENT if sname == self._sound
+                      else Theme.TEXT)
+                draw_text(surface, sname, ir.x + s(6),
+                          ir.y + s(4), tc, font_sm)
+
+        if self._cat_open:
+            cat_items = list(TILE_CATEGORIES) + ["+ New Category..."]
+            n = len(cat_items)
+            dr = pygame.Rect(self._cat_rect.x,
+                             self._cat_rect.bottom,
+                             self._cat_rect.w, n * field_h)
+            pygame.draw.rect(surface, Theme.PANEL, dr,
+                             border_radius=_dbr)
+            pygame.draw.rect(surface, Theme.BORDER, dr, 1,
+                             border_radius=_dbr)
+            for ci, cname in enumerate(cat_items):
+                ir = pygame.Rect(dr.x + 2, dr.y + ci * field_h,
+                                 dr.w - 4, field_h)
+                ihov = ir.collidepoint(mx, my)
+                if ihov:
+                    pygame.draw.rect(surface, Theme.HIGHLIGHT,
+                                     ir, border_radius=2)
+                elif cname == self._category:
+                    pygame.draw.rect(surface, Theme.SELECTED,
+                                     ir, border_radius=2)
+                if cname.startswith("+"):
+                    ct = Theme.ACCENT2
+                else:
+                    ct = (Theme.ACCENT if cname == self._category
+                          else Theme.TEXT)
+                draw_text(surface, cname, ir.x + s(6),
+                          ir.y + s(4), ct, font_sm)
 
     # ── events ───────────────────────────────────────────────────
 
+    def _all_fields(self) -> list[TextField]:
+        return [self._name_field, self._tex_field,
+                self._front_field, self._back_field]
+
     def handle_event(self, event) -> bool:
+        # ── Delete confirmation mode ─────────────────────────────
+        if self._confirm_delete:
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    self._confirm_delete = False
+                    return True
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mx, my = event.pos
+                if (hasattr(self, '_del_yes_rect')
+                        and self._del_yes_rect.collidepoint(mx, my)):
+                    delete_tile(self._editing.id)
+                    self.state.toast(
+                        f"Deleted tile: {self._editing.name}")
+                    self.manager.close()
+                    return True
+                if (hasattr(self, '_del_no_rect')
+                        and self._del_no_rect.collidepoint(mx, my)):
+                    self._confirm_delete = False
+                    return True
+            return True  # consume
+
+        # ── Scroll ───────────────────────────────────────────────
+        if event.type == pygame.MOUSEWHEEL:
+            self._scroll_y = max(0.0, min(
+                self._scroll_y - event.y * 30,
+                max(0, self._content_h - 400)))
+            return True
+
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
-                if getattr(self, '_type_open', False):
+                if self._type_open:
                     self._type_open = False
+                    return True
+                if self._sound_open:
+                    self._sound_open = False
                     return True
                 if self._cat_open:
                     self._cat_open = False
@@ -738,99 +1040,93 @@ class TileEditorModal(_BaseModal):
                 self.manager.close()
                 return True
 
-            # Category free-text input
+            # Tab order
+            if event.key == pygame.K_TAB:
+                fields = self._all_fields()
+                for i, f in enumerate(fields):
+                    if f.focused:
+                        self.ctx.release_focus(f.uid)
+                        nxt = fields[(i + 1) % len(fields)]
+                        self.ctx.take_focus(nxt.uid)
+                        return True
+
+            # Category free-text
             if self._cat_active:
-                if event.key == pygame.K_BACKSPACE:
-                    self._cat_text = self._cat_text[:-1]
-                elif event.key == pygame.K_RETURN:
-                    if self._cat_text.strip():
-                        new_cat = self._cat_text.strip()
-                        add_category(new_cat)
-                        self._category = new_cat
+                if event.key == pygame.K_RETURN:
+                    val = self._cat_field.value.strip()
+                    if val:
+                        add_category(val)
+                        self._category = val
                     self._cat_active = False
-                    self._cat_text = ""
-                elif event.key == pygame.K_TAB:
-                    self._cat_active = False
-                elif event.unicode and event.unicode.isprintable():
-                    self._cat_text += event.unicode
+                    return True
+                self._cat_field.handle_event(event)
                 return True
 
-            # Text input for name / texture / front / floor fields
-            if self._name_active:
-                if event.key == pygame.K_BACKSPACE:
-                    self._name = self._name[:-1]
-                elif event.key == pygame.K_RETURN:
-                    self._name_active = False
-                elif event.key == pygame.K_TAB:
-                    self._name_active = False
-                    self._tex_active = True
-                elif event.unicode and event.unicode.isprintable():
-                    self._name += event.unicode
+        # Text fields
+        for field in self._all_fields():
+            if field.handle_event(event):
                 return True
 
-            if self._tex_active:
-                if event.key == pygame.K_BACKSPACE:
-                    self._texture_key = self._texture_key[:-1]
-                elif event.key == pygame.K_RETURN:
-                    self._tex_active = False
-                elif event.key == pygame.K_TAB:
-                    self._tex_active = False
-                    self._front_active = True
-                elif event.unicode and event.unicode.isprintable():
-                    self._texture_key += event.unicode
-                return True
+        # Category free-text events
+        if self._cat_active:
+            self._cat_field.handle_event(event)
+            return True
 
-            if getattr(self, '_front_active', False):
-                if event.key == pygame.K_BACKSPACE:
-                    self._texture_front = self._texture_front[:-1]
-                elif event.key == pygame.K_TAB:
-                    self._front_active = False
-                    self._back_active = True
-                elif event.key in (pygame.K_RETURN,):
-                    self._front_active = False
-                elif event.unicode and event.unicode.isprintable():
-                    self._texture_front += event.unicode
+        # Sliders
+        for sl in self._color_sliders:
+            if sl.handle_event(event):
                 return True
-
-            if getattr(self, '_back_active', False):
-                if event.key == pygame.K_BACKSPACE:
-                    self._texture_back = self._texture_back[:-1]
-                elif event.key in (pygame.K_RETURN, pygame.K_TAB):
-                    self._back_active = False
-                elif event.unicode and event.unicode.isprintable():
-                    self._texture_back += event.unicode
-                return True
+        if self._height_slider.handle_event(event):
+            return True
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mx, my = event.pos
             self._error = ""
 
             # Type dropdown items
-            if getattr(self, '_type_open', False):
-                type_r = self._type_rect
+            if self._type_open:
                 for ti, tt in enumerate(_TILE_TYPES):
-                    ir = pygame.Rect(type_r.x, type_r.bottom + ti * 22,
-                                     type_r.w, 22)
+                    ir = pygame.Rect(
+                        self._type_rect.x,
+                        self._type_rect.bottom + ti * _L.s(24),
+                        self._type_rect.w, _L.s(24))
                     if ir.collidepoint(mx, my):
                         self._tile_type = tt
-                        # Update height default when type changes
-                        self._height_scale = _TYPE_DEFAULT_HEIGHT.get(tt, 1.0)
+                        self._height_slider.value = \
+                            _TYPE_DEFAULT_HEIGHT.get(tt, 1.0)
                         self._type_open = False
                         return True
                 self._type_open = False
                 return True
 
+            # Sound dropdown items
+            if self._sound_open:
+                for si, sname in enumerate(_KNOWN_SOUNDS):
+                    sr = pygame.Rect(
+                        self._sound_rect.x,
+                        self._sound_rect.bottom + si * _L.s(24),
+                        self._sound_rect.w, _L.s(24))
+                    if sr.collidepoint(mx, my):
+                        self._sound = sname
+                        self._sound_open = False
+                        return True
+                self._sound_open = False
+                return True
+
             # Category dropdown
             if self._cat_open:
                 cat_items = list(TILE_CATEGORIES) + ["+ New Category..."]
-                cat_r = self._cat_rect
-                dy = cat_r.bottom
+                fh = _L.s(24)
                 for ci, cname in enumerate(cat_items):
-                    cr = pygame.Rect(cat_r.x, dy + ci * 22, cat_r.w, 22)
+                    cr = pygame.Rect(self._cat_rect.x,
+                                     self._cat_rect.bottom + ci * fh,
+                                     self._cat_rect.w, fh)
                     if cr.collidepoint(mx, my):
                         if cname.startswith("+"):
                             self._cat_active = True
-                            self._cat_text = ""
+                            self._cat_field.value = ""
+                            self._cat_field._cursor_pos = 0
+                            self.ctx.take_focus(self._cat_field.uid)
                         else:
                             self._category = cname
                         self._cat_open = False
@@ -838,151 +1134,157 @@ class TileEditorModal(_BaseModal):
                 self._cat_open = False
                 return True
 
-            # Type dropdown toggle
-            if hasattr(self, '_type_rect') and self._type_rect.collidepoint(mx, my):
-                self._type_open = not getattr(self, '_type_open', False)
+            # Type toggle
+            if self._type_rect.collidepoint(mx, my):
+                self._type_open = not self._type_open
+                self._sound_open = False
+                self._cat_open = False
                 return True
 
-            # Name field
-            if hasattr(self, '_name_rect') and self._name_rect.collidepoint(mx, my):
-                self._name_active = True
-                self._tex_active = False
-                self._cat_active = False
-                return True
-            else:
-                self._name_active = False
-
-            # Texture field
-            if hasattr(self, '_tex_rect') and self._tex_rect.collidepoint(mx, my):
-                self._tex_active = True
-                self._name_active = False
-                self._front_active = False
-                self._back_active = False
-                self._cat_active = False
-                return True
-            else:
-                self._tex_active = False
-
-            # Front / Back texture fields
-            dir_clicked = False
-            if hasattr(self, '_front_rect') and self._front_rect.collidepoint(mx, my):
-                self._front_active = True
-                self._back_active = False
-                self._name_active = False
-                self._tex_active = False
-                self._cat_active = False
-                dir_clicked = True
-            elif hasattr(self, '_back_rect') and self._back_rect.collidepoint(mx, my):
-                self._back_active = True
-                self._front_active = False
-                self._name_active = False
-                self._tex_active = False
-                self._cat_active = False
-                dir_clicked = True
-            if dir_clicked:
-                return True
-            else:
-                self._front_active = False
-                self._back_active = False
-
-            # Colour sliders
-            for bar_r, ci in getattr(self, '_color_slider_rects', []):
-                if bar_r.collidepoint(mx, my):
-                    frac = (mx - bar_r.x) / max(1, bar_r.w)
-                    self._color[ci] = max(0, min(255, int(frac * 255)))
-                    return True
-
-            # Height scale slider
-            if hasattr(self, '_hs_rect') and self._hs_rect.collidepoint(mx, my):
-                frac = (mx - self._hs_rect.x) / max(1, self._hs_rect.w)
-                self._height_scale = round(max(0.05, min(1.0, frac)), 2)
+            # Sound toggle
+            if self._sound_rect.collidepoint(mx, my):
+                self._sound_open = not self._sound_open
+                self._type_open = False
+                self._cat_open = False
                 return True
 
-            # Extra flag checkboxes (TRANSPARENT, FARMLAND)
-            for cb_r, fval in getattr(self, '_flag_rects', []):
+            # Flag checkboxes
+            for cb_r, fval in self._flag_rects:
                 if cb_r.collidepoint(mx, my):
                     self._extra_flags ^= fval
                     return True
 
-            # Category dropdown toggle
-            if hasattr(self, '_cat_rect') and self._cat_rect.collidepoint(mx, my):
-                if not self._cat_active:
-                    self._cat_open = not self._cat_open
+            # Category toggle
+            if self._cat_rect.collidepoint(mx, my) and not self._cat_active:
+                self._cat_open = not self._cat_open
+                self._type_open = False
+                self._sound_open = False
                 return True
 
-            # Import PNG button
-            if hasattr(self, '_import_rect') and self._import_rect.collidepoint(mx, my):
-                self._do_import()
+            # Import main texture
+            if self._import_rect.collidepoint(mx, my):
+                self._do_import(target="main")
+                return True
+
+            # Import front texture
+            if self._import_front_rect.collidepoint(mx, my):
+                self._do_import(target="front")
+                return True
+
+            # Import back texture
+            if self._import_back_rect.collidepoint(mx, my):
+                self._do_import(target="back")
                 return True
 
             # Save / Create
-            if hasattr(self, '_save_rect') and self._save_rect.collidepoint(mx, my):
+            if self._save_rect.collidepoint(mx, my):
                 return self._do_save()
 
-            # Delete
-            if hasattr(self, '_del_rect') and self._del_rect.collidepoint(mx, my):
-                if self._editing:
-                    delete_tile(self._editing.id)
-                    self.state.toast(f"Deleted tile: {self._editing.name}")
-                    self.manager.close()
+            # Duplicate
+            if (self._dup_rect.w > 0
+                    and self._dup_rect.collidepoint(mx, my)):
+                self._do_duplicate()
+                return True
+
+            # Delete (with confirmation)
+            if (self._del_rect.w > 0
+                    and self._del_rect.collidepoint(mx, my)
+                    and self._editing):
+                self._confirm_delete = True
                 return True
 
             # Cancel
-            if hasattr(self, '_cancel_rect') and self._cancel_rect.collidepoint(mx, my):
+            if self._cancel_rect.collidepoint(mx, my):
                 self.manager.close()
-                return True
-
-        # Dragging on colour sliders
-        if event.type == pygame.MOUSEMOTION and pygame.mouse.get_pressed()[0]:
-            mx, my = event.pos
-            for bar_r, ci in getattr(self, '_color_slider_rects', []):
-                if bar_r.collidepoint(mx, my):
-                    frac = (mx - bar_r.x) / max(1, bar_r.w)
-                    self._color[ci] = max(0, min(255, int(frac * 255)))
-                    return True
-            if hasattr(self, '_hs_rect') and self._hs_rect.collidepoint(mx, my):
-                frac = (mx - self._hs_rect.x) / max(1, self._hs_rect.w)
-                self._height_scale = round(max(0.05, min(1.0, frac)), 2)
                 return True
 
         return True  # consume all events while modal is open
 
-    def _do_import(self):
-        """Open file dialog to import an image as the tile's texture."""
+    # ── actions ──────────────────────────────────────────────────
+
+    def _do_import(self, *, target: str = "main"):
+        """Import a PNG texture for the given target field."""
         tile_id = self._editing.id if self._editing else None
-        key = self._texture_key.strip() or None
+        if target == "front":
+            key = self._front_field.value.strip() or None
+        elif target == "back":
+            key = self._back_field.value.strip() or None
+        else:
+            key = self._tex_field.value.strip() or None
         try:
             from systems.textures import browse_and_import
             dest = browse_and_import(tile_id=tile_id, key=key)
             if dest:
-                self.state.toast(f"Imported: {_os.path.basename(str(dest))}")
-                # If no texture key was set, pre-fill from imported filename
-                if not self._texture_key.strip():
-                    self._texture_key = dest.stem
-                # Invalidate atlas cache and rebuild preview
+                self.state.toast(
+                    f"Imported: {_os.path.basename(str(dest))}")
+                if target == "front":
+                    if not self._front_field.value.strip():
+                        self._front_field.value = dest.stem
+                        self._front_field._cursor_pos = len(
+                            self._front_field.value)
+                elif target == "back":
+                    if not self._back_field.value.strip():
+                        self._back_field.value = dest.stem
+                        self._back_field._cursor_pos = len(
+                            self._back_field.value)
+                else:
+                    if not self._tex_field.value.strip():
+                        self._tex_field.value = dest.stem
+                        self._tex_field._cursor_pos = len(
+                            self._tex_field.value)
                 if self._atlas and tile_id:
                     self._atlas.invalidate(tile_id)
                 self._build_preview()
-            # else: user cancelled — no-op
         except Exception as exc:
             self._error = f"Import failed: {exc}"
 
+    def _do_duplicate(self):
+        """Re-open the modal in duplicate mode from the current tile."""
+        if not self._editing:
+            return
+        src = self._editing
+        dup_modal = TileEditorModal(
+            self.manager, edit_tile=src, atlas=self._atlas,
+            duplicate=True)
+        # Copy current form state that may differ from saved
+        dup_modal._name_field.value = self._name_field.value.strip()
+        if not dup_modal._name_field.value.endswith(" (copy)"):
+            dup_modal._name_field.value += " (copy)"
+        dup_modal._name_field._cursor_pos = len(
+            dup_modal._name_field.value)
+        for i in range(3):
+            dup_modal._color_sliders[i].value = \
+                self._color_sliders[i].value
+        dup_modal._tile_type = self._tile_type
+        dup_modal._extra_flags = self._extra_flags
+        dup_modal._sound = self._sound
+        dup_modal._height_slider.value = self._height_slider.value
+        dup_modal._tex_field.value = self._tex_field.value
+        dup_modal._front_field.value = self._front_field.value
+        dup_modal._back_field.value = self._back_field.value
+        dup_modal._category = self._category
+        self.manager.open(dup_modal)
+
     def _do_save(self) -> bool:
-        name = self._name.strip()
+        name = self._name_field.value.strip()
         if not name:
             self._error = "Name is required."
             return True
-        color = (self._color[0], self._color[1], self._color[2])
-        tex = self._texture_key.strip() or name.lower().replace(" ", "_")
-        # Compute flags: base from type + extra toggles
-        flags = _TYPE_FLAGS.get(self._tile_type, TF.NONE) | self._extra_flags
+        if any(c in name for c in ("/", "\\", "\x00")):
+            self._error = "Name contains invalid characters."
+            return True
 
-        # Build directional texture overrides
-        tfr = self._texture_front.strip()
-        tbk = self._texture_back.strip()
+        color = tuple(int(sl.value) for sl in self._color_sliders)
+        tex = (self._tex_field.value.strip()
+               or name.lower().replace(" ", "_"))
+        flags = (_TYPE_FLAGS.get(self._tile_type, TF.NONE)
+                 | self._extra_flags)
+        tfr = self._front_field.value.strip()
+        tbk = self._back_field.value.strip()
+        height = self._height_slider.value
+        sound = self._sound
 
         if self._editing:
-            # Update existing tile (works for ANY tile)
             update_tile(
                 self._editing.id,
                 name=name, color=color,
@@ -990,13 +1292,14 @@ class TileEditorModal(_BaseModal):
                 texture_key=tex,
                 texture_front=tfr,
                 texture_back=tbk,
-                height_scale=self._height_scale,
+                height_scale=height,
                 category=self._category,
+                sound=sound,
             )
-            # Invalidate atlas cache for this tile
             if self._atlas:
                 self._atlas.invalidate(self._editing.id)
-            self.state.toast(f"Updated tile: {name} (ID {self._editing.id})")
+            self.state.toast(
+                f"Updated tile: {name} ({self._editing.id})")
         else:
             td = register_tile(
                 name=name, color=color,
@@ -1004,10 +1307,11 @@ class TileEditorModal(_BaseModal):
                 texture_key=tex,
                 texture_front=tfr,
                 texture_back=tbk,
-                height_scale=self._height_scale,
+                height_scale=height,
                 category=self._category,
+                sound=sound,
             )
-            self.state.toast(f"Created tile: {name} (ID {td.id})")
+            self.state.toast(f"Created tile: {name} ({td.id})")
 
         self.manager.close()
         return True

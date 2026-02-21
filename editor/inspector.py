@@ -831,19 +831,23 @@ class Inspector:
                 w = entry.widget
                 orig_y = w.rect.y
                 w.rect.y -= offset
-                if hasattr(w, 'draw'):
-                    if isinstance(w, (NumberField, TextField, ColorField)):
-                        w.draw(surface, font_sm, dt)
-                    else:
-                        w.draw(surface, font_sm)
-                w.rect.y = orig_y
+                try:
+                    if hasattr(w, 'draw'):
+                        if isinstance(w, (NumberField, TextField, ColorField)):
+                            w.draw(surface, font_sm, dt)
+                        else:
+                            w.draw(surface, font_sm)
+                finally:
+                    w.rect.y = orig_y
 
             elif isinstance(entry, WidgetEntry):
                 w = entry.widget
                 orig_y = w.rect.y
                 w.rect.y -= offset
-                w.draw(surface, font_sm)
-                w.rect.y = orig_y
+                try:
+                    w.draw(surface, font_sm)
+                finally:
+                    w.rect.y = orig_y
 
             elif isinstance(entry, EntityRowEntry):
                 ry = entry.y - offset
@@ -914,8 +918,10 @@ class Inspector:
                 if isinstance(w, Dropdown) and w.is_open:
                     orig_y = w.rect.y
                     w.rect.y -= offset
-                    w.draw_dropdown(surface, font_sm)
-                    w.rect.y = orig_y
+                    try:
+                        w.draw_dropdown(surface, font_sm)
+                    finally:
+                        w.rect.y = orig_y
 
     def _draw_tab_bar(self, surface: pygame.Surface,
                       font: pygame.font.Font,
@@ -1027,8 +1033,10 @@ class Inspector:
                 w = entry.widget
                 orig_y = w.rect.y
                 w.rect.y -= offset
-                result = w.handle_event(event)
-                w.rect.y = orig_y
+                try:
+                    result = w.handle_event(event)
+                finally:
+                    w.rect.y = orig_y
                 if result:
                     st.dirty = True
                     return None
@@ -1037,8 +1045,10 @@ class Inspector:
                 w = entry.widget
                 orig_y = w.rect.y
                 w.rect.y -= offset
-                result = w.handle_event(event)
-                w.rect.y = orig_y
+                try:
+                    result = w.handle_event(event)
+                finally:
+                    w.rect.y = orig_y
                 if result:
                     st.dirty = True
                     return None
@@ -1066,8 +1076,10 @@ class Inspector:
                     w = entry.widget
                     orig_y = w.rect.y
                     w.rect.y -= offset
-                    w.handle_event(event)
-                    w.rect.y = orig_y
+                    try:
+                        w.handle_event(event)
+                    finally:
+                        w.rect.y = orig_y
 
         return None
 

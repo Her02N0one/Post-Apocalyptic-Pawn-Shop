@@ -7,27 +7,80 @@
 
 ## Table of Contents
 
-1. [Getting Started](#1-getting-started)
-2. [Interface Layout](#2-interface-layout)
-3. [Menu Bar](#3-menu-bar)
-4. [Zone Navigation Bar](#4-zone-navigation-bar)
-5. [Toolbar](#5-toolbar)
-6. [Canvas (Map Viewport)](#6-canvas-map-viewport)
-7. [Left Panels](#7-left-panels)
-8. [Inspector (Right Panel)](#8-inspector-right-panel)
-9. [First-Person Editor](#9-first-person-editor)
-10. [Modal Dialogs](#10-modal-dialogs)
-11. [Overlay Editors](#11-overlay-editors)
-12. [Entity System](#12-entity-system)
-13. [Tile System](#13-tile-system)
-14. [Zone Management](#14-zone-management)
-15. [Keyboard Shortcut Reference](#15-keyboard-shortcut-reference)
-16. [Mouse Reference](#16-mouse-reference)
-17. [Project Directory Structure](#17-project-directory-structure)
+1. [Prerequisites & Setup](#1-prerequisites--setup)
+2. [Getting Started](#2-getting-started)
+3. [Interface Layout](#3-interface-layout)
+4. [Menu Bar](#4-menu-bar)
+5. [Zone Navigation Bar](#5-zone-navigation-bar)
+6. [Toolbar](#6-toolbar)
+7. [Canvas (Map Viewport)](#7-canvas-map-viewport)
+8. [Left Panels](#8-left-panels)
+9. [Inspector (Right Panel)](#9-inspector-right-panel)
+10. [First-Person Editor](#10-first-person-editor)
+11. [Modal Dialogs](#11-modal-dialogs)
+12. [Overlay Editors](#12-overlay-editors)
+13. [Entity System](#13-entity-system)
+14. [Tile System](#14-tile-system)
+15. [Zone Management](#15-zone-management)
+16. [Portal Linking Workflow](#16-portal-linking-workflow)
+17. [First-Person Visual Rules](#17-first-person-visual-rules)
+18. [Task-Based Workflows](#18-task-based-workflows)
+19. [Keyboard Shortcut Reference](#19-keyboard-shortcut-reference)
+20. [Mouse Reference](#20-mouse-reference)
+21. [Project Directory Structure](#21-project-directory-structure)
 
 ---
 
-## 1. Getting Started
+## 1. Prerequisites & Setup
+
+### System Requirements
+
+| Requirement | Value |
+|-------------|-------|
+| **Python**  | 3.9 or later |
+| **OS**      | Windows, macOS, or Linux |
+| **Display** | 960 × 640 minimum (editor opens at 80 % of display resolution) |
+
+### Dependencies
+
+All Python dependencies are listed in `requirements.txt`:
+
+```
+pygame-ce >= 2.4       # Rendering, input, window management
+nbtlib >= 0.17         # Binary export (.mpz format)
+numpy                  # Floor/ceiling rendering, visplane math
+tomli >= 2.0.0         # TOML parsing (items, tuning, tile defs)
+msgpack >= 1.0.0       # Binary save format
+```
+
+Install with:
+
+```bash
+pip install -r requirements.txt
+```
+
+> **Note:** `pygame-ce` (Community Edition) is required, not the legacy `pygame` package. If you already have `pygame` installed, uninstall it first: `pip uninstall pygame && pip install pygame-ce`.
+
+### First-Boot Behavior
+
+On first launch, the editor auto-creates any missing directories:
+
+| Directory | Created If Missing | Purpose |
+|-----------|--------------------|---------|
+| `zones/` | Yes | Zone map JSON files |
+| `templates/` | Yes | Template editor data |
+| `templates/rooms/` | Yes | Room variant data |
+| `saves/` | Yes (game only) | Save game slots |
+| `logs/` | Yes (game only) | Performance logs |
+| `assets/textures/tiles/` | Yes | Imported tile PNGs |
+| `assets/models/tiles/` | Yes | Tile definition TOMLs |
+| `data/` | No (must exist) | Game data files |
+
+If no zone is specified on the command line, the editor opens with a blank unnamed 30×20 zone. The zone is not saved to disk until you press **Ctrl+S** or **File → Save**.
+
+---
+
+## 2. Getting Started
 
 ### Launching the Editor
 
@@ -54,7 +107,7 @@ python main.py                       # launches the game (not the editor)
 
 ---
 
-## 2. Interface Layout
+## 3. Interface Layout
 
 The editor is composed of fixed chrome regions arranged around a central canvas.
 
@@ -110,7 +163,7 @@ If the canvas would shrink below `s(200)`, the inspector is narrowed first (down
 
 ---
 
-## 3. Menu Bar
+## 4. Menu Bar
 
 The menu bar sits at the top of the window. Click a menu name to open its dropdown. Click outside or press Esc to close.
 
@@ -185,7 +238,7 @@ The menu bar sits at the top of the window. Click a menu name to open its dropdo
 
 ---
 
-## 4. Zone Navigation Bar
+## 5. Zone Navigation Bar
 
 Sits directly below the menu bar.
 
@@ -198,7 +251,7 @@ Sits directly below the menu bar.
 
 ---
 
-## 5. Toolbar
+## 6. Toolbar
 
 A horizontal strip of equal-width buttons spanning the full window width, directly below the zone nav bar. The active tool is highlighted.
 
@@ -224,7 +277,7 @@ A horizontal strip of equal-width buttons spanning the full window width, direct
 
 ---
 
-## 6. Canvas (Map Viewport)
+## 7. Canvas (Map Viewport)
 
 The canvas renders the 2D tile grid and all entities.
 
@@ -259,7 +312,7 @@ The canvas renders the 2D tile grid and all entities.
 
 ---
 
-## 7. Left Panels
+## 8. Left Panels
 
 Six interchangeable panels, selectable via the **panel tabs** (two rows of three tabs) or the **View** menu.
 
@@ -272,7 +325,7 @@ Six interchangeable panels, selectable via the **panel tabs** (two rows of three
 | Templates | Room Template Panel  | Browse and manage room templates |
 | Zones     | Zone Panel           | List and switch between zone files |
 
-### 7.1 Tile Palette
+### 8.1 Tile Palette
 
 A searchable, scrollable grid of tile swatches grouped by type.
 
@@ -284,7 +337,7 @@ A searchable, scrollable grid of tile swatches grouped by type.
 - **"+ Add Tile"** button at the bottom opens the Tile Editor in creation mode.
 - **Scroll** with the mouse wheel to browse.
 
-### 7.2 Entity Panel
+### 8.2 Entity Panel
 
 A unified list combining built-in prefabs and Entity Forge archetypes.
 
@@ -293,19 +346,19 @@ A unified list combining built-in prefabs and Entity Forge archetypes.
 - **Click** an entry to begin placement mode: sets `pending_prefab`, switches to Select tool, and toasts the name.
 - The currently pending prefab is highlighted.
 
-### 7.3 Texture Browser
+### 8.3 Texture Browser
 
 Browse all textures loaded in the atlas. Useful for verifying imported assets.
 
-### 7.4 Portal Panel
+### 8.4 Portal Panel
 
 Lists portal entities in the current zone with their target zones.
 
-### 7.5 Room Template Panel
+### 8.5 Room Template Panel
 
 Browse room templates for the template editor system.
 
-### 7.6 Zone Panel
+### 8.6 Zone Panel
 
 - Lists all JSON zone files in the `zones/` directory (refreshed every 2 seconds).
 - The current zone is highlighted with an accent color.
@@ -313,11 +366,11 @@ Browse room templates for the template editor system.
 
 ---
 
-## 8. Inspector (Right Panel)
+## 9. Inspector (Right Panel)
 
 Three tabs along the top: **Zone**, **Tile**, **Entity**. The active tab depends on context (selecting a tile switches to Tile tab, selecting an entity switches to Entity tab, etc.).
 
-### 8.1 Zone Tab
+### 9.1 Zone Tab
 
 Displays and edits zone-level properties plus a full entity listing.
 
@@ -333,7 +386,7 @@ Displays and edits zone-level properties plus a full entity listing.
 
 **Entity List** — Below the zone properties, every entity in the zone is listed as a clickable row showing `prefab: name`. Clicking a row selects that entity and switches to the Entity tab.
 
-### 8.2 Tile Tab
+### 9.2 Tile Tab
 
 Read-only properties for the tile under the cursor or the last-inspected tile.
 
@@ -345,7 +398,7 @@ Read-only properties for the tile under the cursor or the last-inspected tile.
 | **Preview**  | 64×64 texture thumbnail from atlas |
 | **Color**    | Color swatch with RGB values |
 
-### 8.3 Entity Tab
+### 9.3 Entity Tab
 
 Fully editable component inspector for the selected entity.
 
@@ -373,7 +426,7 @@ Fully editable component inspector for the selected entity.
 
 ---
 
-## 9. First-Person Editor
+## 10. First-Person Editor
 
 A Minecraft-creative-style first-person view for building and previewing zones in 3D. The raycaster renders walls, floors, and entities using the zone's tile data and texture atlas.
 
@@ -489,7 +542,7 @@ Enabled by default. Toggle with **C**. When active, an orange **NOCLIP** indicat
 
 ---
 
-## 10. Modal Dialogs
+## 11. Modal Dialogs
 
 Modals appear as centered panels over a darkened overlay (black, alpha 180). Press **Esc** to close any modal. While a modal is active, all input is directed to it.
 
@@ -539,7 +592,7 @@ A full-featured tile creation/editing dialog.
 | Transparent    | Checkbox                   | Extra flag |
 | Farmland       | Checkbox                   | Extra flag |
 | Texture key    | TextField                  | PNG asset key |
-| Face textures  | Per-slot text fields       | Slots depend on tile type (see §13) |
+| Face textures  | Per-slot text fields       | Slots depend on tile type (see §14) |
 | Height scale   | Slider                     | 0.05 – 1.0 |
 | Category       | Dropdown                   | Existing categories + "New Category…" |
 | Preview        | 64×64 texture thumbnail    | Live preview |
@@ -548,34 +601,201 @@ A full-featured tile creation/editing dialog.
 
 ---
 
-## 11. Overlay Editors
+## 12. Overlay Editors
 
-Full-screen editor overlays that take over the entire window. Close them to return to the map editor.
+Full-screen editor overlays that take over the entire window. Open them from the **Editors** menu. Close them to return to the map editor. While an overlay is active, the map editor is not drawn and all events are routed to the overlay.
 
-### Loot Table Editor
+### 12.1 Loot Table Editor
 
-Two-panel layout for editing `data/loot_tables.toml`:
+**Open:** Editors → Loot Tables
 
-- **Left panel**: Scrollable list of loot tables. Click to select.
-- **Right panel**: Selected table detail showing pools, each with entries listing item ID, weight, min_count, and max_count.
-- **Actions**: Close, Save, New Table, Add Pool, Add/Delete entries and pools. All fields are inline-editable.
+A two-panel overlay for editing `data/loot_tables.toml`. All changes are held in memory until you press **Save**.
 
-### Template Editor
+#### UI Layout
 
-Full-screen overlay for zone template management.
+```
+┌────────────────────────────────────────────────────────────┐
+│  [Close]  [Save]  [New Table]    LOOT TABLE EDITOR         │
+├──────────────┬─────────────────────────────────────────────┤
+│ table_1      │  TABLE: table_1                             │
+│ table_2  ●   │  Description: …  [Delete Table]             │
+│ table_3      │                                             │
+│              │  [Add Pool]                                  │
+│              │  ┌───── Pool 0 ──── [Edit] [Delete] ───┐   │
+│              │  │ Item      Weight  Min  Max           │   │
+│              │  │ bandage   10      1    3    [×]      │   │
+│              │  │ medkit    5       1    1    [×]      │   │
+│              │  │ [Add Entry]                          │   │
+│              │  └──────────────────────────────────────┘   │
+│              │                                             │
+│              │  ┌───── Pool 1 ──── [Edit] [Delete] ───┐   │
+│              │  │ …                                    │   │
+└──────────────┴─────────────────────────────────────────────┘
+```
 
-- **Templates** define rectangular slots filled with room variants at bake time.
-- **Template data**: name, width, height, base_tiles, slots, fixed_entities, portals.
-- **Room data**: name, tags, width, height, tiles, entities.
-- **Baking**: picks random rooms matching each slot's tag and size constraints, pastes tiles and entities.
+- **Left panel**: Scrollable list of table names. Click to select. Current table has a bullet (●).
+- **Right panel**: Detail view of the selected table.
 
-### Entity Forge
+#### Loot Math — Weighted Lottery
 
-Create reusable entity archetypes with custom component configurations. Forge archetypes appear in the Entity panel marked with `[F]`.
+Each **pool** is rolled independently. Within a pool, each entry has a **weight** (integer). The total weight is the sum of all entries. The probability of an entry being selected is:
+
+$$P(\text{entry}) = \frac{\text{weight}}{\text{total weight of pool}}$$
+
+When the pool is rolled, exactly one entry is selected. The resulting item count is a random integer in `[min_count, max_count]`.
+
+**Example:** A pool with `bandage:10, medkit:5, nothing:85` has total weight 100. The bandage has a 10 % chance, the medkit 5 %, and "nothing" (empty result) 85 %.
+
+Multiple pools in the same table are rolled independently — the player can receive items from every pool, one pool, or none.
+
+#### Actions
+
+| Button | Action |
+|--------|--------|
+| **Close** | Return to the map editor (unsaved changes are lost) |
+| **Save** | Write all tables to `data/loot_tables.toml` |
+| **New Table** | Opens a text field to name a new table |
+| **Delete Table** | Removes the selected table |
+| **Add Pool** | Appends an empty pool to the selected table |
+| **Edit** (pool) | Toggle inline editing of all entry fields in the pool |
+| **Delete** (pool) | Removes the pool |
+| **Add Entry** | Appends a blank entry (item: `""`, weight: 1, min: 1, max: 1) |
+| **×** (entry) | Removes that entry from the pool |
+
+All text and number fields are inline-editable: click a cell to type.
+
+### 12.2 Template Editor
+
+**Open:** Editors → Room Templates
+
+A full-screen overlay for creating zone templates — reusable blueprints that generate randomized zones at **bake time**.
+
+#### Concepts
+
+| Concept | Definition |
+|---------|-----------|
+| **Template** | A master layout defining overall size, base tiles, fixed entities, portals, and rectangular **slots**. Stored as `templates/<name>.json`. |
+| **Slot** | A rectangular region within a template with a name, position (x, y), size (w, h), and a set of **tags**. At bake time, a matching room variant fills the slot. |
+| **Room Variant** | A small tilemap with entities and tags. Stored as `templates/rooms/<name>.json`. Rooms are matched to slots by tag intersection and size constraint. |
+| **Baking** | The process of converting a template into a concrete zone by filling each slot with a randomly chosen matching room variant. |
+
+#### Template JSON Format
+
+```json
+{
+  "name": "apartment_block",
+  "width": 50,
+  "height": 40,
+  "base_tiles": [[0, 0, ...], ...],
+  "slots": [
+    { "name": "bedroom_1", "x": 2, "y": 3, "w": 10, "h": 8,
+      "tags": ["bedroom"], "required": true }
+  ],
+  "fixed_entities": [ { "id": "...", "prefab": "...", ... } ],
+  "portals": [ ... ]
+}
+```
+
+#### Room Variant JSON Format
+
+```json
+{
+  "name": "cozy_bedroom",
+  "tags": ["bedroom"],
+  "width": 10,
+  "height": 8,
+  "tiles": [[1, 1, ...], ...],
+  "entities": [ { "id": "bed_1", ... } ]
+}
+```
+
+#### Slot Matching & Baking Algorithm
+
+1. For each slot, gather all room variants whose **tags intersect** the slot's tags.
+2. Filter by size: the room's width must be ≤ slot width, and height ≤ slot height.
+3. Pick one matching room at random (optionally seeded for reproducibility).
+4. Center the room within the slot and paste its tiles over the base grid.
+5. Append the room's entities with positions offset by the slot's origin.
+6. If no room matches a **required** slot, the slot is filled with tile ID 1 (wall) as a placeholder.
+
+#### UI Workflow
+
+1. **Select or create** a template from the left panel list.
+2. **Edit base tiles** — the template's background tilemap.
+3. **Add slots** — define rectangular regions and assign tags (e.g., `bedroom`, `kitchen`, `corridor`).
+4. **Create room variants** in the rooms panel and tag them to match slot requirements.
+5. **Bake** — click the Bake button to produce a concrete zone. Optionally provide a seed for reproducible output.
+6. **Save** the resulting zone as a normal zone JSON.
+
+### 12.3 Entity Forge
+
+**Open:** Editors → Entity Forge
+
+A full-screen no-code editor for creating **ForgeArchetype** entries — reusable entity definitions stored in `data/custom_entities.toml`. Forge archetypes appear in the Entity Panel marked with `[F]` and can be placed on the map just like built-in prefabs.
+
+#### Forge vs. Prefabs
+
+| Aspect | Built-in Prefabs | Forge Archetypes |
+|--------|-----------------|------------------|
+| Defined in | `systems/spawner.py` (code) | `data/custom_entities.toml` (data) |
+| Editable at runtime | No | Yes (via Entity Forge) |
+| Kinds | player, npc, item, container, beast, dummy, ground_item, crop, prop | tile, box, billboard |
+| Placement | Entity Panel click → canvas | Entity Panel click → canvas (marked `[F]`) |
+| ID format | System-defined (e.g., `merchant`, `chest`) | User-defined (e.g., `mossy_column`, `red_barrel`) |
+
+#### UI Layout
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  ENTITY FORGE                          [New] [Dup] [Del]     │
+│                                        [Save] [Close]        │
+├──────────────┬───────────────────────────────────────────────┤
+│ [All][tile]  │  IDENTITY                                     │
+│ [box][bill]  │  ID:   ________    Name: ________             │
+│              │  Kind: [dropdown]  Tags: ________             │
+│ mossy_column │                                               │
+│ red_barrel ● │  DEV NOTES                                    │
+│ shelf_unit   │  Notes: ________                              │
+│              │                                               │
+│              │  TILE PROPERTIES                               │
+│              │  Texture: ________  Floor Z: [0.00]           │
+│              │  Ceiling Z: [1.00]  Solid: [✓]               │
+│              │  Transparent: [ ]                              │
+│              │                                               │
+│              │  PREVIEW                                       │
+│              │  ┌──────────┐                                 │
+│              │  │  (live)  │                                 │
+│              │  └──────────┘                                 │
+└──────────────┴───────────────────────────────────────────────┘
+```
+
+#### Three Archetype Kinds
+
+| Kind | Description | Key Properties |
+|------|------------|----------------|
+| **tile** | Wall or floor surface | `texture_key`, `floor_z`, `ceiling_z`, `solid`, `transparent` |
+| **box** | 3D rectangular prism | `width`, `depth`, `height`, `z_offset`, `color`, `solid`, `texture_key` |
+| **billboard** | 2D sprite that faces the camera | `sprite_char`, `sprite_color`, `scale`, `directional`, `sprite_sheet` |
+
+The property panel changes dynamically based on which kind is selected in the Kind dropdown.
+
+#### Forge Workflow
+
+1. **Create**: Click **New** to create a blank archetype (default kind: box).
+2. **Edit**: Fill in the ID, name, kind, and kind-specific properties. All fields update live.
+3. **Preview**: The preview box at the bottom shows a visual representation.
+4. **Save**: Click **Save** (or **Close** — you'll be prompted). Data is written to `data/custom_entities.toml`.
+5. **Place**: Close the forge, switch to the Entities panel. Your archetype appears with `[F]`. Click to place.
+6. **Duplicate**: Select an archetype and click **Dup** to clone it with a `_copy0` suffix.
+7. **Delete**: Click **Del** to permanently remove the archetype.
+
+#### Filter Tabs
+
+The left panel has filter tabs: **All**, **tile**, **box**, **billboard**. Click a tab to show only archetypes of that kind. The currently selected archetype has a bullet indicator.
 
 ---
 
-## 12. Entity System
+## 13. Entity System
 
 Entities are stored as `EntityDef` dataclass instances. Each has a core identity and optional components.
 
@@ -624,7 +844,7 @@ player · npc · item · container · dummy · beast · ground_item · crop · p
 
 ---
 
-## 13. Tile System
+## 14. Tile System
 
 ### Data Format
 
@@ -719,7 +939,7 @@ Terrain · Floors · Walls · Openings · Barriers · Platforms · Custom
 
 ---
 
-## 14. Zone Management
+## 15. Zone Management
 
 ### File Format
 
@@ -770,7 +990,253 @@ The zone nav bar maintains a browser-style back/forward history. Loading a new z
 
 ---
 
-## 15. Keyboard Shortcut Reference
+## 16. Portal Linking Workflow
+
+Portals connect two zones. When the player walks over a portal's tiles in-game, they are teleported to the target zone at the specified position.
+
+### Creating a Portal
+
+1. Switch to the **Entities** panel (left panel → Entities tab).
+2. Click the **portal** prefab — this enters placement mode.
+3. Left-click the canvas tile where you want the portal to appear.
+4. The portal entity is created with default values. Select it to open the **Entity tab** in the inspector.
+
+### Configuring Portal Properties
+
+In the Entity inspector's Portal component section, fill in:
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| **Target zone** | The filename (without `.json`) of the destination zone | `house_interior` |
+| **Target row** | The row (Y) coordinate the player arrives at in the target zone | `5` |
+| **Target col** | The column (X) coordinate the player arrives at | `12` |
+| **Exit direction** | The direction the player faces after teleporting: `up`, `down`, `left`, `right` | `down` |
+| **Tiles** | Read-only list of tile coordinates this portal occupies | Auto-populated |
+
+### Finding Target Coordinates
+
+To determine the target row/col:
+
+1. **Open the target zone** — File → Open Zone, or click a zone name in the Zone panel.
+2. **Hover over the destination tile** on the canvas.
+3. **Read the status bar** — it shows `(col, row)` in the bottom-left. The `col` is your target col and `row` is your target row.
+4. **Go back** to the source zone (◀ button in the zone nav bar) and enter the coordinates in the portal inspector.
+
+> **Tip:** The zone nav bar's ◀/▶ buttons maintain a browser-style history, making it easy to flip between source and target zones while configuring portals.
+
+### Bi-Directional Portals
+
+Portals are **one-way** by default. If you want the player to be able to return, you must create a second portal in the target zone that points back to the source zone:
+
+1. Open the **target zone**.
+2. Place a portal entity at the tile where the player arrives (the `target_row`, `target_col` from step 1).
+3. Set its **Target zone** to the original source zone.
+4. Set its **Target row/col** to a tile near the source portal.
+5. Set its **Exit direction** to face away from the return portal.
+
+### Portal Display on Canvas
+
+- Portal tiles are drawn with a tinted overlay and a pulsing ring (magenta for unselected, accent for selected).
+- The portal's target zone is shown as a label below the entity icon.
+- The **Portal Panel** (left panel → Portals tab) lists all portal entities in the current zone with their destinations.
+- The **Zone Navigation Bar** shows clickable tabs for every connected zone, enabling quick navigation.
+
+### Common Portal Patterns
+
+| Pattern | Setup |
+|---------|-------|
+| **Door between rooms** | Single-tile portal on each side of a door, pointing to the other zone's door tile |
+| **Zone boundary** | Row of portal tiles along the map edge, target zone's opposite edge |
+| **Staircase** | Portal on a platform tile, target at a different elevation in the target zone |
+| **One-way trap** | Portal with no return portal in the target zone |
+
+---
+
+## 17. First-Person Visual Rules
+
+This section explains how the raycaster renders geometry and entities in the first-person view.
+
+### Rendering Pipeline
+
+The FP view draws in this order (back to front):
+
+1. **Floor & Ceiling** — flat-shaded horizontal planes based on tile colors
+2. **Walls** — textured vertical columns cast by the DDA raycaster
+3. **Half-walls & Entities** — interleaved in **painter's order** (far to near) so half-walls correctly occlude entities behind them
+4. **HUD** — crosshair, hotbar, position info, noclip indicator
+
+### Wall Rendering
+
+Each column of the screen casts a ray from the camera. When a ray hits a wall tile, a textured vertical strip is drawn. Key rules:
+
+| Property | Behavior |
+|----------|----------|
+| **Full walls** (height_scale = 1.0) | Extend from floor to ceiling, completely opaque |
+| **Short walls** (height_scale < 1.0) | Bottom-aligned — the wall grows upward from the floor. A wall with `height_scale = 0.5` is half the height of a full wall. |
+| **Half-walls** (`HALF_WALL` flag) | Rendered as **deferred strips** — not drawn with full walls but interleaved with entity billboards in painter's order. This allows entities to appear behind half-walls when farther away, and in front when closer. |
+| **Transparent walls** (`TRANSPARENT` flag) | The raycaster continues casting through transparent walls, rendering the wall strip but also anything behind it. Used for fences, glass, or bars. |
+| **Doors** (`DOOR` type) | Full wall height but **not solid** — the player can walk through them. Rendered with wall textures. |
+
+### Directional Textures on Walls
+
+Each wall tile can have up to three textures: `texture` (default), `texture_front`, and `texture_back`. Which world face maps to "front" or "back" depends on the tile's **rotation**:
+
+| Rotation | Front → World Face | Back → World Face |
+|----------|--------------------|-------------------|
+| 0 (N) | South | North |
+| 1 (E) | West | East |
+| 2 (S) | North | South |
+| 3 (W) | East | West |
+
+Faces that aren't designated front or back use the default `texture`. If a directional texture is blank, the default texture is used.
+
+### Entity Billboard Rendering
+
+Entities in the FP view are rendered as **billboards** — 2D sprites projected into 3D space. They always face the camera (unless `is_billboard = False`, in which case facing affects apparent width).
+
+#### Projection Rules
+
+| Property | Value | Notes |
+|----------|-------|-------|
+| **Max render distance** | 14.0 tiles | Entities beyond this are culled |
+| **Detail distance** | 5.0 tiles | Name tags and health bars are hidden beyond this |
+| **Z-buffer check** | Per-column | Billboard columns behind a wall are not drawn |
+
+#### Entity Visual Sizing
+
+Each entity's sprite character determines its visual size via the `ENTITY_VIS` lookup:
+
+| Character | Height Scale | Width Scale | Billboard? | Example |
+|-----------|-------------|-------------|-----------|---------|
+| D, N, M, V | 0.75 | 0.50 | Yes | NPC characters |
+| O | 0.45 | 0.45 | Yes | Barrels |
+| ☆ | 0.25 | 0.20 | Yes | Small items |
+| ≡ | 0.60 | 0.70 | No | Shelves |
+| □ | 0.40 | 0.45 | No | Crates |
+| ■ | 0.35 | 0.40 | No | Safes |
+| Default | 0.60 | 0.50 | Yes | Any unlisted character |
+
+**Billboard = Yes**: The sprite always faces the camera at full width.
+**Billboard = No**: The sprite is **facing-aware** — its apparent width is scaled by `max(0.20, |cos(facing_angle − view_angle)|)`. Objects viewed from the side appear narrower.
+
+#### Textured Billboards
+
+Certain sprite characters map to pre-defined texture keys:
+
+| Character | Texture Key |
+|-----------|-------------|
+| ≡ | shelf |
+| □ | crate |
+| ■ | safe |
+| ═ | table |
+| ▒ | bookshelf |
+| O | barrel |
+
+If an entity has a matching texture in the atlas, it renders as a textured rectangle instead of a colored glyph. Otherwise, a font-rendered glyph is used.
+
+#### Entity Fog & Distance Shading
+
+Entity billboards receive distance-based fog identical to walls: a fog LUT darkens sprites proportionally to their distance. The fog rate is controlled by the `dn` (day/night) parameter.
+
+### Platform Elevation
+
+Entities standing on a **platform** tile (tiles with the `PLATFORM` flag and `height_scale > 0`) are visually elevated. The billboard's base shifts upward by the platform's `height_scale` value. This creates the illusion of entities standing on raised surfaces.
+
+### Verticality Limitations
+
+The current raycaster is a **2.5D engine** (like classic Doom):
+
+- **No true vertical stacking** — you cannot have rooms above other rooms.
+- **No Z-axis movement** — the camera is always at a fixed eye height.
+- **Platforms are visual only** — they raise entity billboards but don't create true multi-level geometry.
+- **Ceilings are uniform** — the ceiling plane is flat, drawn as a gradient. Per-tile ceiling heights are not rendered.
+- **No vertical aiming** — the crosshair is always at the horizon.
+
+### WallSprite Entities
+
+Entities with a `WallSprite` component are rendered as part of the wall system rather than as billboards. They appear as textured rectangles attached to wall surfaces with configurable width, height, and elevation. Common uses: paintings, signs, shelving mounted on walls.
+
+---
+
+## 18. Task-Based Workflows
+
+Step-by-step guides for common editor tasks.
+
+### How to Create a Functional Room
+
+1. **Create or open a zone**: File → New Zone or File → Open Zone.
+2. **Set room dimensions**: In the Zone inspector tab, set Width and Height (e.g., 15×12).
+3. **Paint walls**: Select `wall` (or `brick_wall`, `stone`, etc.) from the Tile Palette. Use the Brush tool (B) to paint the perimeter.
+4. **Paint the floor**: Select a floor tile (e.g., `wood_floor`, `concrete`). Fill the interior with the Fill tool (I), or brush it manually.
+5. **Add a door**: Select the `door` tile. Paint it over one wall tile to create an entrance. Doors are wall-height but not solid.
+6. **Place furniture**: Switch to the Entities panel. Click a furniture prefab (e.g., `shelf`, `table`). Click the canvas to place it.
+7. **Preview in 3D**: Press **F** to enter first-person mode. Walk around the room. Press **Esc** to return.
+8. **Save**: Ctrl+S.
+
+### How to Create an NPC with Dialogue and Loot
+
+1. **Place the NPC**: In the Entities panel, click a character prefab (e.g., `merchant`, `wanderer`). Click the canvas to place.
+2. **Select the NPC**: Switch to Select tool (V), click the NPC on the canvas. The inspector opens to the Entity tab.
+3. **Set identity**: In the Identity section, set a display **Name** (e.g., "Old Jim"), **Kind** = `npc`.
+4. **Set sprite**: In the Sprite section, set **Char** to a letter (e.g., `N`), choose a **Color**.
+5. **Add dialogue**: If the Dialogue component isn't present, click **"Add Component…"** → **dialogue**. Set the **Bark** text (e.g., "Got anything to trade?").
+6. **Add inventory**: Click **"Add Component…"** → **inventory**. Inventory items are defined in JSON; edit the zone file directly or use tile_entity for loot containers.
+7. **Add health** (optional): Click **"Add Component…"** → **health**. Set **Current** and **Max** HP values.
+8. **Save**: Ctrl+S.
+
+### How to Connect Two Zones with Portals
+
+See [§16. Portal Linking Workflow](#16-portal-linking-workflow) for the complete step-by-step guide. Quick summary:
+
+1. Open zone A. Place a `portal` entity at the exit tile.
+2. In the inspector, set **Target zone** = zone B's name, and **Target row/col** = the arrival tile in zone B.
+3. Open zone B. Place a `portal` entity at the arrival tile.
+4. Set its **Target zone** = zone A, **Target row/col** = the exit tile in zone A.
+5. Save both zones.
+
+### How to Create a Loot Container
+
+1. **Place entity**: Entities panel → click `chest` (or `crate`, `barrel`). Click the canvas.
+2. **Select it**: Switch to Select tool, click the container.
+3. **Configure TileEntity**: In the Entity tab, find the **TileEntity** section. Set **Type** = `container`.
+4. **Assign a loot table**: Set **Loot table** to a defined table name (e.g., `common_loot`). If you need to create one, open Editors → Loot Tables first.
+5. **Save**: Ctrl+S.
+
+When the player interacts with this container in-game, the loot table is rolled to generate items.
+
+### How to Set Up a Zone for First-Person Play
+
+1. **Paint solid walls** around the playable area (the raycaster needs walls to cast rays against).
+2. **Paint floor tiles** inside the playable area (empty/void tiles render as pits).
+3. **Enable FP flag**: In the Zone inspector tab, check **First Person**.
+4. **Place a player spawn**: Entities panel → `player_spawn`. Click the canvas at the desired spawn location.
+5. **Test**: Press **F** to enter fullscreen FP mode. Walk around with WASD.
+6. **Build in FP**: Use the hotbar (1-9, 0) to select tiles. Left-click to place, right-click to eyedrop, middle-click to erase.
+7. **Use noclip**: If you get stuck inside walls, press **C** to toggle noclip (enabled by default).
+
+### How to Import and Use Custom Textures
+
+1. **Prepare the texture**: Create a 64×64 PNG image for the tile face.
+2. **Import**: Menu → Export → Import Texture…. Browse to the PNG file.
+3. **The texture** is copied to `assets/textures/tiles/<filename>.png` and loaded into the atlas.
+4. **Assign to a tile**: Open the Tile Editor (right-click a tile in the palette, or "Add Tile"). Set the **Texture key** field to the filename stem (without `.png`).
+5. **Directional textures**: Set **Texture Front** and/or **Texture Back** to different texture keys for per-face variation.
+6. **Use rotation**: Press **R** to cycle the tile's orientation before painting. Rotation determines which world face maps to front/back.
+
+### How to Use the Entity Forge
+
+1. Open **Editors → Entity Forge**.
+2. Click **New** to create a blank archetype.
+3. Set the **ID** (lowercase, underscores, e.g., `tall_shelf`).
+4. Set the **Kind** dropdown: `tile`, `box`, or `billboard`.
+5. Fill in kind-specific properties (texture, dimensions, sprite, etc.).
+6. Click **Save** to write to `data/custom_entities.toml`.
+7. Click **Close** to return to the editor.
+8. In the **Entities panel**, your forge entry appears with `[F]`. Click to place.
+
+---
+
+## 19. Keyboard Shortcut Reference
 
 ### Global Shortcuts (2D Editor)
 
@@ -825,13 +1291,13 @@ The zone nav bar maintains a browser-style back/forward history. Loading a new z
 
 ---
 
-## 16. Mouse Reference
+## 20. Mouse Reference
 
 ### Canvas (2D)
 
 | Button         | Action |
 |----------------|--------|
-| Left-click     | Tool action (see §6) |
+| Left-click     | Tool action (see §7) |
 | Left-drag      | Continuous paint/erase or entity drag |
 | Middle-click   | Pan camera |
 | Right-click    | Deselect / cancel placement |
@@ -896,7 +1362,7 @@ The status bar sits at the very bottom of the window.
 
 ---
 
-## 17. Project Directory Structure
+## 21. Project Directory Structure
 
 All paths are defined in `core/paths.py` — the single source of truth.
 
