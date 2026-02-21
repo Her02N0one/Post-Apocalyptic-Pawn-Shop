@@ -25,6 +25,7 @@ if _root not in sys.path:
 
 from core.fonts import get_font
 from editor.ui import Theme, UIContext
+from editor.input_manager import InputManager
 from editor.state import EditorState, Tool, list_zones
 from editor.canvas import Canvas
 from editor.panels import (
@@ -121,12 +122,16 @@ class EditorApp(ActionsMixin, CanvasEventsMixin):
             "templates": self.template_panel,
         }
 
+        # ── Input layer system ──────────────────────────────────
+        self.input = InputManager(self.ctx, on_action=self._dispatch_action)
+        self._register_input_layers()
+
         # Load initial zone (or start blank)
         if self._initial_zone:
             if not self.state.load_zone(self._initial_zone):
                 self.state.new_zone(self._initial_zone, 30, 20)
         else:
-            self.state.new_zone("untitled", 30, 20)
+            self.state.new_zone("", 30, 20)
 
     # ── Shared helpers (eliminate duplicated logic) ──────────────
 
@@ -151,6 +156,10 @@ class EditorApp(ActionsMixin, CanvasEventsMixin):
         """Load a zone by name and refresh the inspector."""
         self.state.load_zone(name)
         self.inspector.force_rebuild()
+        # Reset FP camera to the centre of the new zone
+        if self.fp_preview.active:
+            st = self.state
+            self.fp_preview.sync_to_anchor((st.map_w / 2.0, st.map_h / 2.0))
 
     def _build_fonts(self):
         """(Re)create fonts at sizes appropriate for the current scale."""
@@ -187,86 +196,177 @@ class EditorApp(ActionsMixin, CanvasEventsMixin):
             if event.type == pygame.QUIT:
                 self._running = False
                 continue
+            self.input.dispatch(event)
 
-            # Full-screen overlays consume events first
-            if self.forge.active:
-                result = self.forge.handle_event(event)
-                if result == "place":
-                    self._begin_forge_placement()
-                continue
-            if self.loot_editor.active:
-                self.loot_editor.handle_event(event)
-                continue
-            if self.template_editor.active:
-                self.template_editor.handle_event(event)
-                continue
-            if self.modals.active:
-                self.modals.handle_event(event)
-                continue
+    # ── Input layer registration ────────────────────────────────
 
-            # Global keyboard shortcuts
-            if event.type == pygame.KEYDOWN:
-                if self._handle_shortcut(event):
-                    continue
+    def _register_input_layers(self):
+        """Register all event-handling layers in priority order."""
+        add = self.input.add
 
-            # Menu bar (dropdown menus)
-            action = self.menu_bar.handle_event(event)
-            if action:
-                if action != MenuBar._CONSUMED:
-                    self._dispatch_action(action)
-                continue
-            # If a dropdown is open, block all mouse events from
-            # reaching canvas / palette / etc. beneath it
-            if self.menu_bar.is_open:
-                if event.type in (pygame.MOUSEBUTTONDOWN,
-                                  pygame.MOUSEBUTTONUP,
-                                  pygame.MOUSEMOTION):
-                    continue
+        # Full-screen overlays — always consume when active
+        add("overlays", 100,
+            lambda: (self.forge.active or self.loot_editor.active
+                     or self.template_editor.active or self.modals.active),
+            self._layer_overlays)
 
-            # Zone navigation bar
-            nav_action = self.zone_nav.handle_event(event)
-            if nav_action and nav_action.startswith("nav:"):
-                self._do_load_zone(nav_action[4:])
-                continue
+        # Global keyboard shortcuts (Ctrl+S, G, M, R, etc.)
+        add("shortcuts", 90,
+            lambda: True,
+            self._layer_shortcuts)
 
-            # Tool strip
-            tool_action = self.toolbar.handle_event(event)
-            if tool_action:
-                self._dispatch_action(tool_action)
-                continue
+        # Menu bar — dropdowns block mouse events when open
+        add("menu", 80,
+            lambda: True,
+            self._layer_menu)
 
-            # Panel splitter drag handles (before palette/inspector)
-            if self.splitter.handle_event(event):
-                continue
+        # Zone navigation bar (back / forward / connected zone links)
+        add("zone_nav", 70,
+            lambda: True,
+            self._layer_zone_nav)
 
-            # FP fullscreen consumes ALL events (before palette/inspector)
-            if self.fp_preview.active and self.fp_preview.fullscreen:
-                if self.fp_preview.handle_event(event, self.state):
-                    continue
+        # Tool strip (brush / eraser / fill / select / picker)
+        add("toolbar", 65,
+            lambda: True,
+            self._layer_toolbar)
 
-            # Panel mode tabs (above the left panel content)
-            tab_action = self.panel_tabs.handle_event(event)
-            if tab_action:
-                self._dispatch_action(tab_action)
-                continue
+        # Draggable panel splitter handles
+        add("splitter", 60,
+            lambda: True,
+            self._layer_splitter)
 
-            # Left panel — dispatch via _panel_handlers table
-            panel_result = self._handle_left_panel_event(event)
-            if panel_result is not None:
-                continue
+        # FP fullscreen editing (consumes ALL events when active)
+        add("fp_fullscreen", 55,
+            lambda: self.fp_preview.active and self.fp_preview.fullscreen,
+            self._layer_fp_fullscreen)
 
-            # Inspector
-            insp_action = self.inspector.handle_event(event, self.screen)
-            if insp_action:
-                self._dispatch_action(insp_action)
-                continue
+        # Left-panel tab strip
+        add("panel_tabs", 50,
+            lambda: True,
+            self._layer_panel_tabs)
 
-            # Canvas interaction (mouse events on the map area)
-            # FP PIP-mode consumes WASD/arrow keys when active
-            if self.fp_preview.active:
-                if self.fp_preview.handle_event(event, self.state):
-                    continue
-            self._handle_canvas_event(event)
+        # Active left panel (tile palette, zone list, entity panel, etc.)
+        add("left_panel", 45,
+            lambda: True,
+            self._layer_left_panel)
+
+        # Right panel (tabbed inspector)
+        add("inspector", 40,
+            lambda: True,
+            self._layer_inspector)
+
+        # FP picture-in-picture (WASD / arrows when active but not fullscreen)
+        add("fp_pip", 35,
+            lambda: self.fp_preview.active,
+            self._layer_fp_pip)
+
+        # Canvas (tile grid — default fallthrough)
+        add("canvas", 30,
+            lambda: True,
+            self._layer_canvas)
+
+    # ── Layer handlers ──────────────────────────────────────────
+
+    def _layer_overlays(self, event):
+        """Full-screen overlays always consume all events."""
+        if self.forge.active:
+            result = self.forge.handle_event(event)
+            if result == "place":
+                self._begin_forge_placement()
+                self.entity_panel.refresh()
+            return True
+        if self.loot_editor.active:
+            self.loot_editor.handle_event(event)
+            return True
+        if self.template_editor.active:
+            self.template_editor.handle_event(event)
+            return True
+        if self.modals.active:
+            self.modals.handle_event(event)
+            return True
+        return None
+
+    def _layer_shortcuts(self, event):
+        """Global keyboard shortcuts."""
+        if event.type != pygame.KEYDOWN:
+            return None
+        if self._handle_shortcut(event):
+            return True
+        return None
+
+    def _layer_menu(self, event):
+        """Menu bar — returns action strings, blocks mouse when open."""
+        action = self.menu_bar.handle_event(event)
+        if action:
+            if action != MenuBar._CONSUMED:
+                return action  # action string
+            return True  # consumed internally
+        # Block mouse events while a dropdown is open
+        if self.menu_bar.is_open:
+            if event.type in (pygame.MOUSEBUTTONDOWN,
+                              pygame.MOUSEBUTTONUP,
+                              pygame.MOUSEMOTION):
+                return True
+        return None
+
+    def _layer_zone_nav(self, event):
+        """Zone navigation bar — back/forward/connected zones."""
+        nav_action = self.zone_nav.handle_event(event)
+        if nav_action and nav_action.startswith("nav:"):
+            self._do_load_zone(nav_action[4:])
+            return True
+        return None
+
+    def _layer_toolbar(self, event):
+        """Tool strip — produces 'tool:name' actions."""
+        action = self.toolbar.handle_event(event)
+        if action:
+            return action  # action string dispatched by InputManager
+        return None
+
+    def _layer_splitter(self, event):
+        """Draggable panel dividers."""
+        if self.splitter.handle_event(event):
+            return True
+        return None
+
+    def _layer_fp_fullscreen(self, event):
+        """FP fullscreen editing mode."""
+        if self.fp_preview.handle_event(event, self.state):
+            return True
+        return None
+
+    def _layer_panel_tabs(self, event):
+        """Left-panel tab strip — produces 'panel:mode' actions."""
+        action = self.panel_tabs.handle_event(event)
+        if action:
+            return action  # action string
+        return None
+
+    def _layer_left_panel(self, event):
+        """Active left panel — routes events and handles results."""
+        result = self._handle_left_panel_event(event)
+        if result is not None:
+            return True  # consumed (actions dispatched internally)
+        return None
+
+    def _layer_inspector(self, event):
+        """Right panel inspector — produces action strings."""
+        action = self.inspector.handle_event(event, self.screen)
+        if action:
+            return action  # action string
+        return None
+
+    def _layer_fp_pip(self, event):
+        """FP picture-in-picture WASD / mouse."""
+        if self.fp_preview.handle_event(event, self.state):
+            return True
+        return None
+
+    def _layer_canvas(self, event):
+        """Canvas interaction — tile grid mouse events."""
+        self._handle_canvas_event(event)
+        return None  # canvas is the final fallthrough
 
     # ── Left-panel event routing ────────────────────────────────
 
@@ -318,6 +418,17 @@ class EditorApp(ActionsMixin, CanvasEventsMixin):
         key = event.key
         mod = event.mod
         st = self.state
+
+        # When a text field is focused, only allow Ctrl combos through;
+        # all other keys belong to the text field.
+        if self.ctx.any_focused() and not (mod & pygame.KMOD_CTRL):
+            return False
+
+        # When FP fullscreen is active, only allow Ctrl combos through;
+        # all other keys belong to the FP editor.
+        if self.fp_preview.active and self.fp_preview.fullscreen:
+            if not (mod & pygame.KMOD_CTRL):
+                return False
 
         if key == pygame.K_s and mod & pygame.KMOD_CTRL:
             st.save_zone()
@@ -391,7 +502,10 @@ class EditorApp(ActionsMixin, CanvasEventsMixin):
         if st.toast_timer > 0:
             st.toast_timer -= dt
         # Update FP preview camera movement
-        if self.fp_preview.active:
+        # Skip when a full-screen overlay is active to prevent camera drift
+        if self.fp_preview.active and not (
+                self.forge.active or self.loot_editor.active
+                or self.template_editor.active or self.modals.active):
             self.fp_preview.update(dt, st.tiles, st.map_w, st.map_h)
         # Cursor: resize arrow when hovering a splitter
         cur = self.splitter.cursor()
@@ -474,7 +588,9 @@ class EditorApp(ActionsMixin, CanvasEventsMixin):
                 selected_tile=self.state.selected_tile,
                 entities=self.state.entities,
                 rotations=self.state.rotations,
-                pending_rotation=self.state.pending_rotation)
+                pending_rotation=self.state.pending_rotation,
+                floor_heights=self.state.floor_heights,
+                ceil_heights=self.state.ceil_heights)
 
         # Panel splitter handles (drawn over panel borders)
         self.splitter.draw(screen)

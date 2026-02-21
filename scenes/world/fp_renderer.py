@@ -75,6 +75,10 @@ class Renderer:
         # and blitted to the screen immediately, then the next
         # entity reuses the same pixel buffer.
         self._ent_canvas: pygame.Surface = pygame.Surface((384, 384))
+        # Shared SRCALPHA surface for transparent wall strips.
+        # Reused each frame to avoid per-strip Surface allocations.
+        self._trans_canvas: pygame.Surface = pygame.Surface(
+            (384, 384), pygame.SRCALPHA)
         # Kept as alias so perf logger can still read len()
         self._bb_base_cache: dict = {}
 
@@ -107,6 +111,24 @@ class Renderer:
             self._np_tiles_key = None
             self._floor_ct_key = None
             self._vp_ct_key = None
+
+    def notify_tiles_changed(self) -> None:
+        """Flush all tile-dependent caches after in-place grid edits.
+
+        Call after *any* tile placement, erase, or fill so that walls
+        render correctly on the very next frame.
+        """
+        from systems.raycaster import invalidate_caches as _inv_ray
+        from scenes.world.fp_walls import invalidate_face_cache as _inv_face
+        _inv_ray()
+        _inv_face()
+        self._strip_cache.clear()
+        self._strip_cache_prev.clear()
+        self._col_cache.clear()
+        self._strip_free.clear()
+        self._np_tiles_key = None
+        self._floor_ct_key = None
+        self._vp_ct_key = None
 
     def warmup(self) -> None:
         """Pre-allocate Surfaces and populate caches to eliminate

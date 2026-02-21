@@ -61,6 +61,11 @@ class Session:
 
         self.first_person: bool = False   # current zone supports first-person view
 
+        # Per-cell floor/ceiling heights (Doom-style variable sectors).
+        # Values are fractions of a wall unit (0.0 = ground, 1.0 = full).
+        self.floor_heights: list[list[float]] = []
+        self.ceil_heights: list[list[float]] = []
+
         # uid → zone descriptor dict (for rebuilding transient components)
         self._descriptor_index: dict[str, dict[str, Any]] = {}
 
@@ -469,6 +474,8 @@ class Session:
         self.map_h = len(zd.tiles)
         self.map_w = len(zd.tiles[0]) if zd.tiles else 0
         self.first_person = zd.first_person
+        self.floor_heights = zd.floor_heights
+        self.ceil_heights = zd.ceil_heights
         self._cache_descriptors_from_list(zd.entities)
         self._build_portal_map(zd)
         return zd

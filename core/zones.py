@@ -43,6 +43,11 @@ class Zone:
     portals: list[Portal] = field(default_factory=list)
     entities: list[dict[str, Any]] = field(default_factory=list)
     first_person: bool = False  # True → zone can be viewed in first-person
+    # Per-cell Doom-style sector heights and textures
+    floor_heights: list[list[float]] = field(default_factory=list)
+    ceil_heights: list[list[float]] = field(default_factory=list)
+    floor_textures: list[list[str]] = field(default_factory=list)
+    ceil_textures: list[list[str]] = field(default_factory=list)
 
 
 def load_zone(name: str) -> Zone:
@@ -100,6 +105,35 @@ def load_zone(name: str) -> Zone:
     interior: bool = bool(data.get("interior", False))
     first_person: bool = bool(data.get("first_person", interior))
 
+    # Per-cell height / texture grids (Doom-style sector data)
+    raw_fh = data.get("floor_heights", [])
+    floor_heights: list[list[float]]
+    if raw_fh and len(raw_fh) == height:
+        floor_heights = [[float(v) for v in row] for row in raw_fh]
+    else:
+        floor_heights = [[0.0] * width for _ in range(height)]
+
+    raw_ch = data.get("ceil_heights", [])
+    ceil_heights: list[list[float]]
+    if raw_ch and len(raw_ch) == height:
+        ceil_heights = [[float(v) for v in row] for row in raw_ch]
+    else:
+        ceil_heights = [[1.0] * width for _ in range(height)]
+
+    raw_ft = data.get("floor_textures", [])
+    floor_textures: list[list[str]]
+    if raw_ft and len(raw_ft) == height:
+        floor_textures = [[str(v) for v in row] for row in raw_ft]
+    else:
+        floor_textures = [[""] * width for _ in range(height)]
+
+    raw_ct = data.get("ceil_textures", [])
+    ceil_textures: list[list[str]]
+    if raw_ct and len(raw_ct) == height:
+        ceil_textures = [[str(v) for v in row] for row in raw_ct]
+    else:
+        ceil_textures = [[""] * width for _ in range(height)]
+
     return Zone(
         name=name,
         width=width,
@@ -110,6 +144,10 @@ def load_zone(name: str) -> Zone:
         portals=portals,
         first_person=first_person,
         entities=entities,
+        floor_heights=floor_heights,
+        ceil_heights=ceil_heights,
+        floor_textures=floor_textures,
+        ceil_textures=ceil_textures,
     )
 
 

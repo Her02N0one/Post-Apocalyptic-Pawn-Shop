@@ -56,12 +56,20 @@ class Tool:
 
 class Snapshot:
     """Full state snapshot for undo/redo."""
-    __slots__ = ("tiles", "rotations", "entities")
+    __slots__ = ("tiles", "rotations", "entities",
+                 "floor_heights", "ceil_heights",
+                 "floor_textures", "ceil_textures")
 
-    def __init__(self, tiles, rotations, entities):
+    def __init__(self, tiles, rotations, entities,
+                 floor_heights=None, ceil_heights=None,
+                 floor_textures=None, ceil_textures=None):
         self.tiles = tiles
         self.rotations = rotations
         self.entities = entities
+        self.floor_heights = floor_heights
+        self.ceil_heights = ceil_heights
+        self.floor_textures = floor_textures
+        self.ceil_textures = ceil_textures
 
 
 class History:
@@ -76,6 +84,10 @@ class History:
             deepcopy(state.tiles),
             deepcopy(state.rotations),
             deepcopy(state.entities),
+            deepcopy(state.floor_heights),
+            deepcopy(state.ceil_heights),
+            deepcopy(state.floor_textures),
+            deepcopy(state.ceil_textures),
         )
         self._undo.append(snap)
         self._redo.clear()
@@ -89,6 +101,10 @@ class History:
         state.tiles = deepcopy(prev.tiles)
         state.rotations = deepcopy(prev.rotations)
         state.entities = deepcopy(prev.entities)
+        state.floor_heights = deepcopy(prev.floor_heights) if prev.floor_heights else []
+        state.ceil_heights = deepcopy(prev.ceil_heights) if prev.ceil_heights else []
+        state.floor_textures = deepcopy(prev.floor_textures) if prev.floor_textures else []
+        state.ceil_textures = deepcopy(prev.ceil_textures) if prev.ceil_textures else []
         state.map_h = len(state.tiles)
         state.map_w = len(state.tiles[0]) if state.tiles else 0
         return True
@@ -101,6 +117,10 @@ class History:
         state.tiles = deepcopy(snap.tiles)
         state.rotations = deepcopy(snap.rotations)
         state.entities = deepcopy(snap.entities)
+        state.floor_heights = deepcopy(snap.floor_heights) if snap.floor_heights else []
+        state.ceil_heights = deepcopy(snap.ceil_heights) if snap.ceil_heights else []
+        state.floor_textures = deepcopy(snap.floor_textures) if snap.floor_textures else []
+        state.ceil_textures = deepcopy(snap.ceil_textures) if snap.ceil_textures else []
         state.map_h = len(state.tiles)
         state.map_w = len(state.tiles[0]) if state.tiles else 0
         return True
@@ -128,6 +148,10 @@ class EditorState:
         self.zone_name: str = ""
         self.tiles: list[list[str]] = []
         self.rotations: list[list[int]] = []   # parallel grid: 0-3 per cell
+        self.floor_heights: list[list[float]] = []   # per-cell floor height (0.0 = ground)
+        self.ceil_heights: list[list[float]] = []    # per-cell ceiling height (1.0 = standard)
+        self.floor_textures: list[list[str]] = []    # per-cell floor texture ("" = default)
+        self.ceil_textures: list[list[str]] = []     # per-cell ceiling texture ("" = default)
         self.map_w: int = 0
         self.map_h: int = 0
         self.entities: list[EntityDef] = []
@@ -204,6 +228,9 @@ class EditorState:
         else:
             self.rotations = [[0] * self.map_w for _ in range(self.map_h)]
 
+        # Per-cell floor / ceiling height grids (Doom-style sector heights)
+        self._load_height_grids(data)
+
         self.entities = [EntityDef.from_dict(e)
                         for e in data.get("entities", [])]
         self._portals_to_entities(data.get("portals", []))
@@ -247,6 +274,8 @@ class EditorState:
             self.rotations = raw_rot
         else:
             self.rotations = [[0] * self.map_w for _ in range(self.map_h)]
+
+        self._load_height_grids(data)
 
         self.entities = [EntityDef.from_dict(e)
                         for e in data.get("entities", [])]
@@ -298,6 +327,19 @@ class EditorState:
         }
         if self.first_person:
             data["first_person"] = True
+        # Per-cell height / texture grids — only save when non-default
+        if self.floor_heights and any(
+                v != 0.0 for row in self.floor_heights for v in row):
+            data["floor_heights"] = self.floor_heights
+        if self.ceil_heights and any(
+                v != 1.0 for row in self.ceil_heights for v in row):
+            data["ceil_heights"] = self.ceil_heights
+        if self.floor_textures and any(
+                v != "" for row in self.floor_textures for v in row):
+            data["floor_textures"] = self.floor_textures
+        if self.ceil_textures and any(
+                v != "" for row in self.ceil_textures for v in row):
+            data["ceil_textures"] = self.ceil_textures
         return data
 
     def new_zone(self, name: str, width: int = 30, height: int = 20):
@@ -307,6 +349,10 @@ class EditorState:
         self.map_h = height
         self.tiles = [["grass"] * width for _ in range(height)]
         self.rotations = [[0] * width for _ in range(height)]
+        self.floor_heights = [[0.0] * width for _ in range(height)]
+        self.ceil_heights = [[1.0] * width for _ in range(height)]
+        self.floor_textures = [[""] * width for _ in range(height)]
+        self.ceil_textures = [[""] * width for _ in range(height)]
         self.entities: list[EntityDef] = []
         self.first_person = False
         self.selected_entity = -1
@@ -316,7 +362,8 @@ class EditorState:
         self.history.clear()
         self.history.push(self)
         self.dirty = False
-        self.toast(f"Created: {name} ({width}x{height})")
+        if name:
+            self.toast(f"Created: {name} ({width}x{height})")
 
     def resize_zone(self, new_w: int, new_h: int):
         """Resize zone, preserving existing tiles."""
@@ -326,12 +373,28 @@ class EditorState:
             return
         new_tiles = [["grass"] * new_w for _ in range(new_h)]
         new_rots = [[0] * new_w for _ in range(new_h)]
+        new_fh = [[0.0] * new_w for _ in range(new_h)]
+        new_ch = [[1.0] * new_w for _ in range(new_h)]
+        new_ft = [[""] * new_w for _ in range(new_h)]
+        new_ct = [[""] * new_w for _ in range(new_h)]
         for r in range(min(new_h, self.map_h)):
             for c in range(min(new_w, self.map_w)):
                 new_tiles[r][c] = self.tiles[r][c]
                 new_rots[r][c] = self.rotations[r][c] if self.rotations else 0
+                if self.floor_heights and r < len(self.floor_heights) and c < len(self.floor_heights[0]):
+                    new_fh[r][c] = self.floor_heights[r][c]
+                if self.ceil_heights and r < len(self.ceil_heights) and c < len(self.ceil_heights[0]):
+                    new_ch[r][c] = self.ceil_heights[r][c]
+                if self.floor_textures and r < len(self.floor_textures) and c < len(self.floor_textures[0]):
+                    new_ft[r][c] = self.floor_textures[r][c]
+                if self.ceil_textures and r < len(self.ceil_textures) and c < len(self.ceil_textures[0]):
+                    new_ct[r][c] = self.ceil_textures[r][c]
         self.tiles = new_tiles
         self.rotations = new_rots
+        self.floor_heights = new_fh
+        self.ceil_heights = new_ch
+        self.floor_textures = new_ft
+        self.ceil_textures = new_ct
         self.map_w = new_w
         self.map_h = new_h
         self.push_undo()
@@ -354,6 +417,40 @@ class EditorState:
                 self.toast(f"Renamed → {new_name}")
         else:
             self.toast(f"Renamed → {new_name}")
+
+    # ── Per-cell height / texture grid loader ─────────────────
+
+    def _load_height_grids(self, data: dict) -> None:
+        """Load per-cell floor/ceil heights and textures from zone data.
+
+        Missing or mis-sized grids are filled with defaults
+        (floor_height=0.0, ceil_height=1.0, textures="").
+        """
+        h, w = self.map_h, self.map_w
+
+        raw_fh = data.get("floor_heights")
+        if raw_fh and len(raw_fh) == h and all(len(r) == w for r in raw_fh):
+            self.floor_heights = [[float(v) for v in row] for row in raw_fh]
+        else:
+            self.floor_heights = [[0.0] * w for _ in range(h)]
+
+        raw_ch = data.get("ceil_heights")
+        if raw_ch and len(raw_ch) == h and all(len(r) == w for r in raw_ch):
+            self.ceil_heights = [[float(v) for v in row] for row in raw_ch]
+        else:
+            self.ceil_heights = [[1.0] * w for _ in range(h)]
+
+        raw_ft = data.get("floor_textures")
+        if raw_ft and len(raw_ft) == h and all(len(r) == w for r in raw_ft):
+            self.floor_textures = [[str(v) for v in row] for row in raw_ft]
+        else:
+            self.floor_textures = [[""] * w for _ in range(h)]
+
+        raw_ct = data.get("ceil_textures")
+        if raw_ct and len(raw_ct) == h and all(len(r) == w for r in raw_ct):
+            self.ceil_textures = [[str(v) for v in row] for row in raw_ct]
+        else:
+            self.ceil_textures = [[""] * w for _ in range(h)]
 
     # ── Painting ────────────────────────────────────────────────
 

@@ -291,6 +291,7 @@ class AddComponentModal(_BaseModal):
     COMPONENTS = [
         "collider", "health", "tile_entity", "wall_sprite",
         "inventory", "facing", "dialogue", "sprite", "combat_stats",
+        "portal",
     ]
 
     def __init__(self, manager: ModalManager):
@@ -384,6 +385,8 @@ class TileEditorModal(_BaseModal):
     EXTRA_FLAG_OPTIONS = [
         ("Transparent", TF.TRANSPARENT, "See-through wall"),
         ("Farmland", TF.FARMLAND, "Tillable soil"),
+        ("Thin Wall", TF.THIN_WALL, "Mid-cell fence/railing"),
+        ("Tall Wall", TF.TALL_WALL, "Extends upward with alt texture"),
     ]
 
     @staticmethod
@@ -438,6 +441,35 @@ class TileEditorModal(_BaseModal):
             placeholder="(none)", maxlen=64,
             filter_fn=self._key_filter)
 
+        # Per-face texture override fields (N/S/E/W)
+        self._tex_n_field = TextField(
+            z, self.ctx,
+            value=src.tex_n if src else "",
+            placeholder="(none)", maxlen=64,
+            filter_fn=self._key_filter)
+        self._tex_s_field = TextField(
+            z, self.ctx,
+            value=src.tex_s if src else "",
+            placeholder="(none)", maxlen=64,
+            filter_fn=self._key_filter)
+        self._tex_e_field = TextField(
+            z, self.ctx,
+            value=src.tex_e if src else "",
+            placeholder="(none)", maxlen=64,
+            filter_fn=self._key_filter)
+        self._tex_w_field = TextField(
+            z, self.ctx,
+            value=src.tex_w if src else "",
+            placeholder="(none)", maxlen=64,
+            filter_fn=self._key_filter)
+
+        # Alt texture (tall wall extension texture)
+        self._alt_tex_field = TextField(
+            z, self.ctx,
+            value=src.alt_texture if src else "",
+            placeholder="(none)", maxlen=64,
+            filter_fn=self._key_filter)
+
         self._cat_field = TextField(
             z, self.ctx, value="",
             placeholder="type category name...", maxlen=32)
@@ -468,6 +500,10 @@ class TileEditorModal(_BaseModal):
                 self._extra_flags |= TF.TRANSPARENT
             if src.farmland:
                 self._extra_flags |= TF.FARMLAND
+            if src.thin_wall:
+                self._extra_flags |= TF.THIN_WALL
+            if src.tall_wall:
+                self._extra_flags |= TF.TALL_WALL
 
         # ── Sound ────────────────────────────────────────────────
         self._sound: str = src.sound if src else "stone"
@@ -760,6 +796,46 @@ class TileEditorModal(_BaseModal):
         self._back_field.draw(surface, font_sm, dt)
         y += field_h + gap
 
+        # ── Per-face texture overrides (N/S/E/W) ───────────────
+        draw_text(surface, "Per-Face Textures:", x0, y + s(2),
+                  Theme.TEXT_DIM, font_sm)
+        draw_text(surface, "(override texture per compass face)",
+                  x0 + s(130), y + s(2), (90, 90, 100), font_sm)
+        y += s(16)
+
+        half_rw = (rw - s(8)) // 2
+        _face_fields = [
+            ("N:", self._tex_n_field),
+            ("S:", self._tex_s_field),
+            ("E:", self._tex_e_field),
+            ("W:", self._tex_w_field),
+        ]
+        for fi, (flabel, ffield) in enumerate(_face_fields):
+            col_i = fi % 2
+            if col_i == 0:
+                _fy = y
+            fx = x0 + col_i * (half_rw + s(8))
+            draw_text(surface, flabel, fx, _fy + s(4),
+                      Theme.TEXT_DIM, font_sm)
+            ffield.rect = pygame.Rect(
+                fx + s(18), _fy, half_rw - s(18), field_h)
+            ffield.draw(surface, font_sm, dt)
+            if col_i == 1:
+                y += field_h + s(4)
+        if len(_face_fields) % 2 == 1:
+            y += field_h + s(4)
+        y += gap
+
+        # ── Alt texture (tall wall extension) ───────────────────
+        draw_text(surface, "Alt Tex:", x0, y + s(2),
+                  Theme.TEXT_DIM, font_sm)
+        draw_text(surface, "(tall wall upper texture)",
+                  x0 + s(65), y + s(2), (90, 90, 100), font_sm)
+        y += s(16)
+        self._alt_tex_field.rect = pygame.Rect(x0, y, rw, field_h)
+        self._alt_tex_field.draw(surface, font_sm, dt)
+        y += field_h + gap
+
         # ── Height scale ────────────────────────────────────────
         draw_text(surface, "Height:", x0, y + s(2),
                   Theme.TEXT_DIM, font_sm)
@@ -796,8 +872,9 @@ class TileEditorModal(_BaseModal):
             draw_text(surface, self._error, x0, y, Theme.DANGER, font_sm)
             y += s(16)
 
-        # Record content height for scroll
+        # Record content height and body height for scroll
         self._content_h = int((y + self._scroll_y) - body_r.y) + s(8)
+        self._body_h = body_r.h
 
         # End body clip
         surface.set_clip(None)
@@ -992,7 +1069,10 @@ class TileEditorModal(_BaseModal):
 
     def _all_fields(self) -> list[TextField]:
         return [self._name_field, self._tex_field,
-                self._front_field, self._back_field]
+                self._front_field, self._back_field,
+                self._tex_n_field, self._tex_s_field,
+                self._tex_e_field, self._tex_w_field,
+                self._alt_tex_field]
 
     def handle_event(self, event) -> bool:
         # ── Delete confirmation mode ─────────────────────────────
@@ -1018,9 +1098,10 @@ class TileEditorModal(_BaseModal):
 
         # ── Scroll ───────────────────────────────────────────────
         if event.type == pygame.MOUSEWHEEL:
+            body_h = getattr(self, '_body_h', 400)
             self._scroll_y = max(0.0, min(
                 self._scroll_y - event.y * 30,
-                max(0, self._content_h - 400)))
+                max(0, self._content_h - body_h)))
             return True
 
         if event.type == pygame.KEYDOWN:
@@ -1262,6 +1343,11 @@ class TileEditorModal(_BaseModal):
         dup_modal._tex_field.value = self._tex_field.value
         dup_modal._front_field.value = self._front_field.value
         dup_modal._back_field.value = self._back_field.value
+        dup_modal._tex_n_field.value = self._tex_n_field.value
+        dup_modal._tex_s_field.value = self._tex_s_field.value
+        dup_modal._tex_e_field.value = self._tex_e_field.value
+        dup_modal._tex_w_field.value = self._tex_w_field.value
+        dup_modal._alt_tex_field.value = self._alt_tex_field.value
         dup_modal._category = self._category
         self.manager.open(dup_modal)
 
@@ -1281,6 +1367,11 @@ class TileEditorModal(_BaseModal):
                  | self._extra_flags)
         tfr = self._front_field.value.strip()
         tbk = self._back_field.value.strip()
+        t_n = self._tex_n_field.value.strip()
+        t_s = self._tex_s_field.value.strip()
+        t_e = self._tex_e_field.value.strip()
+        t_w = self._tex_w_field.value.strip()
+        alt_tex = self._alt_tex_field.value.strip()
         height = self._height_slider.value
         sound = self._sound
 
@@ -1292,6 +1383,8 @@ class TileEditorModal(_BaseModal):
                 texture_key=tex,
                 texture_front=tfr,
                 texture_back=tbk,
+                tex_n=t_n, tex_s=t_s, tex_e=t_e, tex_w=t_w,
+                alt_texture=alt_tex,
                 height_scale=height,
                 category=self._category,
                 sound=sound,
@@ -1307,6 +1400,8 @@ class TileEditorModal(_BaseModal):
                 texture_key=tex,
                 texture_front=tfr,
                 texture_back=tbk,
+                tex_n=t_n, tex_s=t_s, tex_e=t_e, tex_w=t_w,
+                alt_texture=alt_tex,
                 height_scale=height,
                 category=self._category,
                 sound=sound,

@@ -49,6 +49,7 @@ class UIContext:
     def __init__(self):
         self.focused_id: int | None = None
         self._next_id = 0
+        self._focus_touched: bool = False  # set True by take_focus, read by InputManager
 
     def alloc_id(self) -> int:
         uid = self._next_id
@@ -60,6 +61,7 @@ class UIContext:
 
     def take_focus(self, uid: int):
         self.focused_id = uid
+        self._focus_touched = True
 
     def release_focus(self, uid: int | None = None):
         if uid is None or self.focused_id == uid:
@@ -457,6 +459,7 @@ class NumberField:
             ctx, value=fmt)
         self._btn_up = pygame.Rect(rect.right - 38, rect.y, 18, rect.h)
         self._btn_dn = pygame.Rect(rect.right - 18, rect.y, 18, rect.h)
+        self._was_focused = False  # tracks focus for external blur detection
 
     def _format(self):
         if self.is_int:
@@ -464,15 +467,24 @@ class NumberField:
         return f"{self.value:.{self.decimals}f}"
 
     def _apply_text(self):
+        """Parse the text field and update value. Called on every keystroke
+        from the inner TextField, but we defer the reformat until the
+        field loses focus so the user can type decimals / negatives."""
+        raw = self._text.value.strip()
+        # Allow partial input: lone minus, trailing dot, or empty string
+        if raw in ("", "-", ".", "-."):
+            return  # don't reformat yet — user is still typing
         try:
-            v = float(self._text.value)
+            v = float(raw)
             self.value = _clamp(v, self.min_val, self.max_val)
             if self.on_change:
                 self.on_change(self.value)
         except ValueError:
             pass
-        self._text.value = self._format()
-        self._text._cursor_pos = len(self._text.value)
+        # Do NOT reformat the field here — that erases the cursor position
+        # and makes it impossible to type decimal points.  Reformat happens
+        # on blur (see handle_event MOUSEBUTTONDOWN for +/- buttons) and
+        # in set_value().
 
     def _sync_layout(self):
         """Reposition internal widgets to match self.rect (for scrolling)."""
@@ -483,6 +495,12 @@ class NumberField:
 
     def draw(self, surface: pygame.Surface, font: pygame.font.Font,
              dt: float = 0.016):
+        # Detect external focus loss (e.g. InputManager click-away)
+        currently_focused = self._text.focused
+        if self._was_focused and not currently_focused:
+            self._reformat()
+        self._was_focused = currently_focused
+
         self._sync_layout()
         self._text.draw(surface, font, dt)
         # Up/Down buttons
@@ -494,27 +512,37 @@ class NumberField:
             draw_text_centered(surface, label, btn_rect, Theme.TEXT, font)
 
     def handle_event(self, event: pygame.event.Event) -> bool:
+        # Detect focus loss → reformat the display text
+        was_focused = self._text.focused
         if self._text.handle_event(event):
             self._apply_text()
+            if was_focused and not self._text.focused:
+                self._reformat()
             return True
+        # Check focus-loss from non-consumed events too (click-away)
+        if was_focused and not self._text.focused:
+            self._reformat()
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self._btn_up.collidepoint(event.pos):
                 self.value = _clamp(self.value + self.step,
                                     self.min_val, self.max_val)
-                self._text.value = self._format()
-                self._text._cursor_pos = len(self._text.value)
+                self._reformat()
                 if self.on_change:
                     self.on_change(self.value)
                 return True
             if self._btn_dn.collidepoint(event.pos):
                 self.value = _clamp(self.value - self.step,
                                     self.min_val, self.max_val)
-                self._text.value = self._format()
-                self._text._cursor_pos = len(self._text.value)
+                self._reformat()
                 if self.on_change:
                     self.on_change(self.value)
                 return True
         return False
+
+    def _reformat(self):
+        """Reformat the text field to match the current value."""
+        self._text.value = self._format()
+        self._text._cursor_pos = len(self._text.value)
 
     def set_value(self, v: float):
         self.value = _clamp(v, self.min_val, self.max_val)
@@ -638,6 +666,8 @@ class Checkbox:
 # ── Dropdown ────────────────────────────────────────────────────────
 
 class Dropdown:
+    _MAX_VISIBLE = 12  # max rows before scroll kicks in
+
     def __init__(self, rect: pygame.Rect, options: list[str],
                  selected: int = 0,
                  on_change: Callable[[int, str], None] | None = None):
@@ -646,7 +676,7 @@ class Dropdown:
         self.selected = selected
         self.on_change = on_change
         self._open = False
-        self._hovered_idx = -1
+        self._scroll = 0  # first visible index
 
     @property
     def value(self) -> str:
@@ -673,24 +703,38 @@ class Dropdown:
         pygame.draw.polygon(surface, Theme.TEXT_DIM,
                             [(ax - 4, ay - 2), (ax + 4, ay - 2), (ax, ay + 4)])
 
+    def _visible_count(self) -> int:
+        return min(len(self.options), self._MAX_VISIBLE)
+
+    def _dropdown_rect(self) -> pygame.Rect:
+        from editor.layout import Layout
+        item_h = Layout.item_h
+        return pygame.Rect(self.rect.x, self.rect.bottom + 2,
+                           self.rect.w, self._visible_count() * item_h)
+
     def draw_dropdown(self, surface: pygame.Surface, font: pygame.font.Font):
         """Draw the dropdown list (call AFTER other widgets)."""
         if not self._open or not self.options:
             return
         from editor.layout import Layout
         item_h = Layout.item_h
-        total_h = min(len(self.options), 8) * item_h
+        vis = self._visible_count()
         br = Layout.border_r
-        dr = pygame.Rect(self.rect.x, self.rect.bottom + 2,
-                         self.rect.w, total_h)
+        dr = self._dropdown_rect()
         pygame.draw.rect(surface, Theme.PANEL, dr, border_radius=br)
         pygame.draw.rect(surface, Theme.BORDER, dr, 1, border_radius=br)
 
+        # Clip so items don't overflow the dropdown box
+        surface.set_clip(dr)
         fh = font.get_height()
         text_y_off = max(1, (item_h - fh) // 2)
         mx, my = pygame.mouse.get_pos()
-        for i, opt in enumerate(self.options[:8]):
-            iy = dr.y + i * item_h
+        for vi in range(vis):
+            i = self._scroll + vi
+            if i >= len(self.options):
+                break
+            opt = self.options[i]
+            iy = dr.y + vi * item_h
             ir = pygame.Rect(dr.x + 2, iy, dr.w - 4, item_h)
             is_hov = ir.collidepoint(mx, my)
             is_sel = (i == self.selected)
@@ -701,28 +745,47 @@ class Dropdown:
             color = Theme.ACCENT if is_sel else Theme.TEXT
             draw_text(surface, opt, ir.x + Layout.pad_md,
                       ir.y + text_y_off, color, font)
+        surface.set_clip(None)
+
+        # Scrollbar indicator when list is scrollable
+        if len(self.options) > vis and dr.h > 0:
+            frac = self._scroll / max(1, len(self.options) - vis)
+            bar_h = max(8, dr.h * vis // len(self.options))
+            bar_y = dr.y + int(frac * (dr.h - bar_h))
+            pygame.draw.rect(surface, Theme.SCROLLTHUMB,
+                             (dr.right - 4, bar_y, 4, bar_h),
+                             border_radius=2)
 
     def handle_event(self, event: pygame.event.Event) -> bool:
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self._open:
                 from editor.layout import Layout
                 item_h = Layout.item_h
-                dr = pygame.Rect(self.rect.x, self.rect.bottom + 2,
-                                 self.rect.w,
-                                 min(len(self.options), 8) * item_h)
+                dr = self._dropdown_rect()
                 if dr.collidepoint(event.pos):
-                    idx = (event.pos[1] - dr.y) // item_h
+                    vi = (event.pos[1] - dr.y) // item_h
+                    idx = self._scroll + vi
                     if 0 <= idx < len(self.options):
                         self.selected = idx
                         self._open = False
                         if self.on_change:
                             self.on_change(idx, self.options[idx])
                         return True
+                # Click-away: close AND consume so the click doesn't
+                # leak through to widgets underneath.
                 self._open = False
-                return False
+                return True
             elif self.rect.collidepoint(event.pos):
                 self._open = True
-                return False
+                return True
+        if event.type == pygame.MOUSEWHEEL and self._open:
+            # Scroll the dropdown list
+            max_scroll = max(0, len(self.options) - self._visible_count())
+            if event.y > 0:
+                self._scroll = max(0, self._scroll - 1)
+            elif event.y < 0:
+                self._scroll = min(max_scroll, self._scroll + 1)
+            return True
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
             if self._open:
                 self._open = False

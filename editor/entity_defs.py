@@ -42,10 +42,16 @@ class EDFacing:
 
 @dataclass
 class EDSprite:
-    """Visual glyph + colour + layer."""
+    """Visual glyph + colour + layer.
+
+    ``billboard_mode``: 0=static (default), 1=8-way Doom-style.
+    ``sprite_key``: base texture key for 8-way billboards (e.g. "zombie").
+    """
     char: str = "?"
     color: list[int] = field(default_factory=lambda: [200, 200, 200])
     layer: int = 5
+    billboard_mode: int = 0
+    sprite_key: str = ""
 
 @dataclass
 class EDCollider:
@@ -170,11 +176,16 @@ class EntityDef:
             d["facing"] = {"direction": self.facing.direction}
 
         if self.sprite is not None:
-            d["sprite"] = {
+            sd: dict[str, Any] = {
                 "char": self.sprite.char,
                 "color": list(self.sprite.color),
                 "layer": self.sprite.layer,
             }
+            if self.sprite.billboard_mode:
+                sd["billboard_mode"] = self.sprite.billboard_mode
+            if self.sprite.sprite_key:
+                sd["sprite_key"] = self.sprite.sprite_key
+            d["sprite"] = sd
         if self.collider is not None:
             d["collider"] = {
                 "w": self.collider.w,
@@ -204,10 +215,10 @@ class EntityDef:
                 "height": self.wall_sprite.height,
                 "elevation": self.wall_sprite.elevation,
             }
-        if self.inventory is not None and self.inventory.items:
+        if self.inventory is not None:
             d["inventory"] = {"items": dict(self.inventory.items)}
 
-        if self.dialogue is not None and self.dialogue.bark:
+        if self.dialogue is not None:
             d["dialogue"] = {"bark": self.dialogue.bark}
 
         if self.combat_stats is not None:
@@ -269,6 +280,8 @@ class EntityDef:
                 char=s.get("char", "?"),
                 color=list(s.get("color", [200, 200, 200])),
                 layer=int(s.get("layer", 5)),
+                billboard_mode=int(s.get("billboard_mode", 0)),
+                sprite_key=s.get("sprite_key", ""),
             )
 
         if "collider" in d:

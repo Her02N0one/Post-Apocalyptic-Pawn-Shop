@@ -19,6 +19,7 @@ import pygame
 from systems.raycaster import cast_walls
 from systems.textures import TEX_SIZE
 from core.tiles import tile_def as _tile_def, tile_str_to_int, tile_int_to_str
+from core.types import FACE_NAMES
 
 if TYPE_CHECKING:
     from scenes.world.fp_renderer import Renderer
@@ -47,11 +48,17 @@ _WS_RDX = 7         # ray_dir_x
 _WS_RDY = 8         # ray_dir_y
 _WS_MAP_X = 10      # map_x (grid column of hit cell)
 _WS_MAP_Y = 11      # map_y (grid row of hit cell)
+_WS_FACE = 12       # face (FACE_NORTH..FACE_WEST)
 
 # AO distance cutoff — skip AO shadows for walls farther than this
 _AO_MAX_DIST = 6.0
 
-# Face name derivation from side + ray direction
+# Face name derivation — now uses pre-computed face constant from WallSlice
+def _face_name_from_idx(face_idx: int) -> str:
+    """Convert face constant (0–3) to cardinal name string."""
+    return FACE_NAMES[face_idx] if 0 <= face_idx < 4 else "south"
+
+# Legacy: derive face from side + ray direction (C-ext path pre-compute)
 def _face_name(side: int, rdx: float, rdy: float) -> str:
     """Derive cardinal face name from DDA side + ray direction."""
     if side == 0:  # X boundary
@@ -169,6 +176,7 @@ def draw_walls(
     _has_dir = _has_directional
     _get_by_key = atlas.get_by_key
     _face_nm = _face_name
+    _face_nm_idx = _face_name_from_idx
     _rots = rotations  # may be None
 
     if _USE_C_WALLS:
@@ -203,12 +211,16 @@ def draw_walls(
             ao_y      = g[16]
             ao_h      = g[17]
             has_vp    = g[18]
+            src_idx   = g[19]  # original index into slices[]
+            ao_y      = g[16]
+            ao_h      = g[17]
+            has_vp    = g[18]
 
             # Face-texture override check (rotation-aware)
             face_key = None
             if _has_dir(tid):
-                _ws = slices[gi]
-                face = _face_nm(ws_side, _ws[_WS_RDX], _ws[_WS_RDY])
+                _ws = slices[src_idx]
+                face = _face_nm_idx(_ws[_WS_FACE])
                 _rot = 0
                 if _rots:
                     _my = _ws[_WS_MAP_Y]; _mx = _ws[_WS_MAP_X]
@@ -258,20 +270,66 @@ def draw_walls(
                     strip_cache[cache_key] = strip_surf
 
             if is_full:
-                _full_append((strip_surf, (ws_sx, cy0)))
-                _sx_end = ws_sx + col_w
-                if _sx_end > sw:
-                    _sx_end = sw
-                zbuf_full[ws_sx:_sx_end] = [ws_dist] * (_sx_end - ws_sx)
-                if ao_h > 0:
-                    _ao_append((ws_sx, ao_y, col_w, ao_h))
+                # Check if this full-height wall is transparent →
+                # defer it for painter's-order alpha compositing.
+                _ws_c = slices[src_idx]
+                _td_c = _tile_def(_ws_c[_WS_TID])
+                if _td_c and _td_c.transparent:
+                    deferred_halves.append((
+                        ws_dist, strip_surf,
+                        ws_sx, cy0, cy1, col_w, draw_h,
+                        False, tid, hs, _half, True,
+                    ))
+                else:
+                    _full_append((strip_surf, (ws_sx, cy0)))
+                    _sx_end = ws_sx + col_w
+                    if _sx_end > sw:
+                        _sx_end = sw
+                    zbuf_full[ws_sx:_sx_end] = [ws_dist] * (_sx_end - ws_sx)
+                    if ao_h > 0:
+                        _ao_append((ws_sx, ao_y, col_w, ao_h))
+                    # ── Tall wall extension (tiling texture above) ──
+                    if cy0 > 0 and _td_c and _td_c.tall_wall:
+                        _tw_h = _ws_c[_WS_H]
+                        _tw_key = _td_c.alt_texture
+                        _tw_tex = (_get_by_key(_tw_key) if _tw_key
+                                   else _atlas_get(tid))
+                        _rep = max(1, int(_tw_h))
+                        _cur = cy0
+                        while _cur > 0:
+                            _tw_top = max(0, _cur - _rep)
+                            _tw_sh = _cur - _tw_top
+                            if _tw_sh < 1:
+                                break
+                            _v1 = _TEX
+                            _v0 = _TEX - int((_tw_sh / _rep) * _TEX)
+                            if _v0 < 0:
+                                _v0 = 0
+                            if _v1 - _v0 < 1:
+                                break
+                            _tw_sub = _tw_tex.subsurface(
+                                (tx_s, _v0, 1, _v1 - _v0))
+                            _tw_s = _scale(_tw_sub, (col_w, _tw_sh))
+                            if ws_side == 1 and fog < 250:
+                                _tw_s.fill(
+                                    (175*fog//255, 168*fog//255,
+                                     155*fog//255),
+                                    special_flags=_BLEND)
+                            elif ws_side == 1:
+                                _tw_s.fill((175, 168, 155),
+                                           special_flags=_BLEND)
+                            elif fog < 250:
+                                _tw_s.fill((fog, fog, fog),
+                                           special_flags=_BLEND)
+                            _full_append((_tw_s, (ws_sx, _tw_top)))
+                            _cur = _tw_top
             else:
                 if has_vp:
                     plat_col[ws_sx] = (cy0, tid, hs, col_w)
                 deferred_halves.append((
                     ws_dist, strip_surf,
                     ws_sx, cy0, cy1, col_w, draw_h,
-                    bool(has_vp), tid, hs, _half,
+                    bool(has_vp), tid, hs, _half, False,
                 ))
     else:
         # ── Pure-Python fallback ─────────────────────────────
@@ -329,7 +387,7 @@ def draw_walls(
             # Face-texture override check (rotation-aware)
             face_key = None
             if _has_dir(tid):
-                face = _face_nm(ws_side, ws[_WS_RDX], ws[_WS_RDY])
+                face = _face_nm_idx(ws[_WS_FACE])
                 _rot = 0
                 if _rots:
                     _my = ws[_WS_MAP_Y]; _mx = ws[_WS_MAP_X]
@@ -378,16 +436,61 @@ def draw_walls(
                     strip_cache[cache_key] = strip_surf
 
             if hs > 0.99:
-                _full_append((strip_surf, (ws_sx, cy0)))
+                # Transparent full-height walls → defer for alpha
+                _td_py = _tile_def(tid)
+                if _td_py and _td_py.transparent:
+                    deferred_halves.append((
+                        ws_dist, strip_surf,
+                        ws_sx, cy0, cy1, col_w, draw_h,
+                        False, tid, hs, _half, True,
+                    ))
+                else:
+                    _full_append((strip_surf, (ws_sx, cy0)))
 
-                _sx_end = min(ws_sx + col_w, sw)
-                zbuf_full[ws_sx:_sx_end] = [ws_dist] * (_sx_end - ws_sx)
+                    _sx_end = min(ws_sx + col_w, sw)
+                    zbuf_full[ws_sx:_sx_end] = [ws_dist] * (_sx_end - ws_sx)
 
-                if ws_dist < _ao_max_dist and cy1 < _sh:
-                    _ao = min(6, max(1, draw_h >> 3))
-                    _ao_h = min(_ao, _sh - cy1)
-                    if _ao_h > 0:
-                        _ao_append((ws_sx, cy1, col_w, _ao_h))
+                    if ws_dist < _ao_max_dist and cy1 < _sh:
+                        _ao = min(6, max(1, draw_h >> 3))
+                        _ao_h = min(_ao, _sh - cy1)
+                        if _ao_h > 0:
+                            _ao_append((ws_sx, cy1, col_w, _ao_h))
+
+                    # ── Tall wall extension (tiling texture above) ──
+                    if cy0 > 0 and _td_py and _td_py.tall_wall:
+                        _tw_h = ws_h  # full wall height in pixels
+                        _tw_key = _td_py.alt_texture
+                        _tw_tex = (_get_by_key(_tw_key) if _tw_key
+                                   else _atlas_get(tid))
+                        _rep = max(1, int(_tw_h))
+                        _cur = cy0
+                        while _cur > 0:
+                            _tw_top = max(0, _cur - _rep)
+                            _tw_sh = _cur - _tw_top
+                            if _tw_sh < 1:
+                                break
+                            _v1 = _TEX
+                            _v0 = _TEX - int((_tw_sh / _rep) * _TEX)
+                            if _v0 < 0:
+                                _v0 = 0
+                            if _v1 - _v0 < 1:
+                                break
+                            _tw_sub = _tw_tex.subsurface(
+                                (tx_s, _v0, 1, _v1 - _v0))
+                            _tw_s = _scale(_tw_sub, (col_w, _tw_sh))
+                            if ws_side == 1 and fog < 250:
+                                _tw_s.fill(
+                                    (175*fog//255, 168*fog//255,
+                                     155*fog//255),
+                                    special_flags=_BLEND)
+                            elif ws_side == 1:
+                                _tw_s.fill((175, 168, 155),
+                                           special_flags=_BLEND)
+                            elif fog < 250:
+                                _tw_s.fill((fog, fog, fog),
+                                           special_flags=_BLEND)
+                            _full_append((_tw_s, (ws_sx, _tw_top)))
+                            _cur = _tw_top
             else:
                 has_vp = False
                 if 0 < cy0 < _sh:
@@ -398,7 +501,7 @@ def draw_walls(
                 deferred_halves.append((
                     ws_dist, strip_surf,
                     ws_sx, cy0, cy1, col_w, draw_h,
-                    has_vp, tid, hs, _half,
+                    has_vp, tid, hs, _half, False,
                 ))
 
     # ── Batch blit all full walls in one C-level call ────────

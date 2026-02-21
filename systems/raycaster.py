@@ -22,7 +22,14 @@ import math
 import operator
 from collections import namedtuple
 
-from core.tiles import WALL_IDS, HALF_WALL_IDS, tile_def, grid_to_ints, wall_lut, half_wall_lut, hs_lut, tile_int_to_str
+from core.tiles import (
+    WALL_IDS, HALF_WALL_IDS, tile_def, grid_to_ints,
+    wall_lut, half_wall_lut, hs_lut, tile_int_to_str,
+    transparent_lut, thin_wall_lut, TF,
+)
+from core.types import (
+    face_from_side, FACE_NORTH, FACE_SOUTH, FACE_EAST, FACE_WEST,
+)
 
 # ── Try to load C-accelerated raycaster ──────────────────────────
 try:
@@ -40,15 +47,25 @@ except ImportError:
 WallSlice = namedtuple('WallSlice', [
     'screen_x', 'distance', 'height', 'tile_id', 'side',
     'tex_x', 'height_scale', 'ray_dir_x', 'ray_dir_y', 'wall_x',
-    'map_x', 'map_y',
-], defaults=[0, 0.0, 0, 0, 0, 0.0, 1.0, 0.0, 0.0, 0.0, 0, 0])
-WallSlice.__doc__ = """One vertical column of a rendered wall."""
+    'map_x', 'map_y', 'face',
+], defaults=[0, 0.0, 0, 0, 0, 0.0, 1.0, 0.0, 0.0, 0.0, 0, 0, 0])
+WallSlice.__doc__ = """One vertical column of a rendered wall.
+
+``face`` is a compass-face constant (FACE_NORTH .. FACE_WEST)
+indicating which side of the tile was struck by the ray.
+"""
 
 BillboardSprite = namedtuple('BillboardSprite', [
     'eid', 'screen_x', 'screen_y', 'height', 'distance',
     'char', 'color', 'width',
-], defaults=[0, 0.0, 0.0, 0, 0.0, '', (0, 0, 0), 0])
-BillboardSprite.__doc__ = """An entity projected into screen space."""
+    'bb_mode', 'bb_key', 'octant',
+], defaults=[0, 0.0, 0.0, 0, 0.0, '', (0, 0, 0), 0, 0, '', -1])
+BillboardSprite.__doc__ = """An entity projected into screen space.
+
+``bb_mode``  0 = static sprite, 1 = 8-way billboard
+``bb_key``   base texture key for 8-way lookup (e.g. "zombie")
+``octant``   0-7 Doom-style rotation index (-1 = not computed)
+"""
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -58,6 +75,7 @@ BillboardSprite.__doc__ = """An entity projected into screen space."""
 _WALL_TILES: frozenset[str] = WALL_IDS
 _HALF_TILES: frozenset[str] = HALF_WALL_IDS
 _MAX_STEPS = 32
+_MAX_TRANSPARENT = 4  # max transparent walls recorded per ray
 
 # Height-scale cache — avoids repeated tile_def() lookups per frame
 _HS_CACHE: dict[str, float] = {}
@@ -151,12 +169,19 @@ def cast_walls(
     _half_check = _HALF_TILES.__contains__
     _max_steps = _MAX_STEPS
 
+    # Transparent / thin wall helpers
+    _MAX_TRANS = _MAX_TRANSPARENT
+    _face_from = face_from_side
+
     slices: list[WallSlice] = []
     _append = slices.append
     _WS = WallSlice
     half_hits: list[WallSlice] = []
     _hh_append = half_hits.append
     _hh_clear = half_hits.clear
+    trans_hits: list[WallSlice] = []
+    _th_append = trans_hits.append
+    _th_clear = trans_hits.clear
 
     for col_idx in range(n_rays):
         x = col_idx * step
@@ -191,6 +216,8 @@ def cast_walls(
         hit = False
         side = 0
         _hh_clear()
+        _th_clear()
+        n_trans = 0
         for _ in range(_max_steps):
             if sd_x < sd_y:
                 sd_x += dd_x
@@ -202,10 +229,7 @@ def cast_walls(
                 side = 1
 
             if mx < 0 or mx >= map_w or my < 0 or my >= map_h:
-                # Out of bounds — only treat as a wall hit if there are
-                # no half-walls recorded.  Otherwise the half-walls
-                # stand alone and the player can see over/through them.
-                if not half_hits:
+                if not half_hits and not trans_hits:
                     hit = True
                 break
 
@@ -223,24 +247,73 @@ def cast_walls(
                         _wx = py + _perp * rd_y
                     else:
                         _wx = px + _perp * rd_x
+                    _face = _face_from(side, rd_x, rd_y)
                     _hh_append(_WS(
                         x, _perp, _line_h, tid, side,
                         _wx - _floor(_wx), _get_hs(tid),
-                        rd_x, rd_y, _wx, mx, my,
+                        rd_x, rd_y, _wx, mx, my, _face,
                     ))
-                    # Skip half-walls so the ray keeps going until a
-                    # full wall or map edge.
                     continue
+
+                # Check transparent flag — record hit but continue
+                _td = tile_def(tid)
+                if _td and _td.transparent and n_trans < _MAX_TRANS:
+                    if side == 0:
+                        _perp = (mx - px + half_sx) / rd_x if ard_x > 1e-10 else 1e10
+                    else:
+                        _perp = (my - py + half_sy) / rd_y if ard_y > 1e-10 else 1e10
+                    if _perp < 0.01:
+                        _perp = 0.01
+                    _line_h = _int(screen_h / _perp)
+                    if side == 0:
+                        _wx = py + _perp * rd_y
+                    else:
+                        _wx = px + _perp * rd_x
+                    _face = _face_from(side, rd_x, rd_y)
+                    _th_append(_WS(
+                        x, _perp, _line_h, tid, side,
+                        _wx - _floor(_wx), _get_hs(tid),
+                        rd_x, rd_y, _wx, mx, my, _face,
+                    ))
+                    n_trans += 1
+                    continue  # ray passes through
+
+                # Check thin wall — mid-cell intersection
+                if _td and _td.thin_wall:
+                    # Thin walls sit at the center of the cell.
+                    # Compute perpendicular distance to cell midpoint.
+                    mid_x = mx + 0.5
+                    mid_y = my + 0.5
+                    if side == 0:
+                        _perp_mid = (mid_x - px) / rd_x if ard_x > 1e-10 else 1e10
+                    else:
+                        _perp_mid = (mid_y - py) / rd_y if ard_y > 1e-10 else 1e10
+                    if _perp_mid > 0.01:
+                        _line_h = _int(screen_h / _perp_mid)
+                        if side == 0:
+                            _wx = py + _perp_mid * rd_y
+                        else:
+                            _wx = px + _perp_mid * rd_x
+                        _face = _face_from(side, rd_x, rd_y)
+                        _hh_append(_WS(
+                            x, _perp_mid, _line_h, tid, side,
+                            _wx - _floor(_wx), _get_hs(tid),
+                            rd_x, rd_y, _wx, mx, my, _face,
+                        ))
+                    continue  # ray passes through thin wall
+
+                # Solid opaque wall — stop
                 hit = True
                 break
 
-        if not hit and not half_hits:
+        if not hit and not half_hits and not trans_hits:
             continue
 
         if not hit:
-            # Only half-walls, no full wall behind.
-            # Emit farthest-to-nearest (painter's order); the list
-            # is already nearest-first from DDA traversal.
+            # Only half-walls / transparent hits, no solid wall behind.
+            # Emit transparent hits farthest-first, then half-walls.
+            for _td_hit in reversed(trans_hits):
+                _append(_td_hit)
             for _hd in reversed(half_hits):
                 _append(_hd)
             continue
@@ -261,12 +334,15 @@ def cast_walls(
         wx_frac = wx - _floor(wx)
 
         tid_hit = tiles[my][mx] if (0 <= my < map_h and 0 <= mx < map_w) else "void"
+        face_hit = _face_from(side, rd_x, rd_y)
 
-        # Emit background (full) wall FIRST, then half-walls
-        # farthest-to-nearest (painter's order).
+        # Emit background (full) wall FIRST, then transparent hits,
+        # then half-walls — farthest-to-nearest (painter's order).
         _append(_WS(x, perp, line_h, tid_hit, side, wx_frac,
-                     _get_hs(tid_hit), rd_x, rd_y, wx, mx, my))
+                     _get_hs(tid_hit), rd_x, rd_y, wx, mx, my, face_hit))
 
+        for _td_hit in reversed(trans_hits):
+            _append(_td_hit)
         for _hd in reversed(half_hits):
             _append(_hd)
 
@@ -281,48 +357,88 @@ _C_LUT_LEN = 512
 _c_wall_lut: bytearray | None = None
 _c_half_lut: bytearray | None = None
 _c_hs_lut: _array.array | None = None
+_c_trans_lut: bytearray | None = None
+_c_thin_lut: bytearray | None = None
 _c_tiles_id: int | None = None
 _c_tiles_flat: _array.array | None = None
+_c_tiles_generation: int = 0  # bumped by invalidate_caches()
 
 
-def _ensure_c_luts() -> tuple[bytearray, bytearray, _array.array]:
-    """Build/return wall, half-wall, and height-scale lookup tables.
+def invalidate_caches() -> None:
+    """Flush ALL raycaster caches.
+
+    Call after any tile grid mutation (placement, erase, fill) or
+    tile-definition change (register, update, delete) so the C
+    extension re-reads the current state.
+    """
+    global _c_wall_lut, _c_half_lut, _c_hs_lut
+    global _c_trans_lut, _c_thin_lut
+    global _c_tiles_id, _c_tiles_flat
+    global _c_tiles_generation
+    _c_wall_lut = None
+    _c_half_lut = None
+    _c_hs_lut = None
+    _c_trans_lut = None
+    _c_thin_lut = None
+    _c_tiles_id = None
+    _c_tiles_flat = None
+    _c_tiles_generation += 1
+    _HS_CACHE.clear()
+    _TRIG_CACHE.clear()
+
+
+def _ensure_c_luts() -> tuple[bytearray, bytearray, _array.array, bytearray, bytearray]:
+    """Build/return wall, half-wall, height-scale, transparent and thin-wall
+    lookup tables.
 
     Uses the compact-int mapping from core.tiles so the C extension
     can work with its integer grid representation.
     """
-    global _c_wall_lut, _c_half_lut, _c_hs_lut
+    global _c_wall_lut, _c_half_lut, _c_hs_lut, _c_trans_lut, _c_thin_lut
     if _c_wall_lut is not None:
-        return _c_wall_lut, _c_half_lut, _c_hs_lut  # type: ignore[return-value]
+        return _c_wall_lut, _c_half_lut, _c_hs_lut, _c_trans_lut, _c_thin_lut  # type: ignore[return-value]
     wl = wall_lut()
     hl = half_wall_lut()
     hs_raw = hs_lut()
+    trl = transparent_lut()
+    tnl = thin_wall_lut()
     n = max(len(wl), _C_LUT_LEN)
     # Pad to _C_LUT_LEN
     if len(wl) < n:
         wl.extend(bytearray(n - len(wl)))
     if len(hl) < n:
         hl.extend(bytearray(n - len(hl)))
+    if len(trl) < n:
+        trl.extend(bytearray(n - len(trl)))
+    if len(tnl) < n:
+        tnl.extend(bytearray(n - len(tnl)))
     hs = _array.array('d', [1.0] * n)
     for i, v in enumerate(hs_raw):
         hs[i] = v
     _c_wall_lut = wl
     _c_half_lut = hl
     _c_hs_lut = hs
-    return wl, hl, hs
+    _c_trans_lut = trl
+    _c_thin_lut = tnl
+    return wl, hl, hs, trl, tnl
 
 
 def _flatten_tiles(tiles: list[list[str]]) -> _array.array:
-    """Return string tile grid as a flat int32 array using compact mapping."""
+    """Return string tile grid as a flat int32 array.
+
+    Re-flattens every time ``_c_tiles_generation`` changes
+    (i.e. after ``invalidate_caches()``) so that in-place
+    cell mutations are always picked up.
+    """
     global _c_tiles_id, _c_tiles_flat
-    tid = id(tiles)
-    if tid == _c_tiles_id and _c_tiles_flat is not None:
+    key = (id(tiles), _c_tiles_generation)
+    if key == _c_tiles_id and _c_tiles_flat is not None:
         return _c_tiles_flat
     int_grid = grid_to_ints(tiles)
     flat = _array.array('i')
     for row in int_grid:
         flat.extend(row)
-    _c_tiles_id = tid
+    _c_tiles_id = key
     _c_tiles_flat = flat
     return flat
 
@@ -337,24 +453,23 @@ def _cast_walls_c(
     """Call the C extension and wrap results as WallSlice namedtuples.
 
     The C extension returns compact-int tile IDs which we convert
-    back to string IDs in the WallSlice.
+    back to string IDs in the WallSlice.  The C ext now emits all
+    13 fields including map_x, map_y, and face.
     """
     map_h = len(tiles)
     map_w = len(tiles[0]) if map_h else 0
-    wl, hl, hs = _ensure_c_luts()
+    wl, hl, hs, trl, tnl = _ensure_c_luts()
     flat = _flatten_tiles(tiles)
     raw = _c_cast_walls(
         px, py, angle, fov, sw, sh, map_h, map_w,
-        flat, wl, hl, hs, step,
+        flat, wl, hl, hs, trl, tnl, step,
     )
     _WS = WallSlice
     # Convert compact-int tile_id (index 3) back to string.
-    # C ext doesn't emit map_x/map_y — append defaults.
     result = []
     for t in raw:
         lst = list(t)
         lst[3] = tile_int_to_str(lst[3])
-        lst.extend([0, 0])  # map_x, map_y placeholders
         result.append(_WS._make(lst))
     return result
 
@@ -374,10 +489,9 @@ def project_entities(
 
     Parameters
     ----------
-    entities : list of (eid, ex, ey, char, color, height_scale, width_scale[, elevation])
-        An optional 8th element *elevation* (0.0–1.0) lifts the sprite
-        above the floor by that fraction of a full wall height (e.g. a
-        platform with height_scale 0.35 passes elevation=0.35).
+    entities : list of (eid, ex, ey, char, color, height_scale,
+               width_scale[, elevation[, bb_mode, bb_key, octant]])
+        Elements 8-10 are optional 8-way billboard fields.
 
     Returns a list sorted by distance (far → near) for painter's-algo
     draw order.
@@ -400,7 +514,11 @@ def project_entities(
 
     for ent in entities:
         eid, ex, ey, char, color, h_scale, w_scale = ent[:7]
-        elev = ent[7] if len(ent) > 7 else 0.0
+        n = len(ent)
+        elev = ent[7] if n > 7 else 0.0
+        _bb_mode = ent[8] if n > 8 else 0
+        _bb_key = ent[9] if n > 9 else ''
+        _octant = ent[10] if n > 10 else -1
 
         dx = ex - px
         dy = ey - py
@@ -422,7 +540,8 @@ def project_entities(
         sprite_sy = floor_y - sprite_h - lift
 
         _append(_BB(eid, sprite_sx, sprite_sy, sprite_h, ty,
-                     char, color, sprite_w))
+                     char, color, sprite_w,
+                     _bb_mode, _bb_key, _octant))
 
     result.sort(key=operator.attrgetter('distance'), reverse=True)
     return result

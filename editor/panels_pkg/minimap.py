@@ -40,42 +40,48 @@ class Minimap:
         if st.map_w == 0 or st.map_h == 0:
             return
 
-        sx = (WIDTH - 4) / st.map_w
-        sy = (HEIGHT - 4) / st.map_h
-        scale = min(sx, sy)
-        ox = mm_x + 2 + int((WIDTH - 4 - st.map_w * scale) / 2)
-        oy = mm_y + 2 + int((HEIGHT - 4 - st.map_h * scale) / 2)
-        pw = max(1, int(scale))
+        # Clip all minimap drawing to the minimap bounds
+        mm_clip = pygame.Rect(mm_x, mm_y, WIDTH, HEIGHT)
+        surface.set_clip(mm_clip)
+        try:
+            sx = (WIDTH - 4) / st.map_w
+            sy = (HEIGHT - 4) / st.map_h
+            scale = min(sx, sy)
+            ox = mm_x + 2 + int((WIDTH - 4 - st.map_w * scale) / 2)
+            oy = mm_y + 2 + int((HEIGHT - 4 - st.map_h * scale) / 2)
+            pw = max(1, int(scale))
 
-        for r in range(st.map_h):
-            for c in range(st.map_w):
-                tid = st.tiles[r][c]
-                color = TILE_COLORS.get(tid, (80, 80, 80))
-                tx = ox + int(c * scale)
-                ty = oy + int(r * scale)
-                if pw <= 1:
-                    surface.set_at((tx, ty), color)
-                else:
-                    pygame.draw.rect(surface, color, (tx, ty, pw, pw))
+            for r in range(st.map_h):
+                for c in range(st.map_w):
+                    tid = st.tiles[r][c]
+                    color = TILE_COLORS.get(tid, (80, 80, 80))
+                    tx = ox + int(c * scale)
+                    ty = oy + int(r * scale)
+                    if pw <= 1:
+                        surface.set_at((tx, ty), color)
+                    else:
+                        pygame.draw.rect(surface, color, (tx, ty, pw, pw))
 
-        # Portal dots
-        for ent in st.portals:
-            ptl = ent.portal
-            if ptl is None:
-                continue
-            for tile in ptl.tiles:
-                if not isinstance(tile, (list, tuple)) or len(tile) < 2:
+            # Portal dots
+            for ent in st.portals:
+                ptl = ent.portal
+                if ptl is None:
                     continue
-                pr, pc = tile[0], tile[1]
-                tx = ox + int(pc * scale) + pw // 2
-                ty = oy + int(pr * scale) + pw // 2
-                pygame.draw.circle(surface, Theme.PORTAL, (tx, ty),
-                                   max(2, pw))
+                for tile in ptl.tiles:
+                    if not isinstance(tile, (list, tuple)) or len(tile) < 2:
+                        continue
+                    pr, pc = tile[0], tile[1]
+                    tx = ox + int(pc * scale) + pw // 2
+                    ty = oy + int(pr * scale) + pw // 2
+                    pygame.draw.circle(surface, Theme.PORTAL, (tx, ty),
+                                       max(2, pw))
 
-        # Entity dots
-        for ent in st.entities:
-            ex, ey = ent.position.x, ent.position.y
-            tx = ox + int(ex * scale)
-            ty = oy + int(ey * scale)
-            pygame.draw.circle(surface, Theme.ENTITY, (tx, ty),
-                               max(1, pw))
+            # Entity dots
+            for ent in st.entities:
+                ex, ey = ent.position.x, ent.position.y
+                tx = ox + int(ex * scale)
+                ty = oy + int(ey * scale)
+                pygame.draw.circle(surface, Theme.ENTITY, (tx, ty),
+                                   max(1, pw))
+        finally:
+            surface.set_clip(None)

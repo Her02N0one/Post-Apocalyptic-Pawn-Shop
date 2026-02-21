@@ -48,6 +48,7 @@
  *  16   ao_y        int     AO shadow y (0 if none)
  *  17   ao_h        int     AO shadow height (0 if none)
  *  18   has_vp      int     1 = half-wall with visplane above
+ *  19   src_idx     int     original index into slices list
  *
  * Slices with draw_h < 1 are skipped (not emitted).
  */
@@ -177,8 +178,8 @@ fast_compute_wall_geometry(PyObject *self, PyObject *args)
                 has_vp = 1;
         }
 
-        /* Build result tuple — 19 fields */
-        PyObject *t = Py_BuildValue("(idiiiiiiiiiLiidiiii)",
+        /* Build result tuple — 20 fields */
+        PyObject *t = Py_BuildValue("(idiiiiiiiiiLiidiiiin)",
             ws_sx,        /*  0  sx          */
             ws_dist,      /*  1  dist        */
             cy0,          /*  2  cy0         */
@@ -197,7 +198,8 @@ fast_compute_wall_geometry(PyObject *self, PyObject *args)
             is_full,      /* 15  is_full     */
             ao_y,         /* 16  ao_y        */
             ao_h,         /* 17  ao_h        */
-            has_vp        /* 18  has_vp      */
+            has_vp,       /* 18  has_vp      */
+            i             /* 19  src_idx     */
         );
         if (!t) goto cleanup;
         if (PyList_Append(result, t) < 0) {

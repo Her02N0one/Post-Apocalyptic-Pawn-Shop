@@ -240,8 +240,9 @@ class MenuBar:
                     self._open_menu = None
                     result = self._resolve_action(action)
                     return result if result else self._CONSUMED
+                # Click-away: close dropdown and let the click pass through
                 self._open_menu = None
-                return self._CONSUMED
+                return None
 
         if event.type == pygame.MOUSEMOTION and self._open_menu is not None:
             mx, my = event.pos

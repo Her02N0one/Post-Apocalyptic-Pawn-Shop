@@ -37,8 +37,17 @@ def draw_floor_ceiling(
     fov: float,
     tiles: list[list[str]], map_w: int, map_h: int,
     is_interior: bool,
+    *,
+    floor_heights: list[list[float]] | None = None,
+    ceil_heights: list[list[float]] | None = None,
 ) -> None:
-    """Per-row textured floor with checkerboard + gradient ceiling."""
+    """Per-row textured floor with checkerboard + gradient ceiling.
+
+    When *floor_heights* / *ceil_heights* are provided (Doom-style
+    variable-height sectors), the renderer shifts floor/ceiling rows
+    per-cell so that raised floors appear higher and lowered ceilings
+    appear closer.
+    """
     _fill = surface.fill
 
     # ── Ceiling ──────────────────────────────────────────────
@@ -140,6 +149,31 @@ def draw_floor_ceiling(
     checker = (ifx ^ ify) & 1
 
     rgb = ct[fi[:, None], tid_grid, checker]
+
+    # ── Per-cell floor height brightness adjustment ──────────
+    # Raised floor cells (floor_height > 0) appear brighter;
+    # this gives a visual depth cue for Doom-style variable
+    # sector heights without restructuring the vectorised pipeline.
+    if floor_heights and len(floor_heights) >= map_h:
+        _fh_rows: list[list[float]] = floor_heights
+        # Build numpy height grid matching the tile array
+        _fh_np = np.zeros((map_h, map_w), dtype=np.float64)
+        for _r in range(min(map_h, len(_fh_rows))):
+            _row = _fh_rows[_r]
+            for _c in range(min(map_w, len(_row))):
+                _fh_np[_r][_c] = _row[_c]
+        # Sample height at each floor pixel's world position
+        h_at = _fh_np[ify % map_h, ifx % map_w]
+        # Only apply when any height is non-zero
+        if np.any(h_at > 0.001):
+            # Brightness boost: 1.0 at fh=0, up to 1.4 at fh=1.0
+            bright = (1.0 + 0.4 * h_at).astype(np.float32)
+            rgb_f = rgb.astype(np.float32)
+            rgb_f[:, :, 0] = np.clip(rgb_f[:, :, 0] * bright, 0, 255)
+            rgb_f[:, :, 1] = np.clip(rgb_f[:, :, 1] * bright, 0, 255)
+            rgb_f[:, :, 2] = np.clip(rgb_f[:, :, 2] * bright, 0, 255)
+            rgb = rgb_f.astype(np.uint8)
+
     fb = pygame.image.frombuffer(rgb.tobytes(), (fbw, fbh), 'RGB').convert()
     surface.blit(pygame.transform.scale(fb, (sw, floor_h)), (0, half))
 

@@ -1,14 +1,21 @@
-# Post-Apocalyptic Pawn Shop — Map Editor Manual
+﻿# Post-Apocalyptic Pawn Shop — Map Editor Manual
 
 > Comprehensive reference for the PAPS zone/map editor.
 > Covers every panel, tool, keybind, inspector field, modal, and first-person editing workflow.
+
+### How to Use This Manual
+
+Sections 1–18 cover daily editing workflows and UI reference — start here for learning the editor. Sections 19–22 are quick-reference tables for shortcuts, mouse actions, event priority, and the status bar. Section 23 documents the project directory layout. Sections 24–27 are technical appendices for contributors, debuggers, and anyone who needs to understand the rendering pipeline, event routing internals, error handling, or how the game consumes editor data at runtime.
 
 ---
 
 ## Table of Contents
 
+#### Setup
 1. [Prerequisites & Setup](#1-prerequisites--setup)
 2. [Getting Started](#2-getting-started)
+
+#### Interface
 3. [Interface Layout](#3-interface-layout)
 4. [Menu Bar](#4-menu-bar)
 5. [Zone Navigation Bar](#5-zone-navigation-bar)
@@ -16,18 +23,46 @@
 7. [Canvas (Map Viewport)](#7-canvas-map-viewport)
 8. [Left Panels](#8-left-panels)
 9. [Inspector (Right Panel)](#9-inspector-right-panel)
+
+#### First-Person Editing
 10. [First-Person Editor](#10-first-person-editor)
+17. [First-Person Visual Rules](#17-first-person-visual-rules)
+
+#### Dialogs & Overlays
 11. [Modal Dialogs](#11-modal-dialogs)
 12. [Overlay Editors](#12-overlay-editors)
+
+#### Data Systems
 13. [Entity System](#13-entity-system)
 14. [Tile System](#14-tile-system)
+
+#### Zone Management
 15. [Zone Management](#15-zone-management)
 16. [Portal Linking Workflow](#16-portal-linking-workflow)
-17. [First-Person Visual Rules](#17-first-person-visual-rules)
+
+#### Workflows
 18. [Task-Based Workflows](#18-task-based-workflows)
+
+#### Quick Reference
 19. [Keyboard Shortcut Reference](#19-keyboard-shortcut-reference)
 20. [Mouse Reference](#20-mouse-reference)
-21. [Project Directory Structure](#21-project-directory-structure)
+21. [Event Priority](#21-event-priority)
+22. [Status Bar](#22-status-bar)
+
+#### Project Structure
+23. [Project Directory Structure](#23-project-directory-structure)
+
+#### Technical Appendices
+24. [Texture Atlas](#24-texture-atlas)
+25. [Editor State Machine & Event Routing](#25-editor-state-machine--event-routing)
+    - [25.1 Modes & Transitions](#251-modes--transitions)
+    - [25.2 Event Priority (Detailed)](#252-event-priority-detailed)
+    - [25.3 FP Shortcut Audit](#253-fp-shortcut-audit)
+    - [25.4 Text Field & Input Conflicts](#254-text-field--input-conflicts)
+    - [25.5 Entity Drag Edge Cases](#255-entity-drag-edge-cases)
+    - [25.6 State Persistence & Loading](#256-state-persistence--loading)
+26. [Error Behavior](#26-error-behavior)
+27. [Game Runtime Context](#27-game-runtime-context)
 
 ---
 
@@ -271,9 +306,11 @@ A horizontal strip of equal-width buttons spanning the full window width, direct
 
 **Eraser** — Left-click or drag to replace tiles with the configured *erase tile* (default: grass, changeable in the Zone inspector tab).
 
-**Fill** — Left-click to flood-fill a contiguous region of matching tiles with the current tile (4-connected).
+**Fill** — Left-click to flood-fill a contiguous region of matching tiles with the current tile (4-connected). Contiguity matches **tile ID only** — rotation is ignored. All filled cells receive the current **pending rotation** (cycled with R), regardless of the original cells' rotations.
 
 **Picker** — Left-click a tile on the canvas to "eyedrop" it: the tile becomes the selected tile and the tool switches to Brush automatically.
+
+See §7 for the complete mouse action table showing how each tool responds to left-click, left-drag, and right-click.
 
 ---
 
@@ -296,13 +333,13 @@ The canvas renders the 2D tile grid and all entities.
 | Brush   | Paint tile (push undo)                  | Continuous paint       | Deselect entity                 |
 | Eraser  | Erase tile (push undo)                  | Continuous erase       | Deselect entity                 |
 | Fill    | Flood-fill region (push undo)           | —                      | Deselect entity                 |
-| Picker  | Eyedrop tile → switch to Brush          | —                      | Deselect entity                 |
+| Picker  | Eyedrop tile → switch to Brush. **Does not capture rotation** — only the tile ID. | —                      | Deselect entity                 |
 
 ### Entity Interaction (Select Tool)
 
 1. **Placing:** Click a prefab/forge entry in the Entity panel → cursor enters placement mode → left-click canvas to place. Right-click or Esc to cancel.
 2. **Selecting:** Left-click an existing entity to select it. The inspector switches to the Entity tab.
-3. **Dragging:** With an entity selected, left-click and drag to reposition it (snaps to tile centers). Release to confirm.
+3. **Dragging:** With an entity selected, left-click and drag to reposition it. The entity **always snaps to tile centres** — the position is set to `(col + 0.5, row + 0.5)` based on the hovered tile. If an entity was placed at a non-centre position via the inspector (e.g. `3.0, 4.0`), dragging it will snap it to `3.5, 4.5`. Release to confirm.
 4. **Deleting:** Press Delete with an entity selected.
 
 ### Grid & Minimap
@@ -329,8 +366,8 @@ Six interchangeable panels, selectable via the **panel tabs** (two rows of three
 
 A searchable, scrollable grid of tile swatches grouped by type.
 
-- **Filter bar** at the top: type to filter tiles by name, ID, or texture key. Press Esc to clear.
-- **Group headers**: Floor, Wall, Half_Wall, Platform, Door, Liquid. Click the arrow (▸/▾) to collapse or expand a group.
+- **Filter bar** at the top: type to filter tiles by name, ID, or texture key. Press Esc to clear. **Note:** The filter bar suffers the same shortcut conflict as inspector text fields (§25). Global shortcuts fire before the palette handler, so typing `g` toggles the grid instead of adding "g" to the filter, `r` cycles rotation, `p` toggles FP preview, etc. Only non-bound characters reach the filter. Additionally, **Esc itself is a global shortcut** (priority 6 — cancels pending placement) that fires before the palette handler (priority 13): if a pending entity placement exists, the first Esc cancels the placement and never reaches the filter bar. Press Esc a second time to clear the filter. The filter uses its own `_filter_active` flag (not `UIContext.focused_id`), but is handled at the same relative priority.
+- **Group headers**: `Floor`, `Wall`, `Half_Wall`, `Platform`, `Door`, `Liquid`. Click the arrow (▸/▾) to collapse or expand a group.
 - **Swatches**: Display texture thumbnails from the atlas (fallback: solid color). The selected tile has an accent border.
 - **Left-click** a swatch to select it. If the current tool is not Brush, Fill, or Eraser, it switches to Brush.
 - **Right-click** a swatch to open the **Tile Editor Modal** for that tile (edit name, color, type, textures, etc.).
@@ -341,22 +378,86 @@ A searchable, scrollable grid of tile swatches grouped by type.
 
 A unified list combining built-in prefabs and Entity Forge archetypes.
 
+- **Ordering**: Built-in prefabs are listed first (sorted alphabetically by name), followed by Forge archetypes (sorted alphabetically by ID). The two groups are not visually separated beyond the `[F]` badge on forge items.
+- **Duplicate IDs**: No deduplication is performed. If a forge archetype has the same ID as a built-in prefab, both appear in the list. They dispatch different placement actions internally (`select_prefab` vs `select_forge`), so they remain distinct despite the name collision.
+- **Search / Filter**: The entity panel has no search or filter bar (unlike the Tile Palette). It is a flat scrollable list.
 - Each entry shows an icon (based on kind), display name, and kind label. Forge items are marked with `[F]`.
 - **Kind icons**: ☺ npc · ✦ item · □ container · ☠ beast · ○ dummy · ■ prop · ☻ player
-- **Click** an entry to begin placement mode: sets `pending_prefab`, switches to Select tool, and toasts the name.
+- **Click** an entry to begin placement mode: sets `pending_prefab`, switches to Select tool, and toasts the name. If another prefab was already pending, it is **replaced** — there is no need to cancel the previous one first.
 - The currently pending prefab is highlighted.
 
 ### 8.3 Texture Browser
 
-Browse all textures loaded in the atlas. Useful for verifying imported assets.
+A grid of square thumbnails showing every `.png` file in the tile textures directory (`assets/textures/tiles/`). The grid auto-fits columns to the panel width.
+
+```
+┌──────────────┐
+│ ┌──┐┌──┐┌──┐ │
+│ │  ││  ││  │ │  Thumbnail
+│ └──┘└──┘└──┘ │  grid
+│ ┌──┐┌──┐┌──┐ │
+│ │  ││  ││  │ │
+│ └──┘└──┘└──┘ │
+│ ┌──┐┌──┐     │
+│ │  ││  │     │
+│ └──┘└──┘     │
+│ ──────────── │
+│  key_name     │  Hover tooltip
+└──────────────┘
+```
+
+- **Thumbnails** are loaded via `TextureAtlas.get_by_key(key)` and scaled to fit. Missing or unloadable textures appear as dark gray placeholder squares.
+- **Hover** a thumbnail to see an accent-colour border and the **texture key name** displayed below it — this is particularly useful for identifying keys to type into tile definitions.
+- **Click** a thumbnail — currently shows a toast with the texture key name. No tile-paint assignment or clipboard copy is performed (placeholder action).
+- **Not searchable** — there is no filter or search bar. Textures are listed in alphabetical order.
+- **No metadata** is displayed (no dimensions, no usage counts, no tile-ID cross-references). The panel is a visual index only.
+- The panel has a `refresh()` method that triggers a re-scan on the next draw. It is called automatically when textures are imported.
 
 ### 8.4 Portal Panel
 
-Lists portal entities in the current zone with their target zones.
+A scrollable list of all portal entities in the current zone, sourced from the zone state's portal list.
+
+```
+┌──────────────┐
+│ ▣ → campsite  │
+│   2 tile(s)   │
+├──────────────┤
+│ ▣ → outskirts │
+│   1 tile(s)   │
+├──────────────┤
+│              │
+│  (empty)     │
+└──────────────┘
+```
+
+- **Each row** displays a portal icon (`▣` in magenta) with an arrow and the **destination zone name** (e.g. `→ campsite`), truncated on narrow panels. A second line shows the portal's tile count (e.g. `"3 tile(s)"`) in dim text.
+- **Hover** highlights the row.
+- **Click** a portal row to **select that entity in the editor** — this sets `selected_entity`, switches the active tool to Select, and flips the inspector to the Entity tab. The canvas then highlights the selected portal at its tile position, equivalent to clicking the portal on the canvas directly.
+- **View-only** — you cannot create or delete portals from this panel. The empty-state hint reads `"No portals."` / `"Use Portal tool"`, directing you to the canvas-based Portal placement workflow (see §16).
+- The selected portal row is highlighted with the accent colour matching the canvas selection state.
 
 ### 8.5 Room Template Panel
 
-Browse room templates for the template editor system.
+A flat scrollable list of template and room variant files, scanned lazily from the `templates/` and `templates/rooms/` directories.
+
+```
+┌──────────────┐
+│ ▇ Apartment   │
+│   Block       │
+├──────────────┤
+│ ▇ Warehouse   │
+├──────────────┤
+│ ▇ Bunker      │
+├──────────────┤
+│  (empty)     │
+└──────────────┘
+```
+
+- **Each row** shows a coloured block icon (`▇`) and the template filename, title-cased with underscores replaced by spaces (e.g. `apartment_block.json` → "Apartment Block"). Long names are truncated.
+- **Hover** highlights the row.
+- **Click** a row — currently shows a toast (`"Template: <filename> (stamp placement TBD)"`). Canvas stamp-placement is **not yet implemented**; this panel is read-only for now.
+- **No preview thumbnails**, no add/delete buttons, no search. To create, edit, or delete templates, use the Template Editor overlay (Editors → Room Templates, see §12.2).
+- If no templates exist, the panel shows an empty hint: `"No templates."` / `"Editors → Room Templates"`.
 
 ### 8.6 Zone Panel
 
@@ -368,7 +469,7 @@ Browse room templates for the template editor system.
 
 ## 9. Inspector (Right Panel)
 
-Three tabs along the top: **Zone**, **Tile**, **Entity**. The active tab depends on context (selecting a tile switches to Tile tab, selecting an entity switches to Entity tab, etc.).
+Three tabs along the top: **Zone**, **Tile**, **Entity**. The active tab depends on context (selecting a tile switches to Tile tab, selecting an entity switches to Entity tab, etc.). For how inspected fields affect gameplay at runtime (e.g. what `kind` does, how `loot_table` is rolled, how `exit_direction` drives auto-walk), see §27.
 
 ### 9.1 Zone Tab
 
@@ -382,7 +483,7 @@ Displays and edits zone-level properties plus a full entity listing.
 | **First Person** | Checkbox   | Yes      | Marks zone as first-person |
 | **Portals**    | KV read-only  | No       | Count of portal entities |
 | **Entities**   | KV read-only  | No       | Count of non-portal entities |
-| **Erase Tile** | Dropdown      | Yes      | Selects which tile the Eraser paints (default: grass) |
+| **Erase Tile** | Dropdown      | Yes      | Selects which tile the Eraser paints (default: `grass`; see §6 Eraser). **Session-only** — not saved in the zone JSON; resets to `grass` on reload. |
 
 **Entity List** — Below the zone properties, every entity in the zone is listed as a clickable row showing `prefab: name`. Clicking a row selects that entity and switches to the Entity tab.
 
@@ -393,8 +494,8 @@ Read-only properties for the tile under the cursor or the last-inspected tile.
 | Section     | Fields |
 |-------------|--------|
 | **Header**  | `TILE: <name>` |
-| **Properties** | ID, Type (floor/wall/etc.), Category, Flags (solid, wall, transparent, half, platform, liquid, farmland), Height (2 decimal places) |
-| **Textures** | Default texture key, per-face overrides (N/S/E/W/Top as applicable) |
+| **Properties** | ID, Type (floor/wall/etc.), Category, Flags (solid, wall, transparent, half, platform, liquid, farmland, thin, tall), Height (2 decimal places) |
+| **Textures** | Default texture key, Front/Back overrides, per-face overrides (N/S/E/W), Alt texture (tall wall extension) |
 | **Preview**  | 64×64 texture thumbnail from atlas |
 | **Color**    | Color swatch with RGB values |
 
@@ -421,7 +522,7 @@ Fully editable component inspector for the selected entity.
 | **Extras**       | Any unknown keys preserved from JSON, shown read-only (truncated to 40 chars) | KV read-only |
 
 **Actions:**
-- **"Add Component…"** button opens the Add Component modal, listing components not yet attached: collider, health, tile_entity, wall_sprite, inventory, facing, dialogue, sprite, combat_stats.
+- **"Add Component…"** button opens the Add Component modal, listing components not yet attached: `collider`, `health`, `tile_entity`, `wall_sprite`, `inventory`, `facing`, `dialogue`, `sprite`, `combat_stats`.
 - **"Delete Entity"** button removes the entity after confirmation.
 
 ---
@@ -471,9 +572,9 @@ A row of 10 slots displayed at the bottom center of the screen. Each slot holds 
 
 | Input        | Action |
 |--------------|--------|
-| **1 – 9**    | Select hotbar slots 0 – 8 |
-| **0**        | Select hotbar slot 9 |
 | **Scroll wheel** | Cycle through slots |
+
+> ⚠ **Warning:** Number keys (1–9, 0) are shown in the HUD hint but are **intercepted by global shortcuts** (priority 6) before reaching FP fullscreen (priority 11). They select 2D tile palette entries instead of hotbar slots. Use the **scroll wheel** to change hotbar slots.
 
 **Default hotbar:** wall, brick_wall, stone, grass, concrete, door, wood_floor, carpet, sand, void.
 
@@ -496,8 +597,8 @@ Press **T** to open a full-viewport overlay for assigning tiles to hotbar slots.
 
 | Input          | Action |
 |----------------|--------|
-| **Left-click** | **Place tile.** If aiming at a wall and there is an empty cell in front of it, the tile is placed in that empty cell (wall-building). If aiming at a floor, the tile is painted onto the aimed cell. |
-| **Right-click** | **Eyedropper.** Picks the aimed tile into the current hotbar slot. |
+| **Left-click** | **Place tile.** If aiming at a wall and there is an empty (non-wall) cell directly in front of it **from the camera’s perspective**, the tile is placed in that empty cell (wall-building). If the cell in front is also a wall or out of bounds, the aimed cell itself is replaced. If aiming at a floor, the tile is painted onto the aimed cell. Entity positions are not checked — tiles are placed regardless of entities occupying the cell. |
+| **Right-click** | **Eyedropper.** Picks the aimed tile into the current hotbar slot. Does **not** capture the cell’s rotation — only the tile ID is copied. To duplicate a rotated tile, eyedrop it and then manually set the rotation with R. |
 | **Middle-click** | **Erase.** Replaces the aimed cell with the configured erase tile. |
 | **Ctrl+Z**     | Undo |
 | **Ctrl+Y**     | Redo |
@@ -576,7 +677,7 @@ A scrollable list of all zones in the `zones/` directory. The current zone is hi
 
 Displays a list of components that are not yet attached to the selected entity. Available components:
 
-- collider, health, tile_entity, wall_sprite, inventory, facing, dialogue, sprite, combat_stats
+- `collider`, `health`, `tile_entity`, `wall_sprite`, `inventory`, `facing`, `dialogue`, `sprite`, `combat_stats`
 
 **Click** a component to add it with default values. **Esc** to cancel.
 
@@ -589,21 +690,30 @@ A full-featured tile creation/editing dialog.
 | Name           | TextField                  | Tile display name |
 | Color          | RGB sliders (draggable)    | Base color |
 | Type           | Dropdown                   | floor, wall, half_wall, platform, door, liquid |
-| Transparent    | Checkbox                   | Extra flag |
-| Farmland       | Checkbox                   | Extra flag |
+| Transparent    | Checkbox                   | Extra flag — see-through wall |
+| Farmland       | Checkbox                   | Extra flag — tillable soil |
+| Thin Wall      | Checkbox                   | Extra flag — mid-cell fence/railing |
+| Tall Wall      | Checkbox                   | Extra flag — extends upward with alt texture |
+| Sound          | Dropdown                   | Footstep sound category (stone, grass, water, sand, wood, glass, gravel, metal, cloth) |
 | Texture key    | TextField                  | PNG asset key |
-| Face textures  | Per-slot text fields       | Slots depend on tile type (see §14) |
+| Front / Back   | TextFields                 | Directional texture overrides |
+| N / S / E / W  | TextFields (2×2 grid)      | Per-face compass texture overrides |
+| Alt Tex        | TextField                  | Tall-wall upper extension texture (only effective when Tall Wall is checked) |
 | Height scale   | Slider                     | 0.05 – 1.0 |
 | Category       | Dropdown                   | Existing categories + "New Category…" |
 | Preview        | 64×64 texture thumbnail    | Live preview |
 
-**Buttons:** Update/Create, Delete (edit mode only), Cancel, Import PNG.
+**Buttons:** Update/Create, Duplicate, Delete (edit mode only), Cancel, Import PNG.
+
+> **Tile Editor Modal vs. TOML files**: The Tile Editor modal is a GUI front-end for the TOML definitions in `assets/models/tiles/`. Clicking **Update** (or **Create**) writes the changes to the corresponding `.toml` file **immediately**. All TOML fields are now editable in the modal, including `tall_wall`, `alt_texture`, `thin_wall`, per-face textures (N/S/E/W), and the `sound` dropdown.
 
 ---
 
 ## 12. Overlay Editors
 
 Full-screen editor overlays that take over the entire window. Open them from the **Editors** menu. Close them to return to the map editor. While an overlay is active, the map editor is not drawn and all events are routed to the overlay.
+
+> **Text fields in overlays work correctly.** Unlike inspector text fields (§25.4), overlay text fields are unaffected by the global shortcut conflict. Overlays consume all events at priorities 2–4, which is *before* global shortcuts at priority 6. Characters like G, R, P, B, E, V, I, and digits can be typed normally into the Loot Table Editor’s inline fields, Entity Forge’s ID/Name/Tags/Texture fields, and the Template Editor’s name dialog.
 
 ### 12.1 Loot Table Editor
 
@@ -681,12 +791,14 @@ A full-screen overlay for creating zone templates — reusable blueprints that g
 
 #### Template JSON Format
 
+Template `base_tiles` use **string tile IDs** (the same format as zone JSON), despite a legacy docstring in the code claiming integers. The "From Current Zone" import copies string IDs directly from the editor state.
+
 ```json
 {
   "name": "apartment_block",
   "width": 50,
   "height": 40,
-  "base_tiles": [[0, 0, ...], ...],
+  "base_tiles": [["wall", "wall", ...], ...],
   "slots": [
     { "name": "bedroom_1", "x": 2, "y": 3, "w": 10, "h": 8,
       "tags": ["bedroom"], "required": true }
@@ -696,7 +808,11 @@ A full-screen overlay for creating zone templates — reusable blueprints that g
 }
 ```
 
+> ⚠ **Warning — empty template fallback uses integers.** When creating a template via "+ New Template" (without importing from a zone), the initial `base_tiles` grid is `[]`. The baking algorithm initialises absent base tiles with **integer `0`**, and fills unmatched required slots with **integer `1`**. These are bare integers, not string tile IDs — they do not correspond to any registered tile name and will appear as unknown/fallback tiles in the baked zone. This is a latent type inconsistency. Always use "From Current Zone" to populate base tiles before baking.
+
 #### Room Variant JSON Format
+
+Room variants exported via "Export Room" also use **string tile IDs**, copied directly from the editor’s tile grid.
 
 ```json
 {
@@ -704,7 +820,7 @@ A full-screen overlay for creating zone templates — reusable blueprints that g
   "tags": ["bedroom"],
   "width": 10,
   "height": 8,
-  "tiles": [[1, 1, ...], ...],
+  "tiles": [["wood_floor", "wood_floor", ...], ...],
   "entities": [ { "id": "bed_1", ... } ]
 }
 ```
@@ -716,16 +832,90 @@ A full-screen overlay for creating zone templates — reusable blueprints that g
 3. Pick one matching room at random (optionally seeded for reproducibility).
 4. Center the room within the slot and paste its tiles over the base grid.
 5. Append the room's entities with positions offset by the slot's origin.
-6. If no room matches a **required** slot, the slot is filled with tile ID 1 (wall) as a placeholder.
+6. If no room matches a **required** slot, the slot is filled with **integer `1`** as a placeholder. This is a bare integer, not a string tile ID — baked zones containing unmatched required slots will have type-inconsistent cells that render as unknown/fallback tiles.
 
-#### UI Workflow
+#### UI Layout
 
-1. **Select or create** a template from the left panel list.
-2. **Edit base tiles** — the template's background tilemap.
-3. **Add slots** — define rectangular regions and assign tags (e.g., `bedroom`, `kitchen`, `corridor`).
-4. **Create room variants** in the rooms panel and tag them to match slot requirements.
-5. **Bake** — click the Bake button to produce a concrete zone. Optionally provide a seed for reproducible output.
-6. **Save** the resulting zone as a normal zone JSON.
+```
+┌────────────────────────────────────────────────────────────┐
+│  [Close]  [Save]  [Bake Zone]  ZONE TEMPLATE EDITOR        │
+├──────────────┬─────────────────────────────────────────────┤
+│ [+ New Tmpl] │  TEMPLATE: apartment_block                  │
+│              │                                             │
+│ apartment_b… │  [From Current Zone]  [Export Room]          │
+│ warehouse  ● │  [Add Slot]                                  │
+│ bunker       │                                             │
+│              │  SLOTS                                       │
+│ ── Rooms ──  │  ┌ slot_0 (2,3 6×6) tags:[] req:✓  [Del] ┐ │
+│ cozy_bedrm   │  └────────────────────────────────────────┘ │
+│ big_kitchen   │  ┌ slot_1 (10,3 8×8) tags:[] req:✓ [Del] ┐│
+│              │  └────────────────────────────────────────┘ │
+│              │                                             │
+│              │  PREVIEW                                     │
+│              │  ┌──────────────────────────────────────┐   │
+│              │  │ (base tiles as coloured rectangles   │   │
+│              │  │  with slot outlines overlaid)        │   │
+│              │  └──────────────────────────────────────┘   │
+└──────────────┴─────────────────────────────────────────────┘
+```
+
+- **Header bar** — dark strip across the top with **Close**, **Save**, and **Bake Zone** buttons plus the overlay title.
+- **Left panel** (≤ 200 px or 1/3 screen) — a **"+ New Template"** button at top, a scrollable list of saved template filenames from `templates/*.json`, and below a separator a **Room Variants** section listing room JSONs from `templates/rooms/`. Click a template name to load it into the right panel. Click a room variant row to **show a toast** with the room’s filename — there is no preview, detail view, or selection action for room variants. They are listed for reference only.
+- **Right panel** — the currently loaded template's detail view, or a placeholder (`"No template loaded."`) if nothing is selected.
+- **New-template dialog** — a centered 400×100 modal with a text field for the name. Enter = create, Esc = cancel.
+
+#### Adding Slots
+
+Click the **"Add Slot"** button to append a slot with hardcoded defaults:
+
+```python
+{"name": "slot_0", "x": 2, "y": 2, "w": 6, "h": 6, "tags": [], "required": True}
+```
+
+There is **no drag-to-draw on canvas**. Slots are created with fixed default coordinates and size. Each slot appears as a row in the detail panel showing its name, position, dimensions, tags, and required flag. Click a slot row to select it (highlighted in the list and outlined in the preview). Click **Del** on a row to remove it.
+
+**Slot geometry (x, y, w, h) is not editable in the UI.** There are no sliders, spinners, or text fields for position/size. To adjust slot geometry, edit the template JSON file directly.
+
+#### Editing Base Tiles
+
+There is **no embedded tile palette** in the template editor. The base tile grid is populated via the **"From Current Zone"** button, which snapshots the current zone editor's entire tile grid (and entities/portals) into the template. The intended workflow is:
+
+1. Design the background tilemap in the **main zone editor** (paint, fill, place entities, etc.).
+2. Open the Template Editor overlay.
+3. Click **"From Current Zone"** to import into the template.
+
+The right panel renders a **mini preview** of the base tiles at the bottom as coloured rectangles (tile ID → hardcoded display colours) with slot outlines overlaid in accent colour.
+
+#### Assigning Tags to Slots
+
+**Tag editing is not yet implemented in the UI.** The code declares a `_tag_field: TextField | None` placeholder that is never instantiated or rendered. Tags default to `[]` on slot creation. To assign tags (needed for slot-matching during baking), edit the template JSON directly:
+
+```json
+{ "name": "bedroom_1", "x": 2, "y": 3, "w": 10, "h": 8,
+  "tags": ["bedroom", "furnished"], "required": true }
+```
+
+#### Actions Summary
+
+| Button | Action |
+|--------|--------|
+| **Close** | Close overlay, return to map editor |
+| **Save** | Write template to `templates/<name>.json` |
+| **Bake Zone** | Run baking algorithm → load result as current zone, close overlay |
+| **+ New Template** | Open name dialog → create empty template |
+| **From Current Zone** | Import map editor's tile grid, entities, and portals as a new template |
+| **Export Room** | Export the selected slot’s region (tiles + entities) as a room variant JSON. “Selected” means the slot row last clicked in the detail panel. The file is auto-named `room_{template}_{slotIndex}.json` and written to `templates/rooms/`. No filename prompt. If **no slot is selected**, the click is consumed silently — no toast, no error. |
+| **Add Slot** | Append a default 6×6 slot |
+| **Del** (slot row) | Delete that slot |
+| Slot row click | Select slot (highlight in list + preview outline) |
+| Template list click | Load that template |
+| Room variant click | Toast with filename (view-only; no preview or selection) |
+| Esc | Close overlay |
+| Mouse wheel | Scroll the detail panel |
+
+#### Baking Output
+
+Baking does **not** write directly to disk. The baked zone is loaded into the editor’s working state as the current zone (replacing whatever was open). The zone name is set to the template’s name. The baked zone only appears in the `zones/` directory and zone picker **after you manually save** (Ctrl+S). Saving a baked zone whose name matches an existing zone file will **silently overwrite** that file — there is no confirmation dialog.
 
 ### 12.3 Entity Forge
 
@@ -809,7 +999,7 @@ Entities are stored as `EntityDef` dataclass instances. Each has a core identity
 | `dev_notes`      | str        | Developer notes |
 | `tags`           | list[str]  | Freeform tags |
 | `forge_archetype`| str        | Forge archetype ID (if forge-created) |
-| `extras`         | dict       | Unknown keys preserved verbatim during round-trip |
+| `extras`         | dict       | Unknown keys preserved verbatim during JSON round-trip. These exist to prevent data loss when a zone file contains entity fields that the current editor version doesn’t understand (e.g., fields added by future game systems or manual JSON edits). Users should not normally add extras manually. If present, they appear as read-only KV rows in the Entity inspector, truncated to 40 characters. |
 
 ### Components
 
@@ -842,6 +1032,17 @@ player · npc · item · container · dummy · beast · ground_item · crop · p
 4. The entity is created with prefab defaults and added to the zone.
 5. Right-click or Esc cancels placement.
 
+### Placement Lifecycle (Complete Flow)
+
+Entity placement state is described across several sections. Here is the full lifecycle in one place:
+
+1. **Enter placement mode**: Click a prefab in the Entity panel (§8.2) or a forge archetype in the Entity Forge (§12.3). This sets `pending_prefab`, switches the tool to **Select**, and shows a toast with the entity name. If another prefab was already pending, it is silently replaced.
+2. **Cursor hint**: While a prefab is pending, a banner appears above the canvas: *"Click to place: EntityName (right-click to cancel)"*. The cursor carries the entity's sprite character.
+3. **Place**: Left-click the canvas (Select tool). The entity is created at the clicked tile center with the prefab's default components. An undo snapshot is pushed. `pending_prefab` is cleared.
+4. **Cancel**: Right-click or press **Esc** to clear `pending_prefab` without placing. The tool remains on Select.
+5. **Tool switch during pending**: Switching tools (B, E, I, V) does **not** cancel the pending prefab — it persists silently. Switching back to Select restores placement mode. Only Esc or right-click explicitly cancels.
+6. **Selection persistence**: Selecting an entity remains independent of pending state. You can have a selected entity and a pending prefab simultaneously (the pending prefab takes priority on left-click).
+
 ---
 
 ## 14. Tile System
@@ -861,6 +1062,16 @@ sound = "stone"
 texture = "mossy_stone"
 texture_front = "mossy_stone_front"
 texture_back = "mossy_stone_back"
+tex_n = "mossy_stone_north"
+tex_s = "mossy_stone_south"
+tex_e = "mossy_stone_east"
+tex_w = "mossy_stone_west"
+
+# Optional flags (all default to false if omitted)
+transparent = false
+thin_wall = false
+tall_wall = true
+alt_texture = "mossy_stone_upper"
 ```
 
 ### Tile Types
@@ -877,7 +1088,7 @@ texture_back = "mossy_stone_back"
 ### Tile Flags (TF)
 
 | Flag        | Bit    | Meaning |
-|-------------|--------|---------|
+|-------------|--------|---------||
 | SOLID       | 1 << 0 | Blocks movement |
 | WALL        | 1 << 1 | Has wall geometry |
 | TRANSPARENT | 1 << 2 | Allows light/sight through walls |
@@ -885,6 +1096,8 @@ texture_back = "mossy_stone_back"
 | FARMLAND    | 1 << 4 | Farmable ground |
 | HALF_WALL   | 1 << 5 | Half-height wall |
 | PLATFORM    | 1 << 6 | Elevated platform |
+| THIN_WALL   | 1 << 7 | Mid-cell fence/railing (ray intersects at cell midpoint) |
+| TALL_WALL   | 1 << 8 | Extends upward above normal height with alt texture |
 
 ### Tile Definition Fields
 
@@ -898,9 +1111,14 @@ texture_back = "mossy_stone_back"
 | texture_key    | str               | `""` → id   | PNG asset key (falls back to id) |
 | texture_front  | str               | `""`        | Directional front-face texture override |
 | texture_back   | str               | `""`        | Directional back-face texture override |
+| tex_n          | str               | `""`        | North-face texture override |
+| tex_s          | str               | `""`        | South-face texture override |
+| tex_e          | str               | `""`        | East-face texture override |
+| tex_w          | str               | `""`        | West-face texture override |
+| alt_texture    | str               | `""`        | Tall-wall upper extension texture |
 | height_scale   | float             | 1.0         | Wall height multiplier |
 | category       | str               | "Terrain"   | Palette grouping |
-| sound          | str               | "stone"     | Footstep sound |
+| sound          | str               | "stone"     | Footstep sound category (see Sound Field below) |
 
 ### Directional Texture Model
 
@@ -926,6 +1144,12 @@ Each cell in the zone grid has a parallel **rotation** value (0–3) stored in t
 - **Paint / Fill / FP place**: The pending rotation is stored in the placed cell
 - **Erase**: Resets rotation to 0
 
+#### 2D Canvas Rotation Visibility
+
+In the 2D editor, rotation is **not visually indicated** on placed tiles. All tiles render as unrotated texture swatches regardless of their rotation value. The only visual feedback is the **current pending rotation** displayed in the status bar or toolbar hint when the R key is used. To check a placed tile’s rotation, inspect it in the first-person view where directional textures are rendered correctly.
+
+> **Future improvement**: A rotation arrow overlay on painted tiles would improve 2D editing feedback.
+
 ### Built-in Categories
 
 Terrain · Floors · Walls · Openings · Barriers · Platforms · Custom
@@ -936,6 +1160,14 @@ Terrain · Floors · Walls · Openings · Barriers · Platforms · Custom
 |-------------|-------|---------|
 | TILE_SIZE   | 32    | Pixels per tile in the 2D editor |
 | TILE_METRES | 1.0   | In-game metres per tile |
+
+### Sound Field
+
+The `sound` field is a string category label selecting which footstep audio to play when the player walks on the tile. Known values (from the Tile Editor dropdown): `stone`, `grass`, `water`, `sand`, `wood`, `glass`, `gravel`, `metal`, `cloth`.
+
+**Current runtime status:** The sound field is fully wired in the data layer — it can be set in TOML files and is editable in the Tile Editor modal via a dropdown selector. However, **no audio system exists yet**. There is no `pygame.mixer` usage anywhere in the codebase. The `_step_phase` variable in the first-person renderer tracks a head-bob footstep timer but is never read for playback. Sound files are expected to live in `assets/sounds/` but this directory does not exist.
+
+The field is pure scaffolding for a future audio system. Setting it has no runtime effect today, but choosing appropriate values future-proofs tiles for when audio is implemented.
 
 ---
 
@@ -963,6 +1195,8 @@ The `rotations` grid is parallel to `tiles` — each value (0–3) specifies the
 tile's directional rotation for that cell. Omitted or missing `rotations` defaults
 all cells to 0.
 
+The `anchor` field specifies the **player spawn point** `[x, y]` in tile coordinates. When the game starts a new session in this zone, the player entity is placed at the anchor position (see §27). Default is `[0, 0]`. The anchor is not currently editable in the editor UI — edit it directly in the JSON if needed. There is no death/respawn system in the current codebase, so the anchor is used **only** for the initial spawn in `new_game()`.
+
 Portals are stored separately from entities for backward compatibility but are treated as entities internally.
 
 ### Operations
@@ -974,15 +1208,21 @@ Portals are stored separately from entities for backward compatibility but are t
 | **Save**        | File → Save (Ctrl+S) | Writes to `zones/<name>.json` |
 | **Save As**     | File → Save As… | Prompts for new name |
 | **Rename**      | File → Rename Zone… *or* Zone tab Name field | Renames the file on disk |
-| **Resize**      | Zone tab Width/Height fields | Clamps 5–200. New area filled with grass. Existing tiles copied where they fit. |
+| **Resize**      | Zone tab Width/Height fields | Clamps 5–200. **Anchor: top-left corner.** Existing tiles are preserved from (0,0). The map expands or contracts to the right and bottom edges. New area is filled with `grass` at rotation 0. Entities outside the new bounds are **not** removed. |
 
 ### Undo / Redo
 
 - **Depth limit**: 80 snapshots.
-- **Snapshot**: Deep copy of the entire tile grid and entity list.
+- **Snapshot**: Deep copy of the entire tile grid, rotation grid, and entity list.
 - **Push**: Every paint, erase, fill, entity place/delete/drag, and resize pushes an undo snapshot. Performing a new action clears the redo stack.
+- **Continuous paint (drag)**: A single snapshot is pushed on mouse-down. The entire drag stroke (all tiles painted while the button is held) counts as **one undo operation**.
+- **Fill**: One snapshot per fill click.
+- **Entity drag**: One snapshot pushed on mouse-up after the drag ends.
+- **FP tile placement**: One snapshot per individual tile placed (each click).
+- **Inspector field edits**: Changes made in the inspector (renaming, changing kind, adjusting numbers) mark the zone as dirty but do **not** push undo snapshots. These changes are **not undoable**. Only structural operations (Add Component, Delete Entity) push snapshots.
 - **Ctrl+Z**: Undo (pops from undo stack, pushes to redo).
 - **Ctrl+Y**: Redo (pops from redo stack, pushes to undo).
+- **Zone loading**: Loading a new zone (Open, New, zone panel click, nav bar, bake) **destroys the entire undo/redo history**. Both stacks are cleared and a single baseline snapshot of the new zone is pushed. See §25 for details.
 
 ### Zone History Navigation
 
@@ -1075,11 +1315,13 @@ Each column of the screen casts a ray from the camera. When a ray hits a wall ti
 | **Short walls** (height_scale < 1.0) | Bottom-aligned — the wall grows upward from the floor. A wall with `height_scale = 0.5` is half the height of a full wall. |
 | **Half-walls** (`HALF_WALL` flag) | Rendered as **deferred strips** — not drawn with full walls but interleaved with entity billboards in painter's order. This allows entities to appear behind half-walls when farther away, and in front when closer. |
 | **Transparent walls** (`TRANSPARENT` flag) | The raycaster continues casting through transparent walls, rendering the wall strip but also anything behind it. Used for fences, glass, or bars. |
+| **Thin walls** (`THIN_WALL` flag) | The ray intersects at the cell midpoint (0.5 offset) instead of the cell boundary, creating narrow fences or railings that appear centered in the cell. Rays continue through after hitting. |
+| **Tall walls** (`TALL_WALL` flag) | After drawing the normal wall, the renderer tiles the `alt_texture` (or default texture) upward from the wall top to the top of the screen. Creates the illusion of tall building facades in exterior areas. |
 | **Doors** (`DOOR` type) | Full wall height but **not solid** — the player can walk through them. Rendered with wall textures. |
 
 ### Directional Textures on Walls
 
-Each wall tile can have up to three textures: `texture` (default), `texture_front`, and `texture_back`. Which world face maps to "front" or "back" depends on the tile's **rotation**:
+Each wall tile can have per-face textures: `texture` (default), `texture_front`, `texture_back`, plus per-compass overrides `tex_n`, `tex_s`, `tex_e`, `tex_w`. The per-compass fields take priority over front/back. Which world face maps to "front" or "back" depends on the tile's **rotation**:
 
 | Rotation | Front → World Face | Back → World Face |
 |----------|--------------------|-------------------|
@@ -1154,7 +1396,18 @@ The current raycaster is a **2.5D engine** (like classic Doom):
 
 ### WallSprite Entities
 
-Entities with a `WallSprite` component are rendered as part of the wall system rather than as billboards. They appear as textured rectangles attached to wall surfaces with configurable width, height, and elevation. Common uses: paintings, signs, shelving mounted on walls.
+Entities with a `WallSprite` component are rendered as **free-standing textured rectangles** in 3D space. Despite the name, they are **not attached to any specific wall surface**. The entity’s `Position(x, y)` determines where the rectangle appears in the world, and the `WallSprite` fields control its dimensions:
+
+| Field | Effect |
+|-------|--------|
+| `texture_key` | Atlas key for the rectangle’s texture. Falls back to entity’s sprite color if empty. |
+| `width` | World-space width in tiles (1.0 = full tile) |
+| `height` | World-space height in tiles (1.0 = full wall height) |
+| `elevation` | Vertical offset from the floor (0.0 = ground level). If the entity is on a platform tile and elevation is 0, the platform’s `height_scale` is used automatically. |
+
+WallSprite entities are rendered using the same raycasting-column technique as tile walls, with per-column z-buffer depth testing. They always face the camera (billboard-style orientation).
+
+**Placement on floor tiles**: A WallSprite entity placed on an open floor with no adjacent walls renders normally — it appears as a floating textured rectangle. There is no requirement for an adjacent wall. Common uses: free-standing signs, pillars, barricades, shelving units.
 
 ---
 
@@ -1211,7 +1464,7 @@ When the player interacts with this container in-game, the loot table is rolled 
 3. **Enable FP flag**: In the Zone inspector tab, check **First Person**.
 4. **Place a player spawn**: Entities panel → `player_spawn`. Click the canvas at the desired spawn location.
 5. **Test**: Press **F** to enter fullscreen FP mode. Walk around with WASD.
-6. **Build in FP**: Use the hotbar (1-9, 0) to select tiles. Left-click to place, right-click to eyedrop, middle-click to erase.
+6. **Build in FP**: Use the **scroll wheel** or **T** (tile picker) to select hotbar tiles. Left-click to place, right-click to eyedrop, middle-click to erase.
 7. **Use noclip**: If you get stuck inside walls, press **C** to toggle noclip (enabled by default).
 
 ### How to Import and Use Custom Textures
@@ -1260,7 +1513,11 @@ When the player interacts with this container in-game, the loot table is rolled 
 | I         | Fill tool |
 | 0 – 9     | Select Nth tile from registry; switch to Brush |
 
+> ⚠ **Warning (FP conflict):** In FP fullscreen, number keys are intended to select hotbar slots, but global shortcuts (priority 6) intercept them first. Numbers always select from the 2D tile palette. Use the scroll wheel to change hotbar slots in FP.
+
 ### First-Person Shortcuts (Fullscreen)
+
+> ⚠ **Warning:** Many single-key shortcuts listed below are **intercepted by the global shortcut handler** (priority 6) and never reach the FP fullscreen handler (priority 11). See §25.3 for the full audit of which keys actually work as expected in FP fullscreen.
 
 | Shortcut    | Action |
 |-------------|--------|
@@ -1270,7 +1527,6 @@ When the player interacts with this container in-game, the loot table is rolled 
 | Left-click  | Place tile |
 | Right-click | Eyedropper |
 | Middle-click| Erase tile |
-| 1 – 9, 0   | Select hotbar slot |
 | Scroll      | Cycle hotbar slot |
 | T           | Open tile picker |
 | R           | Rotate tile |
@@ -1279,6 +1535,8 @@ When the player interacts with this container in-game, the loot table is rolled 
 | Ctrl+Y      | Redo |
 | Tab         | Switch to PIP |
 | Esc         | Exit to PIP |
+
+> ⚠ **Warning:** Number keys (1–9, 0) are listed in some tooltips as hotbar selectors, but they are intercepted by the global shortcut handler and select 2D tile palette entries instead. Use the scroll wheel to change hotbar slots.
 
 ### First-Person Shortcuts (PIP)
 
@@ -1323,21 +1581,21 @@ When the player interacts with this container in-game, the loot table is rolled 
 
 ---
 
-## Event Priority
+## 21. Event Priority
 
-When multiple UI elements overlap, events are consumed in this priority order (first handler that accepts the event wins):
+When multiple UI elements overlap, events are consumed in this priority order (first handler that accepts the event wins). See §25 for detailed analysis of edge cases, text field focus conflicts, and FP event pass-through.
 
 1. QUIT signal
 2. Entity Forge overlay
 3. Loot Table Editor overlay
 4. Template Editor overlay
 5. Modal dialogs
-6. Global keyboard shortcuts
-7. Menu bar dropdowns
+6. Global keyboard shortcuts (Ctrl+S/Z/Y, G, M, P, F, R, B, E, V, I, `[`, `]`, Del, Esc, 0–9)
+7. Menu bar dropdowns (blocks all mouse events when open)
 8. Zone navigation bar
 9. Toolbar
 10. Panel splitter drag handles
-11. FP fullscreen (consumes all events)
+11. FP fullscreen (consumes movement, hotbar, tile ops; unhandled keys fall through)
 12. Panel tabs
 13. Left panel content
 14. Inspector
@@ -1346,23 +1604,19 @@ When multiple UI elements overlap, events are consumed in this priority order (f
 
 ---
 
-## Status Bar
+## 22. Status Bar
 
 The status bar sits at the very bottom of the window.
 
 | Section | Content |
 |---------|---------|
-| Left    | Hover info: `(col, row) tile=id(name) WxH z=Zoom ent=EntityName` (entity name only in Select mode) |
+| Left    | Hover info: `(col, row) tile=id(name) WxH z=Zoom ent=EntityName`. The `ent=` field shows the entity **under the cursor** (nearest within 0.7 tile radius) and only appears when the **Select** tool is active. It does not show the currently *selected* entity — only the one under the mouse pointer. |
 | Center  | Toast messages (fade after a few seconds) |
 | Right   | Keyboard hints: `^S ^Z ^Y  G:Grid M:Map [:- ]:+ F:FP` |
 
 ---
 
-*This manual reflects the current state of the editor codebase. Keep it updated as features change.*
-
----
-
-## 21. Project Directory Structure
+## 23. Project Directory Structure
 
 All paths are defined in `core/paths.py` — the single source of truth.
 
@@ -1370,30 +1624,432 @@ All paths are defined in `core/paths.py` — the single source of truth.
 assets/                          # Client-side resources (art, audio, FX)
   textures/
     tiles/                       # 64×64 PNGs, one per tile texture key
-  sounds/                        # Sound effects & ambient audio
+  sounds/                        # Sound effects (placeholder — dir does not exist yet)
   models/
     tiles/                       # Tile definitions (one .toml per tile)
   particles/                     # Particle effect definitions
   lang/                          # Localization / string tables
 
 data/                            # Game data definitions (all TOML)
-  functions/                     # Data-driven functions
-  loot_tables.toml               # Loot table definitions
-  items.toml                     # Item definitions
-  characters.toml                # NPC / character archetypes
-  tuning.toml                    # Game tuning parameters
-  population_presets.toml        # Zone population configs
-  subzones.toml                  # Sub-zone descriptors
-  room_types.toml                # Room type definitions
-  portals.toml                   # Portal definitions
-  custom_entities.toml           # Entity Forge archetypes
-  tags/                          # Tag groups
-  predicates/                    # Condition predicates
-  recipes/                       # Crafting recipes
-  structures/                    # Structure templates
+  tuning.toml                    # Game tuning constants (combat, physics, detection).
+                                 #   ACTIVE: hot-reloaded at runtime via F4.
+  items.toml                     # Item templates (weapons, consumables, armor).
+                                 #   ACTIVE: used by game + editor (loot dropdown).
+  loot_tables.toml               # Weighted loot pools for containers.
+                                 #   ACTIVE: used by game + editor (Loot Table Editor).
+  custom_entities.toml           # Entity Forge archetype output.
+                                 #   ACTIVE: written by editor, read by Entity Panel.
+  custom_tiles.toml              # Editor-created tile definitions (nearly empty).
+                                 #   VESTIGIAL (mislabelled as ACTIVE in prior revisions).
+                                 #   `load_custom_tiles()` is a no-op; the Tile Editor
+                                 #   reads and writes individual TOMLs in
+                                 #   `assets/models/tiles/` exclusively. This file is
+                                 #   never loaded by any code path.
+  characters.toml                # NPC/character archetypes with brains, factions.
+                                 #   VESTIGIAL: referenced in paths.py but never loaded.
+  population_presets.toml        # Zone population spawning rules.
+                                 #   VESTIGIAL: not imported by any code.
+  subzones.toml                  # World topology graph (zones, connections).
+                                 #   VESTIGIAL: not imported by any code.
+  room_types.toml                # Room type definitions for BSP generation.
+                                 #   VESTIGIAL: not imported by any code.
+  portals.toml                   # Inter-zone portal definitions.
+                                 #   VESTIGIAL: not imported by any code.
+                                 #   Actual portals are embedded in zone JSON files.
 
 zones/                           # Zone map files (JSON)
 templates/                       # Editor templates
 saves/                           # Save game slots
 logs/                            # Performance logs
 ```
+
+> **Note:** The `data/` subdirectories listed in `core/paths.py` (`functions/`, `tags/`, `predicates/`, `recipes/`, `structures/`) **do not exist on disk**. They are path constants defined for a future crafting/scripting system that has not been implemented.
+
+---
+
+## 24. Texture Atlas
+
+The **texture atlas** is an in-memory dictionary of 64×64 `pygame.Surface` objects, one per tile ID or texture key. It is **not** a single stitched image on disk — each texture is a separate PNG file loaded and cached on demand.
+
+### How the Atlas Works
+
+| Aspect | Behavior |
+|--------|----------|
+| **Data structure** | `TextureAtlas._surfaces: dict[str, pygame.Surface]` |
+| **Loading** | **Lazy per-tile.** A texture is loaded from disk the first time `atlas.get(tile_id)` is called. |
+| **Eager preload** | The game's `Renderer` calls `atlas.ensure_all()` at startup, which iterates every tile in `TILE_REGISTRY` and loads all textures upfront. The editor does **not** preload — it loads textures on first use. |
+| **Invalidation** | `atlas.invalidate(tile_id)` drops the cached surface. The next `get()` re-loads from disk. Used after texture import or tile editing. |
+| **Rebuild** | There is no full rebuild trigger. Individual entries are re-loaded on demand. |
+| **Resolution** | Every texture is exactly 64×64 pixels (`TEX_SIZE = 64`). Images of other sizes are scaled on load. |
+
+### Atlas Methods
+
+| Method | Input | Returns | Description |
+|--------|-------|---------|-------------|
+| `get(tile_id)` | Tile ID string | 64×64 Surface | Resolves the tile's `texture_key` via the tile registry, loads `assets/textures/tiles/{key}.png`. Falls back to a solid-colour surface using the tile's `color` field. |
+| `get_by_key(key)` | Raw texture key | 64×64 Surface | Loads `assets/textures/tiles/{key}.png` directly (no registry lookup). Falls back to solid grey (80, 80, 80). Used for per-face texture overrides. |
+| `invalidate(tile_id)` | Tile ID string | — | Drops cached surface so next `get()` re-loads from disk. |
+| `sample(tile_id, u, v)` | Tile ID, UV coords | (r, g, b) | Returns the pixel colour at normalised UV. Used for floor/ceiling rendering. |
+| `ensure_all()` | — | — | Eagerly loads every tile in the registry. |
+
+### Tile ID vs. Texture Key vs. Filename Stem
+
+These three concepts are related but distinct:
+
+| Concept | Definition | Example |
+|---------|-----------|---------|
+| **Tile ID** | The unique identifier for a tile definition. Equals the filename stem of its TOML file in `assets/models/tiles/`. | `mossy_stone` |
+| **Texture key** | The PNG filename stem used for the tile's wall/face texture. Stored in `TileDef.texture_key`. If blank, falls back to the tile ID. | `mossy_stone_front` |
+| **Filename stem** | The name of any PNG in `assets/textures/tiles/` (without `.png`). | `mossy_stone_front` |
+
+**Key relationships:**
+
+- A tile ID **does not need to match** its texture key. A tile called `fancy_wall` can use `texture_key = "brick"` to reuse the brick texture.
+- **Multiple tiles can share one texture key.** Both `brick_wall` and `old_brick_wall` can set `texture_key = "brick"`. Each gets its own cached surface in the atlas (keyed by tile ID), but both load the same PNG.
+- When importing a texture (Export → Import Texture…), the PNG is stored at `assets/textures/tiles/{stem}.png`. You then assign the filename stem as a texture key on any tile(s) that should use it.
+- Per-face overrides (`texture_front`, `texture_back`) are raw texture keys resolved via `atlas.get_by_key()`, not tile IDs.
+
+### Missing Texture Fallback
+
+| Scenario | Fallback |
+|----------|----------|
+| `get(tile_id)` — PNG not found | Solid-colour surface using the tile's `color` field from the registry |
+| `get(tile_id)` — tile not in registry | Solid grey (80, 80, 80) |
+| `get_by_key(key)` — PNG not found | Solid grey (80, 80, 80) |
+| Entity billboard — no texture match | Font-rendered glyph of the sprite character |
+
+### Import Texture Workflow (Detailed)
+
+1. **Export → Import Texture…** opens a file browser (tkinter `askopenfilename`).
+2. Accepted formats: `.png`, `.jpg`, `.jpeg`, `.bmp`, `.gif`, `.tga`.
+3. The image is loaded, **smooth-scaled to 64×64**, and saved as a PNG to `assets/textures/tiles/{filename_stem}.png`.
+4. The atlas picks up the new file the next time `get()` or `get_by_key()` is called for that key.
+5. To use the imported texture: open the Tile Editor (right-click a tile), set the **Texture key** field to the imported file's stem.
+
+### String IDs and C Extension Performance
+
+Tile IDs are human-readable strings everywhere in the editor and game code. For performance-critical rendering paths (DDA raycasting, wall geometry computation), the engine maintains an automatic **string ↔ integer mapping** (`core/tiles.py`). Conversion happens at the C-extension boundary:
+
+1. `cast_walls()` — the C raycaster works with an integer tile grid. After casting, integer tile IDs are converted back to strings in the returned `WallSlice` data.
+2. `draw_walls()` — before calling the C geometry extension, string IDs are converted to ints via `tile_str_to_int()`. After computation, results are converted back via `tile_int_to_str()`.
+
+This mapping is built automatically when tiles are registered and requires no user action. The editor and all game systems use string IDs exclusively.
+
+---
+
+## 25. Editor State Machine & Event Routing
+
+### 25.1 Modes & Transitions
+
+#### Major Editor Modes
+
+The editor uses compositional boolean flags rather than a formal state machine. These are the major modes:
+
+```
+┌─────────────────────────────────────────────┐
+│              NORMAL 2D EDITING               │
+│  (canvas, panels, inspector all active)      │
+├──────────────┬──────────────────────────────┤
+│              │                              │
+│   FP PIP     │   FP FULLSCREEN              │
+│   (passive   │   (mouse grabbed,            │
+│    preview)  │    full editing controls)     │
+│              │                              │
+├──────────────┴──────────────────────────────┤
+│         OVERLAY EDITORS                      │
+│  (Entity Forge / Loot Tables / Templates)    │
+│  Takes over the entire window.               │
+│  Map editor is not drawn.                    │
+├─────────────────────────────────────────────┤
+│         MODAL DIALOGS                        │
+│  (New Zone / Open Zone / Text Input /        │
+│   Tile Editor / Add Component)               │
+│  Darkened overlay. Map is still visible.      │
+└─────────────────────────────────────────────┘
+```
+
+#### Mode Transitions
+
+```
+Normal 2D ──P──→ FP PIP ──Tab/F──→ FP Fullscreen
+  ↑                ↑ Esc               │ Esc
+  │                └───────────────────┘
+  │
+  ├── Editors menu ──→ Overlay (Forge / Loot / Template)
+  │                        │ Close button
+  │                        ↓
+  │                     Normal 2D
+  │
+  ├── Various actions ──→ Modal Dialog
+  │                         │ Esc / Enter / confirm
+  │                         ↓
+  └─────────────────── Normal 2D
+```
+
+**Critical rule — overlays suppress everything else.** When an overlay is active:
+- The map editor, canvas, panels, and inspector are **not drawn**.
+- FP PIP remains technically active (`fp_preview.active` is still `True`) but receives no events and is not rendered. It resumes when the overlay closes.
+- FP Fullscreen similarly remains in its `fullscreen=True` state but is completely frozen — no events, no rendering. The mouse grab (`set_grab(True)`) **remains active**, which is a latent bug: if an overlay could be opened from FP fullscreen, cursor interaction with the overlay would be broken. In practice, overlays are opened from the menu bar, which requires mouse clicks that are unreachable while the mouse is grabbed (see below).
+- Modals cannot be opened from within overlays (no code path reaches `modals.open()`).
+
+**Modals are drawn on top of the map.** When a modal is active:
+- The map, canvas, FP PIP, and all panels are still **drawn** (behind the darkened overlay).
+- All input events are consumed by the modal — nothing reaches any layer below.
+
+### 25.2 Event Priority (Detailed)
+
+Events are processed by `_handle_events()` in a strict linear priority. The **first handler that accepts** an event (returns `True` or continues) wins. No subsequent handler sees that event.
+
+| Priority | Handler | Accepts | Passes Through |
+|----------|---------|---------|----------------|
+| 1 | **QUIT signal** | Always | — |
+| 2 | **Entity Forge overlay** (if active) | All events | Nothing |
+| 3 | **Loot Table Editor** (if active) | All events | Nothing |
+| 4 | **Template Editor** (if active) | All events | Nothing |
+| 5 | **Modal dialog** (if active) | All events | Nothing |
+| 6 | **Global keyboard shortcuts** | Matching key combos (Ctrl+S, Ctrl+Z, Ctrl+Y, G, M, P, F, R, B, E, V, I, `[`, `]`, Delete, Esc, 0–9) | Unmatched keys |
+| 7 | **Menu bar** | Clicks on menu area; all mouse events when a dropdown is open | Events outside menu area when closed |
+| 8 | **Zone navigation bar** | Clicks on nav elements | Events outside nav bar |
+| 9 | **Toolbar** | Clicks on tool buttons | Events outside toolbar |
+| 10 | **Panel splitter handles** | Drag events on splitter regions | Events elsewhere |
+| 11 | **FP Fullscreen** (if active) | All remaining events (WASD, mouse, hotbar, etc.) | Unhandled keys fall through |
+| 12 | **Panel mode tabs** | Clicks on tab buttons | Events elsewhere |
+| 13 | **Left panel content** | Clicks/scrolls within panel area | Events outside |
+| 14 | **Inspector** | Clicks/scrolls within inspector area | Events outside |
+| 15 | **FP PIP** (if active) | Movement keys (WASD, arrows), Esc, Tab. **Keyboard only — no mouse interaction.** Mouse clicks on the PIP rectangle fall through to the canvas (priority 16). | All mouse events; unmatched keys |
+| 16 | **Canvas** | All remaining mouse events on the map area | — |
+
+#### Ctrl+S / Ctrl+Z / Ctrl+Y in FP Fullscreen
+
+These shortcuts are handled at priority **6** (global shortcuts), which is **before** FP fullscreen at priority **11**. Therefore Ctrl+S, Ctrl+Z, and Ctrl+Y **always work** regardless of FP mode. FP fullscreen also handles Ctrl+Z and Ctrl+Y internally (calling `state.undo()`/`state.redo()` directly), but the global handler catches them first.
+
+### 25.3 FP Shortcut Audit
+
+#### Global Shortcuts vs. FP Fullscreen (Full Audit)
+
+Because global shortcuts (priority 6) fire before FP fullscreen (priority 11), **all single-key shortcuts are processed by the global handler**, and the FP fullscreen handler never sees them. This produces several surprising or nonsensical results:
+
+| Key | Global Handler Effect | FP Fullscreen **Would** Do | Who Wins | Consequence |
+|-----|----------------------|---------------------------|----------|-------------|
+| **P** | `toggle()` — sets `active=False`, `fullscreen=False`, calls `_ungrab()` | Never reached | Global | **Abruptly exits both fullscreen and PIP entirely.** Does not toggle PIP; destroys all FP state. |
+| **F** | `_do_fp_edit()` | Never reached | Global | **No-op** — guarded by `if not fullscreen`, which is already False. |
+| **G** | Toggles `show_grid` | Never reached | Global | Grid toggles in 2D (invisible in FP). No visual indication. |
+| **M** | Toggles `show_minimap` | Never reached | Global | Minimap toggles in 2D (invisible in FP). No visual indication. |
+| **B** | Sets tool to BRUSH | Never reached | Global | Tool changes in editor state (meaningless in FP but state mutates). |
+| **E** | Sets tool to ERASER | Never reached | Global | Same — mutates state silently. |
+| **V** | Sets tool to SELECT | Never reached | Global | Same. |
+| **I** | Sets tool to FILL | Never reached | Global | Same. |
+| **R** | Cycle pending rotation | Cycle pending rotation | Global | Works as expected in both contexts — rotation applies to FP placement. |
+| **0–9** | Select Nth tile from sorted TILE_REGISTRY, switch to Brush | Select hotbar slot (1–9→slot 0–8, 0→slot 9) | **Global** | **Number keys select from the 2D tile palette, NOT the FP hotbar.** Hotbar slots can only be changed via the **scroll wheel** in FP fullscreen. The keyboard-based hotbar selection code in `_handle_fullscreen_key()` is unreachable. |
+| **Delete** | Delete selected entity | Never reached | Global | Deletes whatever entity is selected in editor state (if any). |
+| **Esc** | Cancel pending placement | Exit fullscreen → PIP | Global | **Cancels placement OR exits fullscreen** depending on whether a placement is pending. If no placement pending, the event falls through and FP fullscreen’s Esc handler exits to PIP. |
+
+> ⚠ **Warning — two-press Esc sequence:** If you have a pending entity/tile placement while in FP fullscreen, the first Esc cancels the placement (global handler, priority 6) and the second Esc exits fullscreen to PIP (FP handler, priority 11). This is a common user flow that feels like "Esc doesn’t work" on the first press.
+| **[** / **]** | Brush size adjust | Never reached | Global | Brush size changes (irrelevant in FP). |
+
+> ⚠ **Warning:** While in FP fullscreen, avoid pressing P (kills FP entirely), G, M, B, E, V, I (silently mutate 2D state), and 0–9 (select 2D tiles instead of hotbar). Only WASD, Shift, T, C, R, mouse, scroll wheel, Ctrl-modified keys, Tab, and Esc behave as expected.
+
+#### FP Fullscreen vs. Menu Bar (Mouse Grab Conflict)
+
+FP fullscreen calls `pygame.event.set_grab(True)` and `pygame.mouse.set_visible(False)`. The cursor is invisible and confined to the window. The menu bar handler runs at priority 7 (before FP fullscreen at 11) and **theoretically** has a chance to process mouse clicks — but since the cursor is invisible and mouse events are treated as mouselook deltas, the user **cannot practically click the menu bar**. This means:
+
+- **Overlays cannot be opened** from FP fullscreen (they require menu bar clicks).
+- **Modal dialogs cannot be opened** from FP fullscreen (no keyboard shortcut opens one).
+- The only way to interact with chrome is to **exit fullscreen first** (Esc → PIP → Esc → Normal 2D).
+- The priority ordering of menu bar > FP fullscreen is academic for mouse events — the grab makes it unreachable.
+
+**Zone loading cannot occur while in FP fullscreen.** The Zone Panel, Zone Navigation Bar, and File → Open Zone all require mouse clicks on chrome that is unreachable while the mouse is grabbed. No keyboard shortcut loads zones. Exit to Normal 2D first (Esc → PIP → Esc).
+
+#### FP PIP Mouse Events & Focus Model
+
+The PIP is a passive preview rendered as a surface blit in the top-right corner of the canvas. It has **no mouse interaction**:
+
+- **Click events on the PIP rectangle fall through to the canvas.** Clicking where the PIP is displayed will paint/select on the tile underneath it — the PIP does not intercept mouse events.
+- **WASD is always-on** when PIP is active. The FP PIP handler (priority 15) consumes WASD/arrow keys regardless of mouse position or focus state. There is no click-to-focus gating — WASD always moves the FP camera and those keystrokes never reach the canvas.
+- This means WASD cannot be used for any 2D-mode function while PIP is active (there are currently no WASD bindings in 2D mode, so this is not a conflict in practice).
+
+### 25.4 Text Field & Input Conflicts
+
+#### Text Field Focus & Shortcut Conflicts
+
+The inspector uses `UIContext.focused_id` to track which text field has keyboard focus. When a text field is focused, the field captures typed characters for editing.
+
+**Known limitation:** Global keyboard shortcuts (priority 6) are processed **before** the inspector (priority 14). This means single-key shortcuts (G, R, P, F, B, E, V, I, 0–9, `[`, `]`) **fire even when a text field is focused**. For example, typing "grass" in a name field would trigger G→grid toggle, R→rotation. Only keys without shortcut bindings (A, C, D, H, J, K, etc.) pass through to the text field normally.
+
+**Practical impact:** Inspector text fields are **partially unusable** for values containing shortcut-bound characters. The characters G, R, P, F, B, E, V, I, and digits 0–9 cannot be typed into text fields — they are intercepted as shortcuts before reaching the field. There is **no workaround** within the editor UI. To enter values containing these characters, edit the zone JSON or TOML file directly.
+
+#### Tool Switching Side Effects
+
+| State | Preserved on Tool Switch? | Cleared By |
+|-------|--------------------------|------------|
+| `pending_prefab` | **Yes** — persists across tool switches | Esc, right-click, or successful placement |
+| `selected_entity` | **Yes** — preserved | Clicking empty tile, right-click, or deleting entity |
+| `entity_dragging` | **Yes** — not cleared | Mouse-up only |
+| `pending_rotation` | **Yes** — preserved | Only changes via R key |
+
+### 25.5 Entity Drag Edge Cases
+
+#### Entity Drag Interruptions
+
+Entity drag state (`entity_dragging`) is set on mouse-down and cleared on mouse-up. If the mouse-up is consumed by another handler (e.g., a modal opens during a drag), the drag flag remains `True` and the entity will continue following the mouse after the modal closes. There is no timeout or guard that auto-clears the drag state.
+
+**Reachability assessment:** This bug is **practically unreachable** in the current codebase. During an entity drag the left mouse button is held down, preventing menu bar clicks. No keyboard shortcut opens a modal or overlay. The only keys that fire during a drag are tool switches (V, B, E, I via global shortcuts), which change `state.tool` but do not open modals. The drag-interrupt scenario would require a code change that introduces a keyboard-triggered modal.
+
+#### Entity Drag off Zone Bounds
+
+When dragging an entity past the zone boundary, the entity position **stops updating** — it stays at its last valid tile position. The `screen_to_tile()` function returns `None` for out-of-bounds coordinates, and the drag handler skips the position update when `hover_tile` is `None`. The entity is **not clamped**, **not deleted**, and **not snapped** — it simply freezes in place until the cursor re-enters the zone area.
+
+Entities **cannot be placed at negative coordinates or beyond zone bounds** via dragging. However, the entity position field is a floating-point coordinate that is not validated programmatically — if you edit position values directly in the inspector (or the zone JSON), out-of-bounds values are accepted without error.
+
+### 25.6 State Persistence & Loading
+
+#### Overlay Close → State Restoration
+
+When an overlay (Entity Forge, Loot Table Editor, Template Editor) is closed, the editor state is **preserved but not refreshed**:
+
+| State | Preserved? | Notes |
+|-------|-----------|-------|
+| Selected entity | **Yes** | `selected_entity` index is untouched |
+| Active tool | **Yes** | `tool` is untouched (exception: if forge placement begins, tool changes to SELECT) |
+| Pending prefab | **Yes** | Persists unless cleared by Esc/placement |
+| Pending rotation | **Yes** | Unchanged |
+| Dirty flag | **Yes** | If the zone was dirty before, it’s still dirty |
+| Entity Panel cache | **Stale** | The Entity Panel uses a lazy cache (`_ensure_cache()`) that is **not invalidated** on overlay close. If you create/edit/delete archetypes in the Entity Forge, the panel will show stale data. The `refresh()` method exists but is **never called by any code path** — not by overlay close, not by tab switching, not by zone loading. The only recovery is **restarting the editor**. **Known bug.** |
+| FP Preview | **Yes** | `active` and `fullscreen` flags are unchanged. If FP was in PIP mode, it resumes. |
+| Undo history | **Yes** | Unchanged by overlay operations |
+
+#### Zone Loading Clears Undo
+
+**Loading a new zone destroys the entire undo/redo history.** The `load_zone()` method calls `history.clear()` (empties both undo and redo deques) and then pushes a single baseline snapshot of the newly loaded zone. This applies to:
+
+- File → Open Zone
+- Zone Panel clicks
+- Zone Navigation Bar tab clicks and ◀/▶ buttons
+- File → New Zone (also clears history)
+- Baking a template (loads the result as the current zone)
+
+Combined with the lack of an unsaved-changes dialog, navigating away from a zone is a **one-click, irreversible** operation that discards both unsaved edits and undo history.
+
+#### FP Camera State on Zone Load
+
+**The FP camera position and angle are not reset when a zone is loaded.** Neither `load_zone()` nor `new_zone()` touches the FP preview’s `px`/`py`/`angle` fields. The camera is only positioned on **initial FP activation** (P or F key), which syncs it to the zone centre via `sync_to_anchor((map_w/2, map_h/2))`.
+
+If PIP is active and you load a different zone (via zone panel, nav bar, etc.), the PIP camera stays at its old coordinates — potentially out of bounds on the new, differently-sized map. The PIP will show void/garbage until you toggle FP off and back on (P twice) to re-sync the camera.
+
+#### FP PIP Tick Behaviour During Overlays & Modals
+
+The editor’s `_update(dt)` method runs `fp_preview.update(dt, ...)` unconditionally whenever `fp_preview.active` is True. There is **no guard** checking for active overlays or modals. This means:
+
+- **During overlays** (Forge, Loot, Template): FP `update()` still ticks. If any movement keys were held when the overlay opened, `_keys_held` retains them and the camera **drifts continuously** at `dt`-scaled speed. The drift is invisible (FP is not drawn during overlays) but the camera position diverges. On overlay close, the PIP resumes at the drifted position. **Workaround:** Toggle FP off and back on (press P twice) to re-sync the camera to the zone centre — see “FP Camera State on Zone Load” above.
+- **During modals**: FP `update()` still ticks **and** FP PIP is still drawn (modals don’t suppress drawing). However, modal input consumption prevents new keys from reaching FP, so only previously-held keys could cause drift.
+- **No physics or other dt-based processing** runs in `update()` beyond WASD movement and keyboard turning, so the only side effect is camera position/angle drift.
+
+#### Unsaved Changes Warning
+
+**There is no confirmation dialog** when loading a new zone with unsaved changes. Clicking a zone in the Zone panel, clicking a connected zone tab in the nav bar, pressing ◀/▶, or using File → Open Zone all load immediately. The `dirty` flag (asterisk in the nav bar) is tracked but never checked before loading. **Save before navigating** to avoid data loss.
+
+---
+
+## 26. Error Behavior
+
+The editor handles error cases with toast messages rather than modal dialogs. Here is how each common error is handled:
+
+### Zone Operations
+
+| Scenario | Behavior |
+|----------|----------|
+| **Save with no name** | Toast: "No zone name set". Save is aborted. |
+| **Save with name** | Writes to `zones/{name}.json`. If file already exists, it is **silently overwritten**. |
+| **Open nonexistent zone** | Toast: error message. Zone state is unchanged. |
+| **Open corrupt zone JSON** | Toast: error message. Zone state is unchanged. |
+| **New zone with empty name** | Name is sanitised to `"untitled"` (path traversal chars stripped, spaces collapsed). |
+| **New zone with invalid dimensions** | NumberField enforces 5–200 range; out-of-range values are clamped. |
+
+### Entities
+
+| Scenario | Behavior |
+|----------|----------|
+| **Place entity outside zone bounds** | No validation — the entity is placed at the specified floating-point coordinates. In-game, it renders in the void (no collision, may be invisible depending on raycaster clipping). |
+| **Delete with nothing selected** | Delete key is silently ignored (no toast, no error). |
+| **Duplicate entity ID** | No validation — multiple entities can share an ID. The game may behave unpredictably with duplicate IDs. |
+
+### Portals
+
+| Scenario | Behavior |
+|----------|----------|
+| **Portal target zone doesn't exist** | No editor-side validation. At runtime, when triggered: the screen fades to black, a console error is logged (`"Teleport failed — cannot load '{zone}'"`) , and the player fades back into the current zone. No in-game error message is shown. |
+| **Portal target coords outside target zone** | No validation. The player spawns at the specified coordinates regardless. |
+
+### Textures
+
+| Scenario | Behavior |
+|----------|----------|
+| **Import non-64×64 PNG** | Handled gracefully — the image is **smooth-scaled to 64×64** automatically during import. Any size works. |
+| **Import unsupported format** | Raises an error shown in the import modal: only `.png`, `.jpg`, `.jpeg`, `.bmp`, `.gif`, `.tga` are accepted. |
+| **Import corrupt/unloadable image** | Error message shown in the import modal with the Pygame error detail. |
+| **Reference nonexistent texture key** | Falls back to solid-colour surface (see §24 Missing Texture Fallback). |
+
+### Tile Operations
+
+| Scenario | Behavior |
+|----------|----------|
+| **Create tile with duplicate ID** | The existing tile definition is overwritten. |
+| **Delete tile that's in use on maps** | No validation — the tile is removed from the registry. Zones referencing it will show the ID as an unknown tile (rendered as fallback colour). |
+
+---
+
+## 27. Game Runtime Context
+
+This section explains how the game uses the data produced by the editor, providing context for why certain fields are configured the way they are.
+
+### Zone Loading at Startup
+
+The game's starting zone is **hardcoded** to `"playground"` in `core/session.py`. When a new game begins:
+
+1. `Session.new_game("playground")` is called.
+2. `load_zone("playground")` reads `zones/playground.json`, parsing tiles, rotations, portals, and entities.
+3. The player entity is spawned at the zone's **anchor** position (`"anchor": [x, y]` in the JSON, default `[15.0, 15.0]`).
+4. Zone entities are spawned via `spawn_zone_entities()` using the entity descriptors from the JSON.
+
+There is no "spawn point" entity — the JSON `anchor` field **is** the spawn point.
+
+### How Portals Work at Runtime
+
+1. **Each frame**, the session checks if the player's tile position matches any portal in the current zone's `_portal_map` (a dict of `(row, col) → (target_zone, target_row, target_col, exit_direction)`).
+2. If a match is found, a **fade-out** transition begins (~0.5 second black screen).
+3. Once fully faded, the target zone is loaded and the player is teleported to `(target_col + 0.5, target_row + 0.5)` — centered in the target tile.
+4. A **fade-in** transition reveals the new zone.
+5. An **auto-walk** sequence moves the player ~1.5 tiles in the `exit_direction` over 0.6 seconds. Player input is locked during the auto-walk.
+6. A **portal arrival suppression** flag prevents the player from immediately triggering the destination portal (cleared once they step off the arrival tile).
+
+If the target zone file doesn't exist, the teleport silently fails: the screen fades to black, a console error is logged, and the player fades back into the original zone.
+
+### How Entities Spawn
+
+When a zone is loaded for the first time in a session, `spawn_zone_entities()` creates ECS entities from the zone's entity descriptors. Each entity descriptor (from the JSON `"entities"` array) is passed to `spawn_from_descriptor()` which:
+
+1. Looks up the prefab defaults from `spawner.py`'s prefab registry.
+2. Creates an ECS entity with `Position`, `Identity`, `Sprite`, and any other components defined by the prefab.
+3. Applies overrides from the descriptor (name, kind, position, inventory, etc.).
+
+Subsequent visits to the same zone in the same session **do not re-spawn** entities — their state is preserved in the ECS world.
+
+### How Zone Data Maps to Gameplay
+
+| Editor Field | Runtime Effect |
+|-------------|---------------|
+| `first_person` flag | Determines whether the zone uses the first-person or top-down renderer |
+| `anchor` | Player spawn position on new game (initial spawn only — no death/respawn system exists) |
+| `tiles` grid | Determines walkability (SOLID flag), wall rendering, floor textures |
+| `rotations` grid | Controls directional texture mapping (which face is "front") |
+| `sound` (tile field) | **No runtime effect** — scaffolding for a future footstep audio system (see §14) |
+| Portal `target_zone` | Which zone file to load on teleport |
+| Portal `exit_direction` | The direction the player auto-walks after arriving |
+| Entity `kind` | Determines AI behavior (npc → dialogue, beast → hostile, container → lootable) |
+| Entity `loot_table` | Which table in `data/loot_tables.toml` is rolled when the player opens the container |
+| Entity `health` | Whether the entity can be damaged and destroyed |
+| Entity `dialogue.bark` | The text shown when the player interacts with an NPC |
+
+---
+
+*This manual reflects the current state of the editor codebase. Keep it updated as features change.*

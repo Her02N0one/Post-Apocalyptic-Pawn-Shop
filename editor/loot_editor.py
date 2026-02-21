@@ -201,9 +201,14 @@ class LootTableEditor:
         # Left panel
         self._draw_table_list(surface, font_sm, sh)
 
-        # Right panel
+        # Right panel — clipped to avoid overflow into header / left panel
+        right_clip = pygame.Rect(lw + 1, hdr_h, sw - lw - 1, sh - hdr_h)
         if self.selected_table and self.selected_table in self.tables:
-            self._draw_table_detail(surface, font, font_sm, sw)
+            surface.set_clip(right_clip)
+            try:
+                self._draw_table_detail(surface, font, font_sm, sw)
+            finally:
+                surface.set_clip(None)
         else:
             draw_text(surface, "Select a table from the left panel",
                       lw + s(20), hdr_h + s(40), Theme.TEXT_DIM, font)

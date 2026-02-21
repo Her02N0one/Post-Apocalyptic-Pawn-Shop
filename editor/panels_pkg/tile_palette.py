@@ -334,6 +334,9 @@ class TilePalette(PanelBase):
                     return "consumed"
 
             for swatch_r, td in self._hit_areas:
+                # Skip swatches scrolled outside the visible content area
+                if swatch_r.bottom < L.lp_content_y or swatch_r.top > L.lp_bottom_y:
+                    continue
                 if swatch_r.collidepoint(mx, my):
                     self.state.selected_tile = td.id
                     if self.state.tool not in (Tool.BRUSH, Tool.FILL,
@@ -349,6 +352,8 @@ class TilePalette(PanelBase):
             if not (left <= mx < left + pw and my >= L.lp_content_y):
                 return None
             for swatch_r, td in self._hit_areas:
+                if swatch_r.bottom < L.lp_content_y or swatch_r.top > L.lp_bottom_y:
+                    continue
                 if swatch_r.collidepoint(mx, my):
                     return f"edit_tile:{td.id}"
 

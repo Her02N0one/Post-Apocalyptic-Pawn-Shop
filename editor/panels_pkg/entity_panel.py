@@ -146,6 +146,7 @@ class EntityPanel(PanelBase):
 
         self._total_h = len(self._combined_cache) * ITEM_H
         self.scroll_y = clamp_scroll(self.scroll_y, self._total_h, visible_h)
+
         surface.set_clip(None)
 
     # -- Events ---------------------------------------------------
@@ -170,6 +171,9 @@ class EntityPanel(PanelBase):
             if not (left <= mx < left + pw and my >= L.lp_content_y):
                 return None
             for ir, source, name in self._item_rects:
+                # Skip items scrolled outside the visible content area
+                if ir.bottom < L.lp_content_y or ir.top > L.lp_bottom_y:
+                    continue
                 if ir.collidepoint(mx, my):
                     if source == "prefab":
                         return f"select_prefab:{name}"

@@ -95,6 +95,8 @@ class TF(IntFlag):
     FARMLAND    = 1 << 4
     HALF_WALL   = 1 << 5
     PLATFORM    = 1 << 6
+    THIN_WALL   = 1 << 7   # mid-cell wall (fence/railing)
+    TALL_WALL   = 1 << 8   # extends upward with alt_texture when no ceiling
 
 
 # Type → default flags
@@ -123,13 +125,13 @@ _TYPE_DEFAULT_HEIGHT: dict[TileType, float] = {
 _FLAG_MAP: dict[str, TF] = {
     "SOLID": TF.SOLID, "WALL": TF.WALL, "TRANSPARENT": TF.TRANSPARENT,
     "LIQUID": TF.LIQUID, "FARMLAND": TF.FARMLAND, "HALF_WALL": TF.HALF_WALL,
-    "PLATFORM": TF.PLATFORM,
+    "PLATFORM": TF.PLATFORM, "THIN_WALL": TF.THIN_WALL, "TALL_WALL": TF.TALL_WALL,
 }
 
 _PROP_FLAG_MAP: dict[str, TF] = {
     "solid": TF.SOLID, "wall": TF.WALL, "transparent": TF.TRANSPARENT,
     "liquid": TF.LIQUID, "farmland": TF.FARMLAND, "half_wall": TF.HALF_WALL,
-    "platform": TF.PLATFORM,
+    "platform": TF.PLATFORM, "thin_wall": TF.THIN_WALL, "tall_wall": TF.TALL_WALL,
 }
 
 
@@ -198,11 +200,12 @@ class TileDef:
     Texture fields (directional model)::
 
         texture_key     — default PNG for all faces ("" → use tile id)
-        texture_front   — optional front-face override
-        texture_back    — optional back-face override
+        texture_front   — optional front-face override (rotation-relative)
+        texture_back    — optional back-face override (rotation-relative)
+        tex_n/tex_s/tex_e/tex_w — explicit per-face overrides (absolute, no rotation)
 
-    The "front" and "back" faces are relative to the tile's rotation
-    in the zone grid.  See ``tex_for_face()``.
+    The per-face fields (``tex_n`` etc.) take precedence over the
+    front/back system.  See ``tex_for_face()``.
     """
 
     id: str
@@ -213,6 +216,11 @@ class TileDef:
     texture_key: str = ""           # default PNG for all faces ("" → use self.id)
     texture_front: str = ""         # optional front-face override
     texture_back: str = ""          # optional back-face override
+    tex_n: str = ""                 # explicit north-face texture
+    tex_s: str = ""                 # explicit south-face texture
+    tex_e: str = ""                 # explicit east-face texture
+    tex_w: str = ""                 # explicit west-face texture
+    alt_texture: str = ""           # tall-wall extension texture (repeats upward)
     height_scale: float = 1.0
     category: str = "Terrain"
     sound: str = "stone"
@@ -246,6 +254,14 @@ class TileDef:
     def platform(self) -> bool:
         return bool(self.flags & TF.PLATFORM)
 
+    @property
+    def thin_wall(self) -> bool:
+        return bool(self.flags & TF.THIN_WALL)
+
+    @property
+    def tall_wall(self) -> bool:
+        return bool(self.flags & TF.TALL_WALL)
+
     # ── texture helpers ──────────────────────────────────────
     def wall_tex(self) -> str:
         """Default wall-surface PNG key.  Falls back to tile id."""
@@ -257,18 +273,28 @@ class TileDef:
         *face*: ``'north'`` | ``'south'`` | ``'east'`` | ``'west'`` | ``'top'``
         *rotation*: 0–3 (0=default, 1=90° CW, 2=180°, 3=270° CW)
 
-        For wall faces the method checks whether *face* is the tile's
-        "front" or "back" (determined by *rotation*) and returns the
-        appropriate override texture.  Falls back to ``wall_tex()``.
-        ``'top'`` always returns ``""`` (flat colour).
+        Priority:
+        1. Explicit per-face tex (tex_n / tex_s / tex_e / tex_w) — absolute
+        2. Front/back system (texture_front / texture_back) — rotation-relative
+        3. Default wall_tex()
         """
         if face == "top":
             return ""  # top → flat colour
+
+        # 1. Explicit per-face overrides (absolute — ignores rotation)
+        _PER_FACE = {"north": self.tex_n, "south": self.tex_s,
+                      "east": self.tex_e, "west": self.tex_w}
+        per = _PER_FACE.get(face, "")
+        if per:
+            return per
+
+        # 2. Front/back system (rotation-relative)
         rot = rotation % 4
         if face == _ROT_FRONT[rot] and self.texture_front:
             return self.texture_front
         if face == _ROT_BACK[rot] and self.texture_back:
             return self.texture_back
+
         return self.wall_tex()
 
     def top_tex(self) -> str:
@@ -276,8 +302,10 @@ class TileDef:
         return ""
 
     def has_directional_textures(self) -> bool:
-        """True if front or back texture overrides are set."""
-        return bool(self.texture_front or self.texture_back)
+        """True if any per-face or front/back texture overrides are set."""
+        return bool(self.texture_front or self.texture_back
+                     or self.tex_n or self.tex_s
+                     or self.tex_e or self.tex_w)
 
     # ── Backward-compat shims (face_textures tuple API) ──────
     @property
@@ -515,6 +543,39 @@ def hs_lut() -> list[float]:
     return lut
 
 
+def transparent_lut() -> bytearray:
+    """Bytearray[compact_int] → 1 if transparent (ray passes through)."""
+    n = max(len(_INT_REV), 1)
+    ba = bytearray(n)
+    for i, key in _INT_REV.items():
+        td = TILE_REGISTRY.get(key)
+        if td and td.transparent:
+            ba[i] = 1
+    return ba
+
+
+def thin_wall_lut() -> bytearray:
+    """Bytearray[compact_int] → 1 if thin wall (mid-cell intersection)."""
+    n = max(len(_INT_REV), 1)
+    ba = bytearray(n)
+    for i, key in _INT_REV.items():
+        td = TILE_REGISTRY.get(key)
+        if td and td.thin_wall:
+            ba[i] = 1
+    return ba
+
+
+def tall_wall_lut() -> bytearray:
+    """Bytearray[compact_int] → 1 if tall wall (extends upward above normal height)."""
+    n = max(len(_INT_REV), 1)
+    ba = bytearray(n)
+    for i, key in _INT_REV.items():
+        td = TILE_REGISTRY.get(key)
+        if td and td.tall_wall:
+            ba[i] = 1
+    return ba
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  Old int→str migration map
 # ═══════════════════════════════════════════════════════════════════
@@ -575,6 +636,10 @@ def _parse_tile_toml(path: str) -> TileDef | None:
         flags |= TF.TRANSPARENT
     if data.get("farmland", False):
         flags |= TF.FARMLAND
+    if data.get("thin_wall", False):
+        flags |= TF.THIN_WALL
+    if data.get("tall_wall", False):
+        flags |= TF.TALL_WALL
 
     default_h = _TYPE_DEFAULT_HEIGHT.get(tile_type, 1.0)
     height = float(data.get("height", default_h))
@@ -583,6 +648,11 @@ def _parse_tile_toml(path: str) -> TileDef | None:
     texture_key = data.get("texture", "")
     texture_front = data.get("texture_front", "")
     texture_back = data.get("texture_back", "")
+    tex_n = data.get("tex_n", "")
+    tex_s = data.get("tex_s", "")
+    tex_e = data.get("tex_e", "")
+    tex_w = data.get("tex_w", "")
+    alt_texture = data.get("alt_texture", "")
 
     return TileDef(
         id=tile_key,
@@ -593,6 +663,11 @@ def _parse_tile_toml(path: str) -> TileDef | None:
         texture_key=texture_key,
         texture_front=texture_front,
         texture_back=texture_back,
+        tex_n=tex_n,
+        tex_s=tex_s,
+        tex_e=tex_e,
+        tex_w=tex_w,
+        alt_texture=alt_texture,
         height_scale=height,
         category=data.get("category", "Custom"),
         sound=data.get("sound", "stone"),
@@ -636,12 +711,27 @@ def _save_tile_toml(td: TileDef) -> str:
         lines.append(f'texture_front = "{td.texture_front}"')
     if td.texture_back:
         lines.append(f'texture_back = "{td.texture_back}"')
+    # Per-face directional textures
+    if td.tex_n:
+        lines.append(f'tex_n = "{td.tex_n}"')
+    if td.tex_s:
+        lines.append(f'tex_s = "{td.tex_s}"')
+    if td.tex_e:
+        lines.append(f'tex_e = "{td.tex_e}"')
+    if td.tex_w:
+        lines.append(f'tex_w = "{td.tex_w}"')
 
     # Extra flags not derived from type
     if td.flags & TF.TRANSPARENT:
         lines.append("transparent = true")
     if td.flags & TF.FARMLAND:
         lines.append("farmland = true")
+    if td.flags & TF.THIN_WALL:
+        lines.append("thin_wall = true")
+    if td.flags & TF.TALL_WALL:
+        lines.append("tall_wall = true")
+    if td.alt_texture:
+        lines.append(f'alt_texture = "{td.alt_texture}"')
 
     # Height (only when different from type default)
     default_h = _TYPE_DEFAULT_HEIGHT.get(td.type, 1.0)
@@ -692,6 +782,11 @@ def register_tile(
     texture_key: str = "",
     texture_front: str = "",
     texture_back: str = "",
+    tex_n: str = "",
+    tex_s: str = "",
+    tex_e: str = "",
+    tex_w: str = "",
+    alt_texture: str = "",
     height_scale: float | None = None,
     category: str = "Custom",
     sound: str = "stone",
@@ -721,6 +816,8 @@ def register_tile(
         id=key, name=name, color=color, type=tile_type,
         flags=flags, texture_key=texture_key,
         texture_front=texture_front, texture_back=texture_back,
+        tex_n=tex_n, tex_s=tex_s, tex_e=tex_e, tex_w=tex_w,
+        alt_texture=alt_texture,
         height_scale=height_scale,
         category=category, sound=sound,
     )
@@ -743,6 +840,9 @@ def update_tile(tile_id: str, **kwargs: Any) -> TileDef | None:
         "texture_key": old.texture_key,
         "texture_front": old.texture_front,
         "texture_back": old.texture_back,
+        "tex_n": old.tex_n, "tex_s": old.tex_s,
+        "tex_e": old.tex_e, "tex_w": old.tex_w,
+        "alt_texture": old.alt_texture,
         "height_scale": old.height_scale, "category": old.category,
         "sound": old.sound,
     }

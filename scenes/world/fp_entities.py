@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 _MAX_ENT_DIST = 14.0
 # Distance beyond which we skip name tags / health bars
 _DETAIL_DIST = 5.0
+_TWO_PI = math.pi * 2.0
 
 # ═════════════════════════════════════════════════════════════════════
 #  Entity visual constants
@@ -75,6 +76,23 @@ FACE_ANGLES: dict[Direction, float] = {
     Direction.LEFT:  math.pi,
     Direction.RIGHT: 0.0,
 }
+
+
+def _billboard_octant(
+    angle_to_player: float,
+    facing_angle: float,
+) -> int:
+    """Compute which of 8 sprite-frames to show (Doom-style).
+
+    ``angle_to_player`` — atan2(ey-py, ex-px): direction FROM player TO entity
+    ``facing_angle``    — the direction the entity faces (radians, 0=east)
+
+    Returns an index 0–7 corresponding to:
+        0 = entity facing directly toward camera
+        4 = entity facing directly away from camera
+    """
+    delta = (angle_to_player - facing_angle) % _TWO_PI
+    return int((delta + math.pi / 8.0) / (math.pi / 4.0)) % 8
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -130,9 +148,21 @@ def draw_entities(
             if under_tid in PLATFORM_IDS:
                 td = tile_def(under_tid)
                 elev = td.height_scale
+
+        # 8-way billboard: compute octant index for texture selection
+        bb_mode = sprite.billboard_mode
+        bb_key = sprite.sprite_key
+        octant = -1
+        if bb_mode == 1 and bb_key:
+            fc = app.world.get(eid, Facing)
+            if fc:
+                fa = FACE_ANGLES.get(fc.direction, math.pi * 0.5)
+                atp = math.atan2(epos.y - py, epos.x - px)
+                octant = _billboard_octant(atp, fa)
+
         ent_data.append(
             (eid, epos.x, epos.y, sprite.char, sprite.color,
-             h_scale, w_scale, elev)
+             h_scale, w_scale, elev, bb_mode, bb_key, octant)
         )
 
     if not ent_data and not deferred_halves:
@@ -184,9 +214,11 @@ def draw_entities(
 
     for _dist, _tag, _data in merged:
         if _tag == 0:
-            # ── Half-wall strip ──────────────────────────────
+            # ── Half-wall / transparent-wall strip ───────────
             (_, hw_surf, sx, cy0, cy1, col_w, draw_h,
-             has_vp, hw_tid, hw_hs, hw_half) = _data
+             has_vp, hw_tid, hw_hs, hw_half,
+             *_extra) = _data
+            _is_trans = _extra[0] if _extra else False
 
             if has_vp and _vp_surf is not None:
                 strip_h = min(_vp_h, cy0 - _vp_top)
@@ -194,14 +226,34 @@ def draw_entities(
                     _blit(_vp_surf, (sx, _vp_top),
                           (sx, 0, col_w, strip_h))
 
-            _blit(hw_surf, (sx, cy0))
-            if cy0 > 0:
+            if _is_trans:
+                # Alpha-blended transparent wall (glass/fence)
+                # Reuse shared SRCALPHA canvas from Renderer.
+                _tw = hw_surf.get_width()
+                _th = hw_surf.get_height()
+                _tc = self._trans_canvas
+                if _tw > _tc.get_width() or _th > _tc.get_height():
+                    nw = max(_tw, _tc.get_width())
+                    nh = max(_th, _tc.get_height())
+                    self._trans_canvas = pygame.Surface(
+                        (nw, nh), pygame.SRCALPHA)
+                    _tc = self._trans_canvas
+                _view = _tc.subsurface((0, 0, _tw, _th))
+                _view.fill((0, 0, 0, 0))
+                _view.blit(hw_surf, (0, 0))
+                _view.fill((255, 255, 255, 140),
+                           special_flags=pygame.BLEND_RGBA_MULT)
+                _blit(_view, (sx, cy0))
+            else:
+                _blit(hw_surf, (sx, cy0))
+
+            if not _is_trans and cy0 > 0:
                 _fill(
                     (80, 78, 70),
                     (sx, cy0, col_w, 1),
                     special_flags=_BLEND,
                 )
-            if cy1 < sh:
+            if not _is_trans and cy1 < sh:
                 _ao = min(4, max(1, draw_h >> 4))
                 _ao_h = min(_ao, sh - cy1)
                 if _ao_h > 0:
@@ -324,42 +376,58 @@ def _draw_one_billboard(
     ent_surf = _canvas.subsurface((0, 0, ent_w, ent_h))
 
     # ── Redraw entity content into the canvas every frame ────
-    ent_surf.fill(bb.color)
-    bw = 2 if min(ent_w, ent_h) > 12 else 1
-    border = (max(0, bb.color[0] - 50),
-              max(0, bb.color[1] - 50),
-              max(0, bb.color[2] - 50))
-    pygame.draw.rect(ent_surf, border,
-                     (0, 0, ent_w, ent_h), bw)
-
-    prop_key = PROP_GLYPHS.get(bb.char)
-    if prop_key:
-        tex_w = max(4, int(ent_w * 0.85))
-        tex_h = max(4, int(ent_h * 0.85))
-        # Always fetch the canonical source texture (one per prop
-        # type, never allocates after first call).
-        prop_surf = _get_prop_surface(self, prop_key)
-        # Scale directly into a subsurface view — zero allocation.
-        _ox = (ent_w - tex_w) // 2
-        _oy = (ent_h - tex_h) // 2
-        if _ox >= 0 and _oy >= 0 and _ox + tex_w <= ent_w and _oy + tex_h <= ent_h:
-            _dest = ent_surf.subsurface((_ox, _oy, tex_w, tex_h))
-            pygame.transform.scale(prop_surf, (tex_w, tex_h), _dest)
+    # 8-way billboard: use atlas texture keyed by sprite_key + octant
+    if bb.bb_mode == 1 and bb.octant >= 0 and bb.bb_key:
+        tex_key = f"{bb.bb_key}_{bb.octant}"
+        try:
+            src_surf = self._atlas.get_by_key(tex_key)
+        except Exception:
+            src_surf = None
+        if src_surf is not None:
+            pygame.transform.scale(src_surf, (ent_w, ent_h), ent_surf)
+        else:
+            # Fallback: tinted rect with glyph (missing texture)
+            ent_surf.fill(bb.color)
+            bw = 2 if min(ent_w, ent_h) > 12 else 1
+            border = (max(0, bb.color[0] - 50),
+                      max(0, bb.color[1] - 50),
+                      max(0, bb.color[2] - 50))
+            pygame.draw.rect(ent_surf, border,
+                             (0, 0, ent_w, ent_h), bw)
     else:
-        font_size = max(8, min(48, ent_h * 2 // 3))
-        glyph_key = (bb.char, font_size)
-        cached_g = glyph_cache.get(glyph_key)
-        if cached_g is None:
-            font = self.get_font(font_size)
-            shadow = font.render(bb.char, True, (0, 0, 0))
-            glyph = font.render(bb.char, True, (255, 255, 240))
-            glyph_cache[glyph_key] = (shadow, glyph)
-            cached_g = (shadow, glyph)
-        shadow, glyph = cached_g
-        gx = (ent_w - glyph.get_width()) // 2
-        gy = (ent_h - glyph.get_height()) // 2
-        ent_surf.blit(shadow, (gx + 1, gy + 1))
-        ent_surf.blit(glyph, (gx, gy))
+        ent_surf.fill(bb.color)
+        bw = 2 if min(ent_w, ent_h) > 12 else 1
+        border = (max(0, bb.color[0] - 50),
+                  max(0, bb.color[1] - 50),
+                  max(0, bb.color[2] - 50))
+        pygame.draw.rect(ent_surf, border,
+                         (0, 0, ent_w, ent_h), bw)
+
+        prop_key = PROP_GLYPHS.get(bb.char)
+        if prop_key:
+            tex_w = max(4, int(ent_w * 0.85))
+            tex_h = max(4, int(ent_h * 0.85))
+            prop_surf = _get_prop_surface(self, prop_key)
+            _ox = (ent_w - tex_w) // 2
+            _oy = (ent_h - tex_h) // 2
+            if _ox >= 0 and _oy >= 0 and _ox + tex_w <= ent_w and _oy + tex_h <= ent_h:
+                _dest = ent_surf.subsurface((_ox, _oy, tex_w, tex_h))
+                pygame.transform.scale(prop_surf, (tex_w, tex_h), _dest)
+        else:
+            font_size = max(8, min(48, ent_h * 2 // 3))
+            glyph_key = (bb.char, font_size)
+            cached_g = glyph_cache.get(glyph_key)
+            if cached_g is None:
+                font = self.get_font(font_size)
+                shadow = font.render(bb.char, True, (0, 0, 0))
+                glyph = font.render(bb.char, True, (255, 255, 240))
+                glyph_cache[glyph_key] = (shadow, glyph)
+                cached_g = (shadow, glyph)
+            shadow, glyph = cached_g
+            gx = (ent_w - glyph.get_width()) // 2
+            gy = (ent_h - glyph.get_height()) // 2
+            ent_surf.blit(shadow, (gx + 1, gy + 1))
+            ent_surf.blit(glyph, (gx, gy))
 
     # Blit visible spans, then apply fog via BLEND_MULT on destination
     _surf_blit = surface.blit

@@ -54,10 +54,22 @@ class Collider(Component):
 
 @dataclass
 class Sprite(Component):
-    """Visual representation — a colored character."""
+    """Visual representation — a colored character.
+
+    ``billboard_mode`` controls first-person rendering:
+      0 — static (single texture, always faces camera) — default
+      1 — 8-way directional (Doom-style: sprite_key + ``_0``..``_7``)
+
+    When mode == 1, the renderer selects the sprite variant based on
+    the angle between the entity's facing direction and the camera.
+    ``sprite_key`` names the base texture prefix (e.g. ``"zombie"`` →
+    ``"zombie_0"`` through ``"zombie_7"``).
+    """
     char: str = "?"
     color: tuple[int, int, int] = (255, 255, 255)
     layer: int = 0
+    billboard_mode: int = 0     # 0=static, 1=8-way
+    sprite_key: str = ""        # base texture key for 8-way billboards
 
 
 @dataclass

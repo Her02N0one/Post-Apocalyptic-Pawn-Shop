@@ -41,6 +41,9 @@ class ActionsMixin:
     # ── Exact-match handlers ────────────────────────────────────
 
     def _act_save(self):
+        if not self.state.zone_name:
+            self._act_save_as()
+            return
         self.state.save_zone()
 
     def _act_quit(self):
@@ -64,9 +67,10 @@ class ActionsMixin:
             self.state.zone_name = name
             self.state.save_zone()
             self.inspector.force_rebuild()
+        default = self.state.zone_name or "untitled"
         self.modals.open(
             TextInputModal(self.modals, "Save zone as:",
-                           self.state.zone_name, _on_name))
+                           default, _on_name))
 
     def _act_rename(self):
         from editor.modals import TextInputModal

@@ -170,10 +170,14 @@ class FPPreview:
             self.fullscreen = False
             self.tile_picker_open = False
             self._looking = False
+            self._keys_held.clear()
             self._ungrab()
         else:
             self.active = True
             self.fullscreen = False
+            self._keys_held.clear()
+            if self._renderer:
+                self._renderer.notify_tiles_changed()
 
     def toggle_fullscreen(self):
         """Switch between PIP and fullscreen edit mode."""
@@ -181,6 +185,7 @@ class FPPreview:
             return
         self.fullscreen = not self.fullscreen
         self.tile_picker_open = False
+        self._keys_held.clear()
         if self.fullscreen:
             self._grab()
         else:
@@ -191,7 +196,10 @@ class FPPreview:
         self.active = True
         self.fullscreen = True
         self.tile_picker_open = False
+        self._keys_held.clear()
         self._grab()
+        if self._renderer:
+            self._renderer.notify_tiles_changed()
 
     def sync_to_anchor(self, anchor: tuple[float, float]):
         self.px, self.py = anchor
@@ -417,6 +425,8 @@ class FPPreview:
         if state.rotations and 0 <= r < len(state.rotations) and 0 <= c < len(state.rotations[0]):
             state.rotations[r][c] = state.pending_rotation
         state.dirty = True
+        if self._renderer:
+            self._renderer.notify_tiles_changed()
         td = tile_def(tile_id)
         state.toast(f"Placed {td.name} at [{r},{c}]")
 
@@ -437,6 +447,8 @@ class FPPreview:
             if state.rotations and 0 <= r < len(state.rotations) and 0 <= c < len(state.rotations[0]):
                 state.rotations[r][c] = 0
             state.dirty = True
+            if self._renderer:
+                self._renderer.notify_tiles_changed()
             state.toast(f"Erased [{r},{c}]")
 
     # =================================================================
@@ -612,7 +624,9 @@ class FPPreview:
              selected_tile: str | None = None,
              entities: list | None = None,
              rotations: list[list[int]] | None = None,
-             pending_rotation: int = 0):
+             pending_rotation: int = 0,
+             floor_heights: list | None = None,
+             ceil_heights: list | None = None):
         if not self.active:
             return
 
@@ -633,6 +647,8 @@ class FPPreview:
             fog_lut, _EDITOR_DN, FOV,
             tiles, map_w, map_h,
             True,
+            floor_heights=floor_heights,
+            ceil_heights=ceil_heights,
         )
 
         # 2. Textured walls

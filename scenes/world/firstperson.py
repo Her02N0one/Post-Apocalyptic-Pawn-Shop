@@ -173,6 +173,7 @@ class FirstPerson(Scene):
             self._last_hp = hp_res[2].current
 
         self._renderer.invalidate_zone(self.session.zone_name)
+        self._renderer.notify_tiles_changed()
         self._renderer.warmup()
 
     def on_exit(self, app: App) -> None:
@@ -623,6 +624,8 @@ class FirstPerson(Scene):
             rt, rsw, rsh, rhalf, px, py, self.player_angle,
             fog_lut, dn, current_fov,
             tiles, map_w, map_h, self.session.first_person,
+            floor_heights=self.session.floor_heights,
+            ceil_heights=self.session.ceil_heights,
         )
         _dt_fc = _perf() - _t0
         self._prof_record('floor/ceil', _dt_fc)

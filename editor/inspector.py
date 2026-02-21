@@ -78,6 +78,7 @@ class Inspector:
         # Tile-tab widget cache
         self._tile_widgets: list[InspectorEntry] = []
         self._last_tile_id: str = ""
+        self._last_hover_tile: tuple[int, int] | None = None
         # Track panel geometry to force rebuild on resize
         self._last_panel_x: int = -1
         self._last_tab: str = ""  # detect tab switches
@@ -92,6 +93,7 @@ class Inspector:
         if tab in _TAB_LABELS and tab != self._tab:
             self._tab = tab
             self._scroll.scroll_y = 0.0
+            self.ctx.release_focus()
 
     def _set_zone_name(self, st: EditorState, name: str):
         """Rename zone from the inspector name field."""
@@ -682,6 +684,10 @@ class Inspector:
             flag_bits.append("liquid")
         if td.farmland:
             flag_bits.append("farmland")
+        if td.thin_wall:
+            flag_bits.append("thin")
+        if td.tall_wall:
+            flag_bits.append("tall")
         flags_str = ", ".join(flag_bits) if flag_bits else "(none)"
         add(KVEntry(x=px, y=y, label="Flags:", value=flags_str))
         y += L.s(20)
@@ -727,7 +733,63 @@ class Inspector:
         if td.texture_back:
             add(KVEntry(x=px, y=y, label="Back:", value=td.texture_back))
             y += L.s(20)
+        if td.tex_n:
+            add(KVEntry(x=px, y=y, label="Tex N:", value=td.tex_n))
+            y += L.s(20)
+        if td.tex_s:
+            add(KVEntry(x=px, y=y, label="Tex S:", value=td.tex_s))
+            y += L.s(20)
+        if td.tex_e:
+            add(KVEntry(x=px, y=y, label="Tex E:", value=td.tex_e))
+            y += L.s(20)
+        if td.tex_w:
+            add(KVEntry(x=px, y=y, label="Tex W:", value=td.tex_w))
+            y += L.s(20)
+        if td.alt_texture:
+            add(KVEntry(x=px, y=y, label="Alt Tex:", value=td.alt_texture))
+            y += L.s(20)
         y += L.pad_md
+
+        # ── Cell floor/ceiling heights (editable) ─────────
+        if st.hover_tile:
+            hr, hc = st.hover_tile
+            if (0 <= hr < st.map_h and 0 <= hc < st.map_w
+                    and st.floor_heights and st.ceil_heights):
+                add(SectionEntry(x=px, y=y, text="Cell Heights", w=w))
+                y += L.header_h
+                add(KVEntry(x=px, y=y, label="Cell:",
+                             value=f"({hr}, {hc})"))
+                y += L.s(20)
+
+                cur_fh = st.floor_heights[hr][hc] if hr < len(st.floor_heights) and hc < len(st.floor_heights[0]) else 0.0
+                fh_field = NumberField(
+                    pygame.Rect(px + L.label_col, y,
+                                w - L.label_col, L.field_h),
+                    self.ctx, value=round(cur_fh, 2),
+                    min_val=0.0, max_val=1.0, step=0.05, decimals=2)
+                fh_field.on_change = lambda v, _r=hr, _c=hc, _st=st: (
+                    _st.push_undo(),
+                    _st.floor_heights.__getitem__(_r).__setitem__(_c, float(v)),
+                    setattr(_st, 'dirty', True),
+                )
+                add(LabeledWidgetEntry(x=px, y=y, label="Floor H:",
+                                        widget=fh_field))
+                y += L.item_h
+
+                cur_ch = st.ceil_heights[hr][hc] if hr < len(st.ceil_heights) and hc < len(st.ceil_heights[0]) else 1.0
+                ch_field = NumberField(
+                    pygame.Rect(px + L.label_col, y,
+                                w - L.label_col, L.field_h),
+                    self.ctx, value=round(cur_ch, 2),
+                    min_val=0.0, max_val=2.0, step=0.05, decimals=2)
+                ch_field.on_change = lambda v, _r=hr, _c=hc, _st=st: (
+                    _st.push_undo(),
+                    _st.ceil_heights.__getitem__(_r).__setitem__(_c, float(v)),
+                    setattr(_st, 'dirty', True),
+                )
+                add(LabeledWidgetEntry(x=px, y=y, label="Ceil H:",
+                                        widget=ch_field))
+                y += L.item_h
 
         # ── Texture preview ────────────────────────────────
         tex_sz = L.s(64)
@@ -791,10 +853,12 @@ class Inspector:
                 self._rebuild_entity_widgets_list(surface)
             widgets = self._entity_widgets
         else:
-            # Rebuild tile widgets if selected tile or geometry changed
+            # Rebuild tile widgets if selected tile, hover cell, or geometry changed
+            hover_changed = (st.hover_tile != self._last_hover_tile)
             if (st.selected_tile != self._last_tile_id
-                    or geometry_changed or tab_changed):
+                    or hover_changed or geometry_changed or tab_changed):
                 self._last_tile_id = st.selected_tile
+                self._last_hover_tile = st.hover_tile
                 self._rebuild_tile_widgets(surface)
             widgets = self._tile_widgets
 
@@ -989,8 +1053,8 @@ class Inspector:
             return self._handle_entity_events(event, offset, st, panel_x)
 
         # --- Tile tab events ---
-        # (read-only for now — no interactive widgets)
-        return None
+        return self._dispatch_widget_events(
+            self._tile_widgets, event, offset, st)
 
     def _handle_zone_events(self, event, offset, st, panel_x):
         """Process events for the zone/entity tab."""
@@ -1088,5 +1152,7 @@ class Inspector:
         self._last_entity_idx = -2
         self._last_entity_tab_idx = -2
         self._last_tile_id = "__invalid__"
+        self._last_hover_tile = (-999, -999)
         self._last_tab = ""
         self._loaded_data = False
+        self.ctx.release_focus()
