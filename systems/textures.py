@@ -34,7 +34,8 @@ _TEX_DIR = Path(TILE_TEX_DIR)
 
 # Legacy path — kept so old code importing it doesn't crash,
 # but atlas.png is no longer written to disk.
-_ATLAS_PATH = Path(__file__).resolve().parent.parent / "assets" / "atlas.png"
+from core.paths import ASSETS_DIR as _ASSETS_DIR
+_ATLAS_PATH = _ASSETS_DIR / "atlas.png"
 
 
 class TextureAtlas:

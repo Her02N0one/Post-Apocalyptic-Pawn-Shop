@@ -8,7 +8,7 @@ from core.tiles import (
     TILE_REGISTRY, tiles_by_type, TileDef, TileType,
 )
 from editor.ui import (
-    Theme, draw_text, draw_panel_bg, clamp_scroll, draw_scrollbar,
+    Theme, draw_text, clamp_scroll, draw_scrollbar,
 )
 from editor.state import EditorState, Tool
 from editor.layout import Layout
@@ -63,6 +63,8 @@ class TilePalette(PanelBase):
         self._tex_cache: dict[str, pygame.Surface] = {}
         self._hit_areas: list[tuple[pygame.Rect, TileDef]] = []
         self._header_areas: list[tuple[pygame.Rect, TileType]] = []
+        self._hover_td: TileDef | None = None
+        self._hover_rect: pygame.Rect | None = None
         self._refresh_groups()
 
     # ── helpers ──────────────────────────────────────────────────
@@ -102,11 +104,8 @@ class TilePalette(PanelBase):
 
         L = Layout
         _s = L.s
-        sh = surface.get_height()
-        top = L.canvas_y
         left = 0
         pw = L.palette_w
-        panel_h = sh - top - L.status_h
 
         # Local scaled sizes for this frame
         HEADER_H = self._header_h()
@@ -118,10 +117,14 @@ class TilePalette(PanelBase):
         pad_x    = L.pad_md
         fh       = font_sm.get_height()
 
-        draw_panel_bg(surface, left, top, pw, panel_h)
+        # Background is drawn by EditorChrome — NO draw_panel_bg here.
 
-        # Search filter bar
-        fy = top + L.pad_sm
+        # Reset hover state for this frame
+        self._hover_td = None
+        self._hover_rect = None
+
+        # Search filter bar — positioned at top of content region
+        fy = L.lp_content_y + L.pad_sm
         self._filter_rect = pygame.Rect(left + L.pad_sm, fy,
                                         pw - L.pad_sm * 2, FILTER_H)
         bg = Theme.FIELD_BG if not self._filter_active else (35, 35, 42)
@@ -140,10 +143,10 @@ class TilePalette(PanelBase):
                                  (cx, fy + L.pad_sm),
                                  (cx, fy + FILTER_H - L.pad_sm))
 
-        # Tile grids by type
+        # Tile grids by type — content region below filter, above button
         content_top = fy + FILTER_H + L.pad_sm
         btn_area = BTN_H + L.pad_md
-        content_bot = sh - L.status_h - btn_area
+        content_bot = L.lp_bottom_y - btn_area
         clip = pygame.Rect(left, content_top, pw, content_bot - content_top)
         surface.set_clip(clip)
 
@@ -210,18 +213,8 @@ class TilePalette(PanelBase):
                                      border_radius=max(1, br - 1))
 
                     if swatch_r.collidepoint(mx, my):
-                        tip = f"{td.name}"
-                        tw_px = font_sm.size(tip)[0] + L.pad_md
-                        tip_h = fh + L.pad_sm
-                        tip_r = pygame.Rect(sx, sy + SWATCH + 2,
-                                            tw_px, tip_h)
-                        if tip_r.right > left + pw:
-                            tip_r.right = left + pw - 2
-                        pygame.draw.rect(surface, (30, 30, 36), tip_r,
-                                         border_radius=max(1, br - 1))
-                        draw_text(surface, tip, tip_r.x + L.pad_sm,
-                                  tip_r.y + L.pad_sm // 2,
-                                  Theme.TEXT, font_sm)
+                        self._hover_td = td
+                        self._hover_rect = swatch_r
 
                 self._hit_areas.append((swatch_r, td))
                 gx += 1
@@ -236,13 +229,33 @@ class TilePalette(PanelBase):
         self.scroll_y = clamp_scroll(self.scroll_y, self._total_h, visible_h)
         surface.set_clip(None)
 
+        # Hover tooltip — drawn OUTSIDE the clip rect so it's not cut off
+        if self._hover_td is not None and self._hover_rect is not None:
+            hr = self._hover_rect
+            tip = self._hover_td.name
+            tw_px = font_sm.size(tip)[0] + L.pad_md
+            tip_h = fh + L.pad_sm
+            tip_r = pygame.Rect(hr.x, hr.y + SWATCH + 2, tw_px, tip_h)
+            if tip_r.right > left + pw:
+                tip_r.right = left + pw - 2
+            # Draw above if it would go below the visible area
+            if tip_r.bottom > content_bot:
+                tip_r.y = hr.y - tip_h - 2
+            pygame.draw.rect(surface, (30, 30, 36), tip_r,
+                             border_radius=max(1, br - 1))
+            pygame.draw.rect(surface, Theme.BORDER, tip_r, 1,
+                             border_radius=max(1, br - 1))
+            draw_text(surface, tip, tip_r.x + L.pad_sm,
+                      tip_r.y + L.pad_sm // 2,
+                      Theme.TEXT, font_sm)
+
         # Scrollbar
         draw_scrollbar(surface, left + pw - L.pad_md, content_top,
                        content_bot - content_top, self._total_h,
                        self.scroll_y, bar_w=_s(4), br=max(1, br - 1))
 
         # "Add Tile" button
-        btn_y = sh - L.status_h - BTN_H - L.pad_sm
+        btn_y = L.lp_bottom_y - BTN_H - L.pad_sm
         self._add_tile_rect = pygame.Rect(left + pad_x, btn_y,
                                            pw - pad_x * 2, BTN_H)
         hov = self._add_tile_rect.collidepoint(mx, my)
@@ -264,8 +277,6 @@ class TilePalette(PanelBase):
         L = Layout
         left = 0
         pw = L.palette_w
-        top = L.canvas_y
-        sh = surface.get_height()
 
         # Filter bar typing
         if self._filter_active:
@@ -284,14 +295,14 @@ class TilePalette(PanelBase):
                     self._filter += event.unicode
                     return "consumed"
 
-        # Scroll
+        # Scroll — only inside content region
         if event.type == pygame.MOUSEWHEEL:
             mx, my = pygame.mouse.get_pos()
-            if left <= mx < left + pw and my > top:
+            if left <= mx < left + pw and L.lp_content_y <= my < L.lp_bottom_y:
                 self.scroll_y = max(0, self.scroll_y - event.y * L.scroll_step)
                 FILTER_H = self._filter_h()
                 BTN_H = self._btn_h()
-                visible_h = sh - L.status_h - (top + FILTER_H + L.pad_sm + BTN_H + L.pad_md)
+                visible_h = L.lp_content_h - FILTER_H - L.pad_sm * 2 - BTN_H - L.pad_md
                 max_scroll = max(0, self._total_h - visible_h)
                 self.scroll_y = min(self.scroll_y, max_scroll)
                 return "consumed"
@@ -299,7 +310,7 @@ class TilePalette(PanelBase):
         # Left click
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mx, my = event.pos
-            if not (left <= mx < left + pw and my > top):
+            if not (left <= mx < left + pw and my >= L.lp_content_y):
                 if self._filter_active:
                     self._filter_active = False
                 return None
@@ -335,7 +346,7 @@ class TilePalette(PanelBase):
         # Right-click → edit tile
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
             mx, my = event.pos
-            if not (left <= mx < left + pw and my > top):
+            if not (left <= mx < left + pw and my >= L.lp_content_y):
                 return None
             for swatch_r, td in self._hit_areas:
                 if swatch_r.collidepoint(mx, my):

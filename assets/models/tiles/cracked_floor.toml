@@ -1,0 +1,4 @@
+name = "Cracked Floor"
+type = "floor"
+category = "Floors"
+color = [95, 90, 80]

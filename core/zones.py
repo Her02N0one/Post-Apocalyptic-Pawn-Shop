@@ -15,13 +15,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
+from core.paths import ZONES_DIR
 from core.tiles import migrate_int_grid
-
-
-ZONES_DIR = Path(__file__).resolve().parent.parent / "zones"
 
 
 @dataclass
@@ -42,6 +39,7 @@ class Zone:
     height: int
     anchor: tuple[float, float]
     tiles: list[list[str]]
+    rotations: list[list[int]] = field(default_factory=list)
     portals: list[Portal] = field(default_factory=list)
     entities: list[dict[str, Any]] = field(default_factory=list)
     first_person: bool = False  # True → zone can be viewed in first-person
@@ -92,6 +90,13 @@ def load_zone(name: str) -> Zone:
 
     entities: list[dict[str, Any]] = data.get("entities", [])
 
+    # Rotation grid (parallel to tiles, default 0)
+    raw_rot = data.get("rotations", [])
+    if raw_rot and len(raw_rot) == height:
+        rotations: list[list[int]] = raw_rot
+    else:
+        rotations = [[0] * width for _ in range(height)]
+
     interior: bool = bool(data.get("interior", False))
     first_person: bool = bool(data.get("first_person", interior))
 
@@ -101,6 +106,7 @@ def load_zone(name: str) -> Zone:
         height=height,
         anchor=anchor,
         tiles=tiles,
+        rotations=rotations,
         portals=portals,
         first_person=first_person,
         entities=entities,

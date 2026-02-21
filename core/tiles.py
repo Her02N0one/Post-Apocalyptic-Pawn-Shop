@@ -1,7 +1,7 @@
-"""core/tiles.py — JSON-backed tile registry with type system.
+"""core/tiles.py — TOML-backed tile registry with directional textures.
 
 Tile IDs are human-readable strings (``"grass"``, ``"wall"``).
-Definitions live as individual JSON files in ``assets/tiles/{key}.json``.
+Definitions live as individual TOML files in ``assets/models/tiles/{key}.toml``.
 
 Each tile has a **type** that determines rendering behaviour and physics::
 
@@ -12,36 +12,37 @@ Each tile has a **type** that determines rendering behaviour and physics::
     "door"      — wall-height, interactive (walkable when open)
     "liquid"    — floor-level liquid surface
 
-DRY JSON — only non-default fields are stored::
+DRY TOML — only non-default fields are stored::
 
-    # assets/tiles/grass.json
-    {"name": "Grass", "type": "floor", "color": [50, 80, 40],
-     "sound": "grass"}
+    # assets/models/tiles/grass.toml
+    name = "Grass"
+    type = "floor"
+    category = "Terrain"
+    color = [50, 80, 40]
+    sound = "grass"
 
-    # assets/tiles/wall.json
-    {"name": "Wall", "type": "wall", "color": [100, 100, 100]}
+    # assets/models/tiles/crt_tv.toml  (directional — distinct front/back)
+    name = "CRT Television"
+    type = "wall"
+    category = "Props"
+    color = [40, 40, 40]
+    texture = "tv_casing"
+    texture_front = "tv_static"
+    texture_back = "tv_vents"
 
-    # assets/tiles/shelf_wall.json  (directional — distinct faces)
-    {"name": "Shelf Wall", "type": "wall", "color": [120, 90, 60],
-     "face_textures": {"south": "shelf_front"}}
+Directional texture model::
 
-    # assets/tiles/half_wall.json  (top surface visible)
-    {"name": "Half Wall", "type": "half_wall",
-     "color": [100, 95, 85], "face_textures": {"top": "stone_floor"}}
+    texture       — default PNG for all faces (fallback = tile id)
+    texture_front — optional override for the tile's "front" face
+    texture_back  — optional override for the tile's "back" face
 
-Tile-type texture profiles — each type dictates available face slots::
+    Which world-face (N/S/E/W) is "front" depends on the tile's
+    **rotation** (0–3) stored in the zone's rotation grid:
 
-    FLOOR     → ("top",)              surface only
-    WALL      → (N, S, E, W)          uniform or per-face walls
-    HALF_WALL → (N, S, E, W, "top")   walls + visible top
-    PLATFORM  → (N, S, E, W, "top")   walls + visible top
-    DOOR      → (N, S, E, W)          like wall
-    LIQUID    → ("top",)              surface only
-
-Renderer texture usage:
-  - **texture_key** → default wall PNG for all faces (fallback = tile id)
-  - **face_textures** → per-face overrides {"north"/"south"/"east"/"west"/"top": key}
-  - **color** → floor flat-colour fallback + editor/minimap
+        rotation 0 → front=south  back=north
+        rotation 1 → front=west   back=east
+        rotation 2 → front=north  back=south
+        rotation 3 → front=east   back=west
 
 Systems never hard-code tile IDs — they query type or flags::
 
@@ -53,11 +54,15 @@ Systems never hard-code tile IDs — they query type or flags::
 
 from __future__ import annotations
 
-import json
 import os as _os
 from dataclasses import dataclass
 from enum import IntFlag, Enum
 from typing import Any
+
+try:
+    import tomllib as _tomllib          # Python 3.11+
+except ModuleNotFoundError:
+    import tomli as _tomllib            # Python 3.9–3.10
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -176,6 +181,13 @@ TILE_FACE_SLOTS: dict[TileType, tuple[str, ...]] = {
 }
 
 
+# ── Rotation → cardinal face mapping ─────────────────────────────
+
+# Which world-face is "front" for each rotation value (0–3).
+_ROT_FRONT = ("south", "west", "north", "east")
+_ROT_BACK  = ("north", "east", "south", "west")
+
+
 @dataclass(frozen=True)
 class TileDef:
     """Immutable description of a tile type.
@@ -183,10 +195,14 @@ class TileDef:
     ``id`` is the text key (e.g. ``"wall"``, ``"grass"``).
     ``type`` determines rendering behaviour and default physics flags.
 
-    Texture fields::
+    Texture fields (directional model)::
 
-        texture_key   — default wall PNG name ("" → use id)
-        face_textures — per-face overrides {"north"/"south"/"east"/"west"/"top": key}
+        texture_key     — default PNG for all faces ("" → use tile id)
+        texture_front   — optional front-face override
+        texture_back    — optional back-face override
+
+    The "front" and "back" faces are relative to the tile's rotation
+    in the zone grid.  See ``tex_for_face()``.
     """
 
     id: str
@@ -194,8 +210,9 @@ class TileDef:
     color: tuple[int, int, int]
     type: TileType = TileType.FLOOR
     flags: TF = TF.NONE
-    texture_key: str = ""           # default wall PNG  ("" → use self.id)
-    face_textures: tuple = ()       # frozen pairs: (("south","shelf"), ...)
+    texture_key: str = ""           # default PNG for all faces ("" → use self.id)
+    texture_front: str = ""         # optional front-face override
+    texture_back: str = ""          # optional back-face override
     height_scale: float = 1.0
     category: str = "Terrain"
     sound: str = "stone"
@@ -234,57 +251,87 @@ class TileDef:
         """Default wall-surface PNG key.  Falls back to tile id."""
         return self.texture_key or self.id
 
-    def face_tex_dict(self) -> dict[str, str]:
-        """Return face_textures as a plain dict."""
-        return dict(self.face_textures)
+    def tex_for_face(self, face: str, rotation: int = 0) -> str:
+        """Texture key for a world face, accounting for tile rotation.
 
-    def tex_for_face(self, face: str) -> str:
-        """Texture key for *face* ('north'|'south'|'east'|'west'|'top').
+        *face*: ``'north'`` | ``'south'`` | ``'east'`` | ``'west'`` | ``'top'``
+        *rotation*: 0–3 (0=default, 1=90° CW, 2=180°, 3=270° CW)
 
-        Wall faces fall back to ``wall_tex()``.  'top' falls back to
-        empty string (meaning flat colour).
+        For wall faces the method checks whether *face* is the tile's
+        "front" or "back" (determined by *rotation*) and returns the
+        appropriate override texture.  Falls back to ``wall_tex()``.
+        ``'top'`` always returns ``""`` (flat colour).
         """
-        d = dict(self.face_textures)
-        if face in d:
-            return d[face]
-        if face in ("north", "south", "east", "west"):
-            return self.wall_tex()
-        return ""  # top → flat colour
+        if face == "top":
+            return ""  # top → flat colour
+        rot = rotation % 4
+        if face == _ROT_FRONT[rot] and self.texture_front:
+            return self.texture_front
+        if face == _ROT_BACK[rot] and self.texture_back:
+            return self.texture_back
+        return self.wall_tex()
 
     def top_tex(self) -> str:
         """Top-surface texture key, or ``""`` for flat colour."""
-        return self.tex_for_face("top")
+        return ""
+
+    def has_directional_textures(self) -> bool:
+        """True if front or back texture overrides are set."""
+        return bool(self.texture_front or self.texture_back)
+
+    # ── Backward-compat shims (face_textures tuple API) ──────
+    @property
+    def face_textures(self) -> tuple:
+        """Legacy compat: synthesize face_textures from directional fields.
+
+        Maps texture_front → "south" and texture_back → "north"
+        (assuming rotation 0).
+        """
+        pairs: list[tuple[str, str]] = []
+        if self.texture_front:
+            pairs.append(("south", self.texture_front))
+        if self.texture_back:
+            pairs.append(("north", self.texture_back))
+        return tuple(sorted(pairs))
+
+    def face_tex_dict(self) -> dict[str, str]:
+        """Legacy compat: return face_textures as a plain dict."""
+        return dict(self.face_textures)
 
     def has_face_overrides(self) -> bool:
-        """True if any per-face texture overrides are set."""
-        return bool(self.face_textures)
+        """Legacy compat: same as has_directional_textures."""
+        return self.has_directional_textures()
 
-    # Backward-compat shims
     @property
     def front_texture(self) -> str:
-        return dict(self.face_textures).get("south", "")
+        return self.texture_front
 
     @property
     def floor_texture(self) -> str:
-        return self.top_tex()
+        return ""
 
     def front_tex(self) -> str:
-        return self.tex_for_face("south")
+        return self.texture_front
 
     def floor_tex(self) -> str:
-        return self.top_tex()
+        return ""
 
     def has_front(self) -> bool:
-        return "south" in dict(self.face_textures)
+        return bool(self.texture_front)
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  Paths
+#  Paths  (imported from core/paths — single source of truth)
 # ═══════════════════════════════════════════════════════════════════
 
-_PROJECT_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
-TILE_TEX_DIR = _os.path.join(_PROJECT_ROOT, "assets", "textures", "tiles")
-_TILES_DIR = _os.path.join(_PROJECT_ROOT, "assets", "tiles")
+from core.paths import (
+    TILE_TEX_DIR as _TILE_TEX_DIR_P,
+    TILES_TOML_DIR as _TILES_TOML_DIR_P,
+)
+
+# String versions for os.path callers that still exist in this module
+TILE_TEX_DIR = str(_TILE_TEX_DIR_P)
+_TILES_TOML_DIR = str(_TILES_TOML_DIR_P)        # primary TOML
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -493,81 +540,49 @@ def migrate_int_grid(tiles: list[list[int]]) -> list[list[str]]:
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  JSON persistence  — DRY format, one file per tile
+#  TOML persistence  — DRY format, one file per tile in assets/models/tiles/
 # ═══════════════════════════════════════════════════════════════════
 
-def _tile_json_path(tile_key: str) -> str:
-    """Return ``assets/tiles/{key}.json``."""
-    return _os.path.join(_TILES_DIR, f"{tile_key}.json")
+def _tile_toml_path(tile_key: str) -> str:
+    """Return ``assets/models/tiles/{key}.toml``."""
+    return _os.path.join(_TILES_TOML_DIR, f"{tile_key}.toml")
 
 
-def _parse_tile_json(path: str) -> TileDef | None:
-    """Parse a DRY-format tile JSON into a TileDef.
-
-    Supports both the new ``type``-based format and the legacy
-    ``flags``-list format (auto-migrated on next save).
-    """
+def _parse_tile_toml(path: str) -> TileDef | None:
+    """Parse a DRY-format tile TOML into a TileDef."""
     try:
-        with open(path, "r") as f:
-            data = json.load(f)
+        with open(path, "rb") as f:
+            data = _tomllib.load(f)
     except Exception:
         return None
 
     basename = _os.path.splitext(_os.path.basename(path))[0]
     if basename.startswith("_"):
-        return None  # skip meta files like _categories.json
+        return None
 
     tile_key = basename
     raw_color = data.get("color", [120, 120, 120])
     color = (int(raw_color[0]), int(raw_color[1]), int(raw_color[2]))
 
-    # ── Type (new) or Flags (legacy) ────────────────────────
-    type_str = data.get("type")
-    if type_str:
-        try:
-            tile_type = TileType(type_str)
-        except ValueError:
-            tile_type = TileType.FLOOR
-        flags = _TYPE_FLAGS.get(tile_type, TF.NONE)
-    else:
-        # Legacy format: infer type from flags array
-        flag_names = data.get("flags", [])
-        legacy_flags = _flags_from_names(flag_names)
-        tile_type = _type_from_flags(legacy_flags)
-        flags = _TYPE_FLAGS.get(tile_type, TF.NONE)
+    type_str = data.get("type", "floor")
+    try:
+        tile_type = TileType(type_str)
+    except ValueError:
+        tile_type = TileType.FLOOR
+    flags = _TYPE_FLAGS.get(tile_type, TF.NONE)
 
-    # Extra flag modifiers (not covered by type)
     if data.get("transparent", False):
         flags |= TF.TRANSPARENT
     if data.get("farmland", False):
         flags |= TF.FARMLAND
 
-    # ── Height (explicit or default from type) ──────────────
     default_h = _TYPE_DEFAULT_HEIGHT.get(tile_type, 1.0)
     height = float(data.get("height", default_h))
 
-    # ── Texture fields ──────────────────────────────────────
-    texture_key = data.get("texture_key", "")
-    # Legacy: old "texture" field that was a string
-    if not texture_key:
-        old_tex = data.get("texture")
-        if isinstance(old_tex, str):
-            texture_key = old_tex
-
-    # face_textures: new dict format or migrated from legacy fields
-    raw_ft = data.get("face_textures")
-    if isinstance(raw_ft, dict):
-        face_textures = tuple(sorted(raw_ft.items()))
-    else:
-        # Migrate legacy front_texture / floor_texture
-        _pairs: list[tuple[str, str]] = []
-        _old_front = data.get("front_texture", "")
-        if _old_front:
-            _pairs.append(("south", _old_front))
-        _old_floor = data.get("floor_texture", "")
-        if _old_floor:
-            _pairs.append(("top", _old_floor))
-        face_textures = tuple(sorted(_pairs))
+    # Directional texture fields
+    texture_key = data.get("texture", "")
+    texture_front = data.get("texture_front", "")
+    texture_back = data.get("texture_back", "")
 
     return TileDef(
         id=tile_key,
@@ -576,40 +591,23 @@ def _parse_tile_json(path: str) -> TileDef | None:
         type=tile_type,
         flags=flags,
         texture_key=texture_key,
-        face_textures=face_textures,
+        texture_front=texture_front,
+        texture_back=texture_back,
         height_scale=height,
         category=data.get("category", "Custom"),
         sound=data.get("sound", "stone"),
     )
 
 
-def _load_categories_json() -> bool:
-    """Load ``assets/tiles/_categories.json``."""
-    path = _os.path.join(_TILES_DIR, "_categories.json")
-    if not _os.path.exists(path):
+def _load_tiles_toml() -> bool:
+    """Load all ``assets/models/tiles/*.toml`` files into TILE_REGISTRY."""
+    if not _os.path.isdir(_TILES_TOML_DIR):
         return False
-    try:
-        with open(path, "r") as f:
-            data = json.load(f)
-        cats: list[str] = data if isinstance(data, list) else []
-        if cats:
-            TILE_CATEGORIES.clear()
-            TILE_CATEGORIES.extend(cats)
-        return True
-    except Exception:
-        return False
-
-
-def _load_tiles_json() -> bool:
-    """Load all ``assets/tiles/*.json`` files into TILE_REGISTRY."""
-    if not _os.path.isdir(_TILES_DIR):
-        return False
-    _load_categories_json()
     loaded = 0
-    for fname in sorted(_os.listdir(_TILES_DIR)):
-        if not fname.endswith(".json") or fname.startswith("_"):
+    for fname in sorted(_os.listdir(_TILES_TOML_DIR)):
+        if not fname.endswith(".toml") or fname.startswith("_"):
             continue
-        td = _parse_tile_json(_os.path.join(_TILES_DIR, fname))
+        td = _parse_tile_toml(_os.path.join(_TILES_TOML_DIR, fname))
         if td is not None:
             TILE_REGISTRY[td.id] = td
             loaded += 1
@@ -619,64 +617,56 @@ def _load_tiles_json() -> bool:
     return True
 
 
-def _save_categories_json() -> None:
-    """Write categories as a plain JSON array."""
-    _os.makedirs(_TILES_DIR, exist_ok=True)
-    path = _os.path.join(_TILES_DIR, "_categories.json")
-    with open(path, "w") as f:
-        json.dump(list(TILE_CATEGORIES), f, indent=2)
-        f.write("\n")
+def _save_tile_toml(td: TileDef) -> str:
+    """Write a single tile definition to its DRY TOML file."""
+    lines: list[str] = []
+    lines.append(f'name = "{td.name}"')
+    lines.append(f'type = "{td.type.value}"')
+    lines.append(f'category = "{td.category}"')
+    lines.append(f'color = [{td.color[0]}, {td.color[1]}, {td.color[2]}]')
 
-
-def _save_tile_json(td: TileDef) -> str:
-    """Write a single tile definition to its DRY JSON file."""
-    out: dict[str, Any] = {
-        "name": td.name,
-        "type": td.type.value,
-        "category": td.category,
-    }
     if td.sound != "stone":
-        out["sound"] = td.sound
-    out["color"] = list(td.color)
-
-    # Extra flags not derived from type
-    if td.flags & TF.TRANSPARENT:
-        out["transparent"] = True
-    if td.flags & TF.FARMLAND:
-        out["farmland"] = True
+        lines.append(f'sound = "{td.sound}"')
 
     # Textures (only when non-default)
     if td.texture_key:
-        out["texture_key"] = td.texture_key
-    if td.face_textures:
-        out["face_textures"] = dict(td.face_textures)
+        lines.append("")
+        lines.append(f'texture = "{td.texture_key}"')
+    if td.texture_front:
+        lines.append(f'texture_front = "{td.texture_front}"')
+    if td.texture_back:
+        lines.append(f'texture_back = "{td.texture_back}"')
+
+    # Extra flags not derived from type
+    if td.flags & TF.TRANSPARENT:
+        lines.append("transparent = true")
+    if td.flags & TF.FARMLAND:
+        lines.append("farmland = true")
 
     # Height (only when different from type default)
     default_h = _TYPE_DEFAULT_HEIGHT.get(td.type, 1.0)
     if td.height_scale != default_h:
-        out["height"] = td.height_scale
+        lines.append(f"height = {td.height_scale}")
 
-    _os.makedirs(_TILES_DIR, exist_ok=True)
-    path = _tile_json_path(td.id)
+    _os.makedirs(_TILES_TOML_DIR, exist_ok=True)
+    path = _tile_toml_path(td.id)
     with open(path, "w") as f:
-        json.dump(out, f, indent=2)
-        f.write("\n")
+        f.write("\n".join(lines) + "\n")
     return path
 
 
 def save_tiles() -> None:
-    """Write ALL tiles and categories to ``assets/tiles/``."""
-    _save_categories_json()
+    """Write ALL tiles to ``assets/models/tiles/``."""
     for td in TILE_REGISTRY.values():
-        _save_tile_json(td)
+        _save_tile_toml(td)
     rebuild_derived()
 
 
 def save_tile(tile_id: str) -> None:
-    """Write a single tile's JSON file."""
+    """Write a single tile's TOML file."""
     td = TILE_REGISTRY.get(tile_id)
     if td:
-        _save_tile_json(td)
+        _save_tile_toml(td)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -700,78 +690,83 @@ def register_tile(
     tile_type: TileType = TileType.FLOOR,
     flags: TF | None = None,
     texture_key: str = "",
-    face_textures: dict[str, str] | None = None,
+    texture_front: str = "",
+    texture_back: str = "",
     height_scale: float | None = None,
     category: str = "Custom",
     sound: str = "stone",
     *,
     tile_key: str = "",
     # Legacy compat kwargs (silently converted)
+    face_textures: dict[str, str] | None = None,
     front_texture: str = "",
-    floor_texture: str = "",
 ) -> TileDef:
-    """Create and register a new tile.  Auto-assigns key, saves JSON."""
+    """Create and register a new tile.  Auto-assigns key, saves TOML."""
     key = tile_key or _next_tile_key(name)
     if flags is None:
         flags = _TYPE_FLAGS.get(tile_type, TF.NONE)
     if height_scale is None:
         height_scale = _TYPE_DEFAULT_HEIGHT.get(tile_type, 1.0)
-    # Build face_textures tuple
-    ft_dict: dict[str, str] = dict(face_textures) if face_textures else {}
-    if front_texture and "south" not in ft_dict:
-        ft_dict["south"] = front_texture
-    if floor_texture and "top" not in ft_dict:
-        ft_dict["top"] = floor_texture
-    ft_pairs = tuple(sorted(ft_dict.items()))
+
+    # Legacy compat: convert face_textures dict to directional fields
+    if face_textures:
+        if not texture_front:
+            texture_front = face_textures.get("south", "")
+        if not texture_back:
+            texture_back = face_textures.get("north", "")
+    if front_texture and not texture_front:
+        texture_front = front_texture
+
     td = TileDef(
         id=key, name=name, color=color, type=tile_type,
         flags=flags, texture_key=texture_key,
-        face_textures=ft_pairs,
+        texture_front=texture_front, texture_back=texture_back,
         height_scale=height_scale,
         category=category, sound=sound,
     )
     TILE_REGISTRY[key] = td
     rebuild_derived()
-    _save_tile_json(td)
-    _save_categories_json()
+    _save_tile_toml(td)
     return td
 
 
 def update_tile(tile_id: str, **kwargs: Any) -> TileDef | None:
-    """Update an existing tile's properties.  Saves JSON."""
+    """Update an existing tile's properties.  Saves TOML."""
     old = TILE_REGISTRY.get(tile_id)
     if old is None:
         return None
-    old_path = _tile_json_path(old.id)
+    old_toml = _tile_toml_path(old.id)
 
     fields: dict[str, Any] = {
         "id": old.id, "name": old.name, "color": old.color,
         "type": old.type, "flags": old.flags,
         "texture_key": old.texture_key,
-        "face_textures": old.face_textures,
+        "texture_front": old.texture_front,
+        "texture_back": old.texture_back,
         "height_scale": old.height_scale, "category": old.category,
         "sound": old.sound,
     }
-    # Accept face_textures as dict → convert to tuple
+
+    # Legacy compat: convert face_textures dict to directional fields
     if "face_textures" in kwargs:
-        v = kwargs.pop("face_textures")
-        if isinstance(v, dict):
-            fields["face_textures"] = tuple(sorted(v.items()))
-        else:
-            fields["face_textures"] = v
-    # Legacy compat
+        ft = kwargs.pop("face_textures")
+        if isinstance(ft, dict):
+            if "south" in ft:
+                fields["texture_front"] = ft["south"]
+            if "north" in ft:
+                fields["texture_back"] = ft["north"]
+        # tuple of pairs
+        elif isinstance(ft, tuple):
+            d = dict(ft)
+            if "south" in d:
+                fields["texture_front"] = d["south"]
+            if "north" in d:
+                fields["texture_back"] = d["north"]
     if "front_texture" in kwargs:
-        ft_d = dict(fields["face_textures"])
-        ft_d["south"] = kwargs.pop("front_texture")
-        if not ft_d["south"]:
-            ft_d.pop("south", None)
-        fields["face_textures"] = tuple(sorted(ft_d.items()))
+        fields["texture_front"] = kwargs.pop("front_texture")
     if "floor_texture" in kwargs:
-        ft_d = dict(fields["face_textures"])
-        ft_d["top"] = kwargs.pop("floor_texture")
-        if not ft_d["top"]:
-            ft_d.pop("top", None)
-        fields["face_textures"] = tuple(sorted(ft_d.items()))
+        kwargs.pop("floor_texture")  # no-op, no longer stored
+
     fields.update(kwargs)
 
     # Re-derive flags when type changes (unless caller explicitly set flags)
@@ -782,19 +777,20 @@ def update_tile(tile_id: str, **kwargs: Any) -> TileDef | None:
     TILE_REGISTRY[td.id] = td
     rebuild_derived()
 
-    new_path = _tile_json_path(td.id)
-    if old_path != new_path and _os.path.exists(old_path):
-        _os.remove(old_path)
-    _save_tile_json(td)
+    new_toml = _tile_toml_path(td.id)
+    # Clean up old TOML if the key changed
+    if old_toml != new_toml and _os.path.exists(old_toml):
+        _os.remove(old_toml)
+    _save_tile_toml(td)
     return td
 
 
 def delete_tile(tile_id: str) -> bool:
-    """Remove a tile from the registry and delete its JSON file."""
+    """Remove a tile from the registry and delete its files."""
     td = TILE_REGISTRY.get(tile_id)
     if td is None:
         return False
-    path = _tile_json_path(td.id)
+    path = _tile_toml_path(td.id)
     if _os.path.exists(path):
         _os.remove(path)
     del TILE_REGISTRY[tile_id]
@@ -803,20 +799,18 @@ def delete_tile(tile_id: str) -> bool:
 
 
 def add_category(name: str) -> None:
-    """Add a new category.  Saves categories JSON."""
+    """Add a new category."""
     if name and name not in TILE_CATEGORIES:
         TILE_CATEGORIES.append(name)
-        _save_categories_json()
 
 
 def remove_category(name: str) -> None:
-    """Remove a category.  Tiles in it become 'Custom'.  Saves JSON."""
+    """Remove a category.  Tiles in it become 'Custom'."""
     if name in TILE_CATEGORIES:
         TILE_CATEGORIES.remove(name)
         for tid, td in list(TILE_REGISTRY.items()):
             if td.category == name:
                 update_tile(tid, category="Custom")
-        _save_categories_json()
 
 
 # ── Backward-compat aliases ──────────────────────────────────────
@@ -850,8 +844,8 @@ def _next_custom_id():
 # ═══════════════════════════════════════════════════════════════════
 
 def _bootstrap() -> None:
-    """Load tiles from JSON files in ``assets/tiles/``."""
-    if _load_tiles_json():
+    """Load tiles from TOML (assets/models/tiles/)."""
+    if _load_tiles_toml():
         return
     # Minimal fallback — shouldn't happen with shipped asset files.
     TILE_REGISTRY["void"] = TileDef(

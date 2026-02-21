@@ -1,0 +1,5 @@
+name = "Carpet"
+type = "floor"
+category = "Floors"
+color = [120, 50, 50]
+sound = "cloth"

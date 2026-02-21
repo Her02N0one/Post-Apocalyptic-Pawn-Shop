@@ -1,9 +1,4 @@
-"""editor/panels.py — Backward-compatible shim.
-
-All panel classes have been split into ``editor/panels_pkg/`` for cleaner
-separation of concerns.  This file re-exports every public name so
-existing ``from editor.panels import …`` statements work unmodified.
-"""
+"""editor/panels.py — Re-exports from panels_pkg for convenience."""
 
 from editor.panels_pkg import (       # noqa: F401
     MenuBar,
@@ -17,6 +12,7 @@ from editor.panels_pkg import (       # noqa: F401
     Minimap,
     StatusBar,
     PanelSplitter,
-    Sidebar,
+    PanelTabs,
     Toolbar,
+    EditorChrome,
 )

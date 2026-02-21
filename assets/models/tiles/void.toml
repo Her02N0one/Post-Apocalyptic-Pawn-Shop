@@ -1,0 +1,4 @@
+name = "Void"
+type = "wall"
+category = "Terrain"
+color = [40, 40, 40]

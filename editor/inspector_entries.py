@@ -27,7 +27,7 @@ import pygame
 
 # ── Base ─────────────────────────────────────────────────────────
 
-@dataclass(slots=True)
+@dataclass()
 class InspectorEntry:
     """Base for every inspector row."""
     x: int
@@ -36,41 +36,41 @@ class InspectorEntry:
 
 # ── Concrete entry types ────────────────────────────────────────
 
-@dataclass(slots=True)
+@dataclass()
 class LabelEntry(InspectorEntry):
     """Bold / accent-coloured heading text."""
     text: str = ""
     color: tuple[int, int, int] = (220, 220, 220)
 
 
-@dataclass(slots=True)
+@dataclass()
 class SectionEntry(InspectorEntry):
     """Section divider — text + horizontal rule underneath."""
     text: str = ""
     w: int = 200
 
 
-@dataclass(slots=True)
+@dataclass()
 class KVEntry(InspectorEntry):
     """Read-only key: value pair."""
     label: str = ""
     value: str = ""
 
 
-@dataclass(slots=True)
+@dataclass()
 class LabeledWidgetEntry(InspectorEntry):
     """Dim label on the left, interactive widget on the right."""
     label: str = ""
     widget: Any = None          # TextField / NumberField / Dropdown / …
 
 
-@dataclass(slots=True)
+@dataclass()
 class WidgetEntry(InspectorEntry):
     """Standalone widget (e.g. Checkbox) that spans the full width."""
     widget: Any = None
 
 
-@dataclass(slots=True)
+@dataclass()
 class EntityRowEntry(InspectorEntry):
     """Clickable row in the entity list."""
     idx: int = -1
@@ -78,28 +78,28 @@ class EntityRowEntry(InspectorEntry):
     prefab: str = ""
 
 
-@dataclass(slots=True)
+@dataclass()
 class ActionButtonEntry(InspectorEntry):
     """Clickable action button (e.g. "Add Component…")."""
     label: str = ""
     w: int = 200
 
 
-@dataclass(slots=True)
+@dataclass()
 class DeleteButtonEntry(InspectorEntry):
     """Red delete button."""
     label: str = ""
     w: int = 200
 
 
-@dataclass(slots=True)
+@dataclass()
 class TexPreviewEntry(InspectorEntry):
     """64×64 texture preview square."""
     tile_id: str = ""
     size: int = 64
 
 
-@dataclass(slots=True)
+@dataclass()
 class ColorSwatchEntry(InspectorEntry):
     """Small colour swatch square."""
     color: tuple[int, int, int] = (128, 128, 128)

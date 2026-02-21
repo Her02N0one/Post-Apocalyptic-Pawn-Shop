@@ -1,0 +1,5 @@
+name = "Stone Platform"
+type = "platform"
+category = "Platforms"
+color = [140, 135, 125]
+height = 0.45

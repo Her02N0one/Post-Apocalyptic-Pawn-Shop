@@ -3,23 +3,23 @@
 Reuses the game's rendering pipeline (``scenes.world.fp_renderer.Renderer``,
 ``systems.raycaster.cast_walls``) instead of duplicating DDA / texture code.
 
-Render modes:
+See FP_EDITOR_DESIGN.md for the full design spec.
+
+Modes:
   * **PIP** (``P`` key) -- small raycaster overlay in the top-right corner.
-  * **Full-screen edit** (``Tab`` while PIP is open) -- takes over the
-    entire canvas area.
+  * **Fullscreen edit** (``F`` or ``Tab``) -- Minecraft-creative-style editing.
 
-Editing controls (full-screen only):
-  * Left-click:  paint tile onto the aimed wall/floor.
-  * Right-click: eyedropper -- pick the tile you're looking at.
-  * Middle-click: erase (paint erase_tile).
-  * Scroll: cycle selected tile.
-  * Ctrl+Z / Ctrl+Y: undo / redo.
-  * Mouse-look: always on in fullscreen.
-  * WASD: move.  Esc: back to PIP.
-
-Ghost-block preview: when aiming at a wall, the adjacent empty cell
-is highlighted with a translucent tinted column so you can see where
-a new block would be placed before clicking.
+Fullscreen controls:
+  * Look: mouse (grabbed)
+  * Move: WASD, Shift=sprint
+  * Left-click: place tile (ghost cell for walls, target cell for floors)
+  * Right-click: eyedropper (pick tile -> current hotbar slot)
+  * Middle-click: erase
+  * Scroll / 1-0: cycle / select hotbar slot
+  * T: tile picker overlay
+  * C: noclip toggle
+  * Ctrl+Z / Ctrl+Y: undo / redo
+  * Esc: exit to PIP
 """
 
 from __future__ import annotations
@@ -29,8 +29,10 @@ from typing import TYPE_CHECKING
 
 import pygame
 
-from core.tiles import tile_def, TF, TILE_REGISTRY
+from core.fonts import get_font
+from core.tiles import tile_def, TF, TILE_REGISTRY, tiles_by_category
 from systems.raycaster import cast_walls, project_entities, WallSlice
+from systems.textures import TextureAtlas
 from scenes.world.fp_renderer import Renderer, FOV
 from scenes.world.fp_lighting import compute_fog_params
 from editor.ui import Theme, draw_text
@@ -43,17 +45,25 @@ if TYPE_CHECKING:
 # =====================================================================
 
 MAX_DEPTH = 24.0
-RAY_STEP = 4               # match the game renderer
-TURN_SPEED = 2.5            # rad/s (keyboard turning)
+RAY_STEP = 4
+TURN_SPEED = 2.5            # rad/s (PIP keyboard turning)
 MOVE_SPEED = 4.0            # tiles/s
-MOUSE_SENS = 0.003          # mouse-look sensitivity (rad/px)
+SPRINT_MULT = 2.0           # sprint multiplier
+MOUSE_SENS = 0.003          # rad/px
 
-# Day/night factor for editor (always bright daylight)
-_EDITOR_DN = 1.0
+_EDITOR_DN = 1.0            # always daylight
+
+# Hotbar defaults -- sensible starting tile set
+_DEFAULT_HOTBAR = [
+    "wall", "brick_wall", "stone", "grass", "concrete",
+    "door", "wood_floor", "carpet", "sand", "void",
+]
+
+HOTBAR_SLOTS = 10
 
 
 # =====================================================================
-#  FP Preview
+#  FPPreview
 # =====================================================================
 
 class FPPreview:
@@ -71,27 +81,53 @@ class FPPreview:
         self.px: float = 15.0
         self.py: float = 10.0
         self.angle: float = 0.0
-        # Speed
+        # Input
         self._keys_held: set[int] = set()
-        # Mouse-look state
         self._looking: bool = False
-        # Crosshair target (updated each frame)
+        # Crosshair target
         self._target_tile: str | None = None
         self._target_rc: tuple[int, int] | None = None
         self._target_dist: float = 0.0
-        # Ghost placement: the empty cell adjacent to crosshair wall
+        self._target_is_wall: bool = False      # True if ray hit a wall
+        # Ghost cell (where left-click will paint)
         self._ghost_rc: tuple[int, int] | None = None
-        # Shared game renderer (lazy-init)
+        # Noclip
+        self.noclip: bool = True
+        # Hotbar (10 tile slots)
+        self.hotbar: list[str] = list(_DEFAULT_HOTBAR)
+        self._sanitize_hotbar()
+        self.hotbar_slot: int = 0
+        # Tile picker overlay
+        self.tile_picker_open: bool = False
+        self._picker_cats: list[tuple[str, list]] | None = None
+        self._picker_scroll: float = 0.0
+        self._picker_hover: str | None = None
+        # Renderer
         self._renderer: Renderer | None = None
-        # Cached render target -- avoids re-alloc each frame
         self._rt: pygame.Surface | None = None
         self._rt_size: tuple[int, int] = (0, 0)
-        # Cached fog_lut for editor daylight
         self._fog_rate: int = 0
         self._fog_lut: list[int] = []
         self._fog_ready = False
+        # Texture atlas for ghost previews + hotbar
+        self._atlas: TextureAtlas | None = None
 
-    # -- lazy init ----------------------------------------------------
+    # -- helpers ------------------------------------------------------
+
+    def _sanitize_hotbar(self):
+        """Ensure all hotbar slots have valid tile IDs."""
+        keys = set(TILE_REGISTRY.keys())
+        fallback = "grass" if "grass" in keys else next(iter(keys), "void")
+        for i in range(HOTBAR_SLOTS):
+            if i >= len(self.hotbar):
+                self.hotbar.append(fallback)
+            elif self.hotbar[i] not in keys:
+                self.hotbar[i] = fallback
+
+    @property
+    def selected_tile(self) -> str:
+        """The tile currently selected via the hotbar."""
+        return self.hotbar[self.hotbar_slot]
 
     def _ensure_renderer(self) -> Renderer:
         if self._renderer is None:
@@ -110,19 +146,31 @@ class FPPreview:
             self._rt_size = (w, h)
         return self._rt
 
+    def _get_atlas(self) -> TextureAtlas:
+        if self._atlas is None:
+            self._atlas = TextureAtlas()
+        return self._atlas
+
+    def _get_picker_cats(self) -> list[tuple[str, list]]:
+        """Lazily build the tile picker category list."""
+        if self._picker_cats is None:
+            self._picker_cats = [
+                (cat, tds)
+                for cat, tds in tiles_by_category().items()
+                if tds
+            ]
+        return self._picker_cats
+
     # -- public API ---------------------------------------------------
 
     def toggle(self):
-        """Toggle PIP on/off.  Turning PIP off also disables fullscreen."""
+        """Toggle PIP on/off."""
         if self.active:
             self.active = False
             self.fullscreen = False
+            self.tile_picker_open = False
             self._looking = False
-            try:
-                pygame.event.set_grab(False)
-                pygame.mouse.set_visible(True)
-            except pygame.error:
-                pass
+            self._ungrab()
         else:
             self.active = True
             self.fullscreen = False
@@ -132,61 +180,74 @@ class FPPreview:
         if not self.active:
             return
         self.fullscreen = not self.fullscreen
+        self.tile_picker_open = False
+        if self.fullscreen:
+            self._grab()
+        else:
+            self._ungrab()
+
+    def enter_fullscreen(self):
+        """Activate FP and go straight to fullscreen."""
+        self.active = True
+        self.fullscreen = True
+        self.tile_picker_open = False
+        self._grab()
+
+    def sync_to_anchor(self, anchor: tuple[float, float]):
+        self.px, self.py = anchor
+
+    def sync_selected_tile(self, state: "EditorState"):
+        """Sync hotbar active slot with EditorState.selected_tile."""
+        state.selected_tile = self.selected_tile
+
+    def _grab(self):
         try:
-            if self.fullscreen:
-                pygame.event.set_grab(True)
-                pygame.mouse.set_visible(False)
-            else:
-                pygame.event.set_grab(False)
-                pygame.mouse.set_visible(True)
-                self._looking = False
+            pygame.event.set_grab(True)
+            pygame.mouse.set_visible(False)
         except pygame.error:
             pass
 
-    def sync_to_anchor(self, anchor: tuple[float, float]):
-        """Set camera position from the editor anchor."""
-        self.px, self.py = anchor
+    def _ungrab(self):
+        try:
+            pygame.event.set_grab(False)
+            pygame.mouse.set_visible(True)
+        except pygame.error:
+            pass
+        self._looking = False
 
-    # -- event handling -----------------------------------------------
+    # =================================================================
+    #  Event handling
+    # =================================================================
 
     def handle_event(self, event: pygame.event.Event,
                      state: "EditorState | None" = None) -> bool:
-        """Process events.  Returns True if consumed."""
         if not self.active:
             return False
+
+        # Tile picker overlay captures all input when open
+        if self.tile_picker_open and self.fullscreen:
+            return self._handle_picker_event(event, state)
 
         # -- KEYDOWN --------------------------------------------------
         if event.type == pygame.KEYDOWN:
             self._keys_held.add(event.key)
+
             if event.key == pygame.K_ESCAPE:
                 if self.fullscreen:
                     self.fullscreen = False
-                    try:
-                        pygame.event.set_grab(False)
-                        pygame.mouse.set_visible(True)
-                    except pygame.error:
-                        pass
-                    self._looking = False
+                    self._ungrab()
                 else:
                     self.active = False
                 return True
+
             if event.key == pygame.K_TAB:
                 self.toggle_fullscreen()
                 return True
 
-            # Fullscreen editor shortcuts
             if self.fullscreen and state is not None:
-                mods = pygame.key.get_mods()
-                ctrl = mods & pygame.KMOD_CTRL
-                if ctrl and event.key == pygame.K_z:
-                    state.undo()
-                    state.toast("Undo")
-                    return True
-                if ctrl and event.key == pygame.K_y:
-                    state.redo()
-                    state.toast("Redo")
-                    return True
+                return self._handle_fullscreen_key(event, state)
 
+            # PIP: consume movement keys
             return event.key in (pygame.K_w, pygame.K_a,
                                  pygame.K_s, pygame.K_d,
                                  pygame.K_LEFT, pygame.K_RIGHT)
@@ -195,65 +256,205 @@ class FPPreview:
             self._keys_held.discard(event.key)
             return False
 
-        # -- Fullscreen-only events -----------------------------------
+        # -- Fullscreen mouse events ----------------------------------
         if self.fullscreen and state is not None:
-            if event.type == pygame.MOUSEMOTION:
-                dx, _dy = event.rel
-                self.angle += dx * MOUSE_SENS
-                return True
-
-            # Left-click = paint selected tile
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if self._target_rc:
-                    r, c = self._target_rc
-                    state.push_undo()
-                    state.tiles[r][c] = state.selected_tile
-                    state.dirty = True
-                    state.toast(f"Painted {state.selected_tile}")
-                return True
-
-            # Right-click = eyedropper
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
-                if self._target_tile:
-                    state.selected_tile = self._target_tile
-                    state.toast(f"Picked: {self._target_tile}")
-                return True
-
-            # Middle-click = erase
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 2:
-                if self._target_rc:
-                    r, c = self._target_rc
-                    state.push_undo()
-                    state.tiles[r][c] = state.erase_tile
-                    state.dirty = True
-                    state.toast(f"Erased -> {state.erase_tile}")
-                return True
-
-            # Scroll = cycle through tiles
-            if event.type == pygame.MOUSEWHEEL:
-                ids = list(TILE_REGISTRY.keys())
-                if ids:
-                    try:
-                        idx = ids.index(state.selected_tile)
-                    except ValueError:
-                        idx = 0
-                    idx = (idx + event.y) % len(ids)
-                    state.selected_tile = ids[idx]
-                    state.toast(f"Tile: {state.selected_tile}")
-                return True
+            return self._handle_fullscreen_mouse(event, state)
 
         return False
 
-    # -- update -------------------------------------------------------
+    # -- fullscreen key handler ---------------------------------------
+
+    def _handle_fullscreen_key(self, event: pygame.event.Event,
+                                state: "EditorState") -> bool:
+        key = event.key
+        mods = pygame.key.get_mods()
+        ctrl = mods & pygame.KMOD_CTRL
+
+        # Undo / redo
+        if ctrl and key == pygame.K_z:
+            state.undo()
+            state.toast("Undo")
+            return True
+        if ctrl and key == pygame.K_y:
+            state.redo()
+            state.toast("Redo")
+            return True
+
+        # Noclip
+        if key == pygame.K_c:
+            self.noclip = not self.noclip
+            state.toast(f"Noclip: {'ON' if self.noclip else 'OFF'}")
+            return True
+
+        # Rotation
+        if key == pygame.K_r:
+            _DIRS = ("N", "E", "S", "W")
+            state.pending_rotation = (state.pending_rotation + 1) % 4
+            state.toast(f"Rotation: {_DIRS[state.pending_rotation]}")
+            return True
+
+        # Tile picker
+        if key == pygame.K_t:
+            self.tile_picker_open = True
+            self._picker_scroll = 0.0
+            self._picker_hover = None
+            # Ungrab mouse so user can click the picker
+            self._ungrab()
+            pygame.mouse.set_visible(True)
+            return True
+
+        # Number keys -> hotbar slot selection
+        if pygame.K_1 <= key <= pygame.K_9:
+            slot = key - pygame.K_1  # 0-8
+            self._set_hotbar_slot(slot, state)
+            return True
+        if key == pygame.K_0:
+            self._set_hotbar_slot(9, state)
+            return True
+
+        # Movement keys consumed
+        return key in (pygame.K_w, pygame.K_a, pygame.K_s, pygame.K_d,
+                       pygame.K_LSHIFT, pygame.K_RSHIFT)
+
+    # -- fullscreen mouse handler -------------------------------------
+
+    def _handle_fullscreen_mouse(self, event: pygame.event.Event,
+                                  state: "EditorState") -> bool:
+        if event.type == pygame.MOUSEMOTION:
+            dx, _dy = event.rel
+            self.angle += dx * MOUSE_SENS
+            return True
+
+        # Left-click = PLACE
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            self._do_place(state)
+            return True
+
+        # Right-click = EYEDROPPER
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+            self._do_eyedropper(state)
+            return True
+
+        # Middle-click = ERASE
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 2:
+            self._do_erase(state)
+            return True
+
+        # Scroll = cycle hotbar slot
+        if event.type == pygame.MOUSEWHEEL:
+            new_slot = (self.hotbar_slot - event.y) % HOTBAR_SLOTS
+            self._set_hotbar_slot(new_slot, state)
+            return True
+
+        return False
+
+    # -- tile picker event handler ------------------------------------
+
+    def _handle_picker_event(self, event: pygame.event.Event,
+                              state: "EditorState | None") -> bool:
+        if event.type == pygame.KEYDOWN:
+            self._keys_held.add(event.key)
+            if event.key in (pygame.K_ESCAPE, pygame.K_t):
+                self._close_picker()
+                return True
+            return True
+
+        if event.type == pygame.KEYUP:
+            self._keys_held.discard(event.key)
+            return True
+
+        if event.type == pygame.MOUSEWHEEL:
+            self._picker_scroll -= event.y * 30
+            self._picker_scroll = max(0, self._picker_scroll)
+            return True
+
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self._picker_hover:
+                self.hotbar[self.hotbar_slot] = self._picker_hover
+                if state:
+                    state.selected_tile = self._picker_hover
+                    td = tile_def(self._picker_hover)
+                    state.toast(f"Slot {self.hotbar_slot + 1}: {td.name}")
+                self._close_picker()
+            return True
+
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+            # Right-click closes picker too
+            self._close_picker()
+            return True
+
+        return True  # absorb all events while picker is open
+
+    def _close_picker(self):
+        self.tile_picker_open = False
+        self._picker_hover = None
+        if self.fullscreen:
+            self._grab()
+
+    # -- hotbar slot ---------------------------------------------------
+
+    def _set_hotbar_slot(self, slot: int, state: "EditorState"):
+        self.hotbar_slot = slot % HOTBAR_SLOTS
+        tile_id = self.hotbar[self.hotbar_slot]
+        state.selected_tile = tile_id
+        td = tile_def(tile_id)
+        state.toast(f"[{self.hotbar_slot + 1}] {td.name}")
+
+    # -- placement actions --------------------------------------------
+
+    def _do_place(self, state: "EditorState"):
+        """Left-click: place at ghost cell (walls) or target cell (floor)."""
+        if self._target_is_wall and self._ghost_rc:
+            r, c = self._ghost_rc
+        elif self._target_rc:
+            r, c = self._target_rc
+        else:
+            return
+
+        tile_id = self.selected_tile
+        state.push_undo()
+        state.tiles[r][c] = tile_id
+        if state.rotations and 0 <= r < len(state.rotations) and 0 <= c < len(state.rotations[0]):
+            state.rotations[r][c] = state.pending_rotation
+        state.dirty = True
+        td = tile_def(tile_id)
+        state.toast(f"Placed {td.name} at [{r},{c}]")
+
+    def _do_eyedropper(self, state: "EditorState"):
+        """Right-click: pick the aimed tile into the current hotbar slot."""
+        if self._target_tile:
+            self.hotbar[self.hotbar_slot] = self._target_tile
+            state.selected_tile = self._target_tile
+            td = tile_def(self._target_tile)
+            state.toast(f"Picked: {td.name} -> slot {self.hotbar_slot + 1}")
+
+    def _do_erase(self, state: "EditorState"):
+        """Middle-click: erase the aimed cell."""
+        if self._target_rc:
+            r, c = self._target_rc
+            state.push_undo()
+            state.tiles[r][c] = state.erase_tile
+            if state.rotations and 0 <= r < len(state.rotations) and 0 <= c < len(state.rotations[0]):
+                state.rotations[r][c] = 0
+            state.dirty = True
+            state.toast(f"Erased [{r},{c}]")
+
+    # =================================================================
+    #  Update (movement + crosshair)
+    # =================================================================
 
     def update(self, dt: float, tiles: list[list[str]],
                map_w: int, map_h: int):
-        """Move camera and update crosshair target."""
         if not self.active:
             return
+
+        # Don't move while picker is open
+        if self.tile_picker_open:
+            return
+
         keys = self._keys_held
 
-        # Keyboard turn (non-fullscreen and fallback)
+        # PIP keyboard turning
         if not self.fullscreen:
             if pygame.K_LEFT in keys:
                 self.angle -= TURN_SPEED * dt
@@ -261,34 +462,40 @@ class FPPreview:
                 self.angle += TURN_SPEED * dt
 
         # Movement
+        speed = MOVE_SPEED
+        if pygame.K_LSHIFT in keys or pygame.K_RSHIFT in keys:
+            speed *= SPRINT_MULT
+
         dx, dy = 0.0, 0.0
         if pygame.K_w in keys:
-            dx += math.cos(self.angle) * MOVE_SPEED * dt
-            dy += math.sin(self.angle) * MOVE_SPEED * dt
+            dx += math.cos(self.angle) * speed * dt
+            dy += math.sin(self.angle) * speed * dt
         if pygame.K_s in keys:
-            dx -= math.cos(self.angle) * MOVE_SPEED * dt
-            dy -= math.sin(self.angle) * MOVE_SPEED * dt
+            dx -= math.cos(self.angle) * speed * dt
+            dy -= math.sin(self.angle) * speed * dt
         if pygame.K_a in keys:
-            dx += math.sin(self.angle) * MOVE_SPEED * dt
-            dy -= math.cos(self.angle) * MOVE_SPEED * dt
+            dx += math.sin(self.angle) * speed * dt
+            dy -= math.cos(self.angle) * speed * dt
         if pygame.K_d in keys:
-            dx -= math.sin(self.angle) * MOVE_SPEED * dt
-            dy += math.cos(self.angle) * MOVE_SPEED * dt
+            dx -= math.sin(self.angle) * speed * dt
+            dy += math.cos(self.angle) * speed * dt
 
-        # Collision
         nx, ny = self.px + dx, self.py + dy
-        margin = 0.2
-        if self._passable(nx, self.py, tiles, map_w, map_h, margin):
-            self.px = nx
-        if self._passable(self.px, ny, tiles, map_w, map_h, margin):
-            self.py = ny
+        if self.noclip:
+            self.px, self.py = nx, ny
+        else:
+            margin = 0.2
+            if self._passable(nx, self.py, tiles, map_w, map_h, margin):
+                self.px = nx
+            if self._passable(self.px, ny, tiles, map_w, map_h, margin):
+                self.py = ny
 
-        # Update crosshair target via DDA (single centre ray)
         self._update_crosshair(tiles, map_w, map_h)
+
+    # -- crosshair / DDA ---------------------------------------------
 
     def _update_crosshair(self, tiles: list[list[str]],
                            map_w: int, map_h: int):
-        """Cast a single centre ray to find the aimed tile + ghost cell."""
         cos_c = math.cos(self.angle)
         sin_c = math.sin(self.angle)
         eps = 1e-9
@@ -338,6 +545,7 @@ class FPPreview:
                 break
 
         if hit:
+            # Ray hit a wall
             if side == 0:
                 dist = (mx - self.px + (1 - step_x) / 2) / cos_c
             else:
@@ -345,7 +553,8 @@ class FPPreview:
             self._target_dist = abs(dist)
             self._target_tile = tiles[my][mx]
             self._target_rc = (my, mx)
-            # Ghost = empty cell just before the wall
+            self._target_is_wall = True
+            # Ghost = the empty cell just before the wall
             if 0 <= prev_my < map_h and 0 <= prev_mx < map_w:
                 prev_td = tile_def(tiles[prev_my][prev_mx])
                 if not (prev_td.flags & (TF.WALL | TF.SOLID)):
@@ -355,15 +564,26 @@ class FPPreview:
             else:
                 self._ghost_rc = None
         else:
+            # Looking at open floor -- target the cell ~2 tiles ahead
             self._target_dist = MAX_DEPTH
-            fr, fc = int(self.py), int(self.px)
-            if 0 <= fr < map_h and 0 <= fc < map_w:
-                self._target_tile = tiles[fr][fc]
-                self._target_rc = (fr, fc)
+            self._target_is_wall = False
+            ahead_x = int(self.px + cos_c * 2.0)
+            ahead_y = int(self.py + sin_c * 2.0)
+            if (0 <= ahead_y < map_h and 0 <= ahead_x < map_w):
+                self._target_tile = tiles[ahead_y][ahead_x]
+                self._target_rc = (ahead_y, ahead_x)
+                self._ghost_rc = (ahead_y, ahead_x)
             else:
-                self._target_tile = None
-                self._target_rc = None
-            self._ghost_rc = None
+                # Fallback to cell under feet
+                fr, fc = int(self.py), int(self.px)
+                if 0 <= fr < map_h and 0 <= fc < map_w:
+                    self._target_tile = tiles[fr][fc]
+                    self._target_rc = (fr, fc)
+                    self._ghost_rc = (fr, fc)
+                else:
+                    self._target_tile = None
+                    self._target_rc = None
+                    self._ghost_rc = None
 
     # -- collision ----------------------------------------------------
 
@@ -382,52 +602,49 @@ class FPPreview:
                     return False
         return True
 
-    # -- rendering ----------------------------------------------------
+    # =================================================================
+    #  Rendering
+    # =================================================================
 
     def draw(self, surface: pygame.Surface,
              tiles: list[list[str]], map_w: int, map_h: int,
              rect: pygame.Rect,
              selected_tile: str | None = None,
-             entities: list | None = None):
-        """Render the first-person view into *rect*.
-
-        Uses the game's ``Renderer`` for textured walls, floor/ceiling,
-        and visplanes.  Entity billboards are projected from the
-        editor's ``EntityDef`` list.
-
-        *selected_tile* is used in fullscreen mode for the HUD.
-        *entities* is the editor's list[EntityDef] for billboard
-        rendering (optional).
-        """
+             entities: list | None = None,
+             rotations: list[list[int]] | None = None,
+             pending_rotation: int = 0):
         if not self.active:
             return
+
+        # Stash for sub-methods (ghost preview, HUD)
+        self._pending_rotation = pending_rotation
 
         renderer = self._ensure_renderer()
         fog_lut = self._ensure_fog()
         vw, vh = rect.w, rect.h
         half = vh // 2
 
-        # Render to an offscreen surface at rect size, then blit
         rt = self._get_rt(vw, vh)
 
-        # 1. Floor + ceiling (uses the game's textured floor renderer)
+        # 1. Floor + ceiling
         renderer.draw_floor_ceiling(
             rt, vw, vh, half,
             self.px, self.py, self.angle,
             fog_lut, _EDITOR_DN, FOV,
             tiles, map_w, map_h,
-            True,  # is_interior (use indoor ceiling)
+            True,
         )
 
-        # 2. Textured walls (game's full pipeline)
+        # 2. Textured walls
         slices, plat_col, zbuf_full, deferred_halves = renderer.draw_walls(
             rt, vw, vh, half,
             self.px, self.py,
             self.angle, FOV,
             tiles, fog_lut, _EDITOR_DN,
+            rotations,
         )
 
-        # 3. Visplane tops (platforms)
+        # 3. Visplane tops
         renderer.draw_visplane_tops(
             rt, vw, vh, half,
             self.px, self.py,
@@ -436,19 +653,23 @@ class FPPreview:
             tiles, map_w, map_h,
         )
 
-        # 4. Entity billboards (from editor EntityDef list)
+        # 4. Entity billboards
         if entities:
             self._draw_editor_entities(
                 rt, vw, vh, half, entities, zbuf_full)
 
-        # 5. Ghost block preview
-        if self.fullscreen and self._ghost_rc and selected_tile:
-            self._draw_ghost(rt, vw, vh, half, selected_tile)
+        # 5. Ghost block preview (fullscreen only)
+        if self.fullscreen and self._ghost_rc:
+            tile_id = self.selected_tile
+            if self._target_is_wall:
+                self._draw_ghost_wall(rt, vw, vh, half, tile_id)
+            else:
+                self._draw_ghost_floor(rt, vw, vh, half, tile_id)
 
-        # Blit the render target onto the output surface
+        # Blit render target
         surface.blit(rt, (rect.x, rect.y))
 
-        # 6. Crosshair (drawn on the output surface directly)
+        # 6. Crosshair
         cx, cy = rect.centerx, rect.centery
         cross_col = (200, 200, 200)
         if self.fullscreen and self._target_tile:
@@ -456,19 +677,20 @@ class FPPreview:
             cross_col = tuple(min(255, c + 60) for c in td.color)
         _draw_crosshair(surface, cx, cy, cross_col)
 
-        # 7. Info overlay / HUD
+        # 7. HUD
         from editor.layout import Layout as _L
-        font_sm = pygame.font.SysFont("monospace",
-                                      max(9, round(11 * _L.scale)))
+        font_sm = get_font(max(9, round(11 * _L.scale)))
         if self.fullscreen:
-            self._draw_fullscreen_hud(surface, rect, font_sm, selected_tile)
+            self._draw_fullscreen_hud(surface, rect, font_sm)
+            if self.tile_picker_open:
+                self._draw_tile_picker(surface, rect, font_sm)
         else:
             draw_text(surface, f"FP Preview  ({self.px:.1f}, {self.py:.1f})",
                       rect.x + 4, rect.y + 4, Theme.ACCENT, font_sm)
             draw_text(surface, "WASD=Move  Arrows=Turn  Tab=Edit  Esc=Close",
                       rect.x + 4, rect.y + 16, Theme.TEXT_DIM, font_sm)
 
-    # -- entity billboards from editor defs ---------------------------
+    # -- entity billboards --------------------------------------------
 
     def _draw_editor_entities(
         self,
@@ -477,7 +699,6 @@ class FPPreview:
         entities: list,
         zbuf: list[float],
     ):
-        """Project editor EntityDef objects as simple billboards."""
         from editor.entity_defs import EntityDef
         ent_data: list[tuple] = []
         for i, ent in enumerate(entities):
@@ -496,50 +717,37 @@ class FPPreview:
         billboards = project_entities(
             self.px, self.py, self.angle, FOV, sw, sh, ent_data)
 
-        font_cache: dict[int, pygame.font.Font] = {}
         for bb in billboards:
             if bb.distance > MAX_DEPTH:
                 continue
-
-            # Depth test against wall zbuffer
             scx = int(bb.screen_x)
             if 0 <= scx < sw and bb.distance > zbuf[scx]:
                 continue
 
-            bx = int(bb.screen_x - bb.width * 0.5)
-            by = int(bb.screen_y)
-            bw = max(1, bb.width)
             bh = max(1, bb.height)
-
-            # Fog
             fog = max(0.15, 1.0 - bb.distance / MAX_DEPTH)
             col = tuple(int(c * fog) for c in bb.color)
 
-            # Simple glyph rendering
             font_size = max(8, min(48, bh))
             font_size = (font_size // 2) * 2
-            if font_size not in font_cache:
-                font_cache[font_size] = pygame.font.SysFont(
-                    "monospace", font_size)
-            font = font_cache[font_size]
+            font = get_font(font_size)
 
             glyph = font.render(bb.char, True, col)
             gx = int(bb.screen_x - glyph.get_width() * 0.5)
-            gy = by + (bh - glyph.get_height()) // 2
+            gy = int(bb.screen_y) + (bh - glyph.get_height()) // 2
             surface.blit(glyph, (gx, gy))
 
-    # -- ghost block preview ------------------------------------------
+    # -- ghost preview: wall placement --------------------------------
 
-    def _draw_ghost(self, surface: pygame.Surface,
-                    sw: int, sh: int, half: int,
-                    tile_id: str):
-        """Draw a translucent tinted column at the ghost cell position."""
+    def _draw_ghost_wall(self, surface: pygame.Surface,
+                         sw: int, sh: int, half: int,
+                         tile_id: str):
+        """Translucent textured column at the ghost cell (wall placement)."""
         gr, gc = self._ghost_rc  # type: ignore[misc]
-        # Project the ghost cell centre into screen space
-        cx = gc + 0.5
-        cy = gr + 0.5
-        dx = cx - self.px
-        dy = cy - self.py
+        cx_w = gc + 0.5
+        cy_w = gr + 0.5
+        dx = cx_w - self.px
+        dy = cy_w - self.py
 
         dir_x = math.cos(self.angle)
         dir_y = math.sin(self.angle)
@@ -556,45 +764,145 @@ class FPPreview:
         ty = inv_det * (-plane_y * dx + plane_x * dy)
 
         if ty <= 0.1:
-            return  # behind camera
+            return
 
         sx = int(sw * 0.5 * (1.0 + tx / ty))
         wall_h = sh / ty
-        col_top = int(half - wall_h * 0.5)
-        col_bot = int(half + wall_h * 0.5)
-
-        # Clamp
-        col_top = max(0, col_top)
-        col_bot = min(sh, col_bot)
+        col_top = max(0, int(half - wall_h * 0.5))
+        col_bot = min(sh, int(half + wall_h * 0.5))
         if col_bot <= col_top:
             return
 
-        col_w = max(1, int(wall_h * 0.5))
+        col_w = max(1, int(sw / (2.0 * ty * plane_scale)))
         x0 = sx - col_w // 2
-        x1 = x0 + col_w
-
-        # Get tile colour for the ghost tint
-        td = tile_def(tile_id)
-        ghost_color = tuple(min(255, c + 40) for c in td.color)
-
-        # Draw translucent overlay
-        gw = max(1, x1 - x0)
+        gw = max(1, col_w)
         gh = col_bot - col_top
-        ghost_surf = pygame.Surface((gw, gh), pygame.SRCALPHA)
-        ghost_surf.fill((*ghost_color, 80))
-        surface.blit(ghost_surf, (max(0, x0), col_top))
+
+        # Render actual tile texture (rotation-aware)
+        td = tile_def(tile_id)
+        atlas = self._get_atlas()
+        rot = getattr(self, '_pending_rotation', 0)
+        # Pick face from angle: the ghost is ahead of us, so we see
+        # the face that points back at the camera.
+        dx_n = math.cos(self.angle)
+        dy_n = math.sin(self.angle)
+        if abs(dx_n) > abs(dy_n):
+            ghost_face = "west" if dx_n > 0 else "east"
+        else:
+            ghost_face = "north" if dy_n > 0 else "south"
+        tex_key = td.tex_for_face(ghost_face, rot)
+        tex_surf = atlas.get(tex_key)
+
+        try:
+            scaled = pygame.transform.scale(tex_surf, (gw, gh))
+        except (pygame.error, ValueError):
+            return
+
+        # Pulsing alpha
+        t = pygame.time.get_ticks() / 800.0
+        alpha = int(130 + 40 * math.sin(t))
+        scaled.set_alpha(alpha)
+
+        bx = max(0, x0)
+        if x0 < 0:
+            crop = pygame.Rect(-x0, 0, gw + x0, gh)
+            surface.blit(scaled, (0, col_top), crop)
+        else:
+            surface.blit(scaled, (bx, col_top))
 
         # Outline
-        outline_rect = pygame.Rect(max(0, x0), col_top, gw, gh)
-        pygame.draw.rect(surface, (*ghost_color, 160), outline_rect, 1)
+        ghost_color = tuple(min(255, c + 60) for c in td.color)
+        pulse = int(140 + 60 * math.sin(t))
+        outline = pygame.Surface((gw, gh), pygame.SRCALPHA)
+        pygame.draw.rect(outline, (*ghost_color, pulse),
+                         pygame.Rect(0, 0, gw, gh), 2)
+        if x0 < 0:
+            crop = pygame.Rect(-x0, 0, gw + x0, gh)
+            surface.blit(outline, (0, col_top), crop)
+        else:
+            surface.blit(outline, (bx, col_top))
 
-    # -- HUD ----------------------------------------------------------
+        # Label
+        from editor.layout import Layout as _L
+        lbl_font = get_font(max(8, round(10 * _L.scale)))
+        lbl = lbl_font.render(td.name[:12], True, ghost_color)
+        lx = sx - lbl.get_width() // 2
+        ly = col_top - lbl.get_height() - 2
+        if ly >= 0:
+            surface.blit(lbl, (lx, ly))
+
+    # -- ghost preview: floor placement -------------------------------
+
+    def _draw_ghost_floor(self, surface: pygame.Surface,
+                          sw: int, sh: int, half: int,
+                          tile_id: str):
+        """Translucent floor highlight at the ghost cell (floor painting)."""
+        gr, gc = self._ghost_rc  # type: ignore[misc]
+
+        td = tile_def(tile_id)
+        ghost_color = tuple(min(255, c + 60) for c in td.color)
+        t = pygame.time.get_ticks() / 800.0
+
+        # Project the 4 corners of the floor cell
+        dir_x = math.cos(self.angle)
+        dir_y = math.sin(self.angle)
+        plane_scale = math.tan(FOV * 0.5)
+        plane_x = -dir_y * plane_scale
+        plane_y = dir_x * plane_scale
+
+        det = plane_x * dir_y - dir_x * plane_y
+        if abs(det) < 1e-10:
+            return
+        inv_det = 1.0 / det
+
+        corners = [
+            (gc + 0.0, gr + 0.0),
+            (gc + 1.0, gr + 0.0),
+            (gc + 1.0, gr + 1.0),
+            (gc + 0.0, gr + 1.0),
+        ]
+        screen_pts: list[tuple[int, int]] = []
+        for wx, wy in corners:
+            dx = wx - self.px
+            dy = wy - self.py
+            tx = inv_det * (dir_y * dx - dir_x * dy)
+            ty = inv_det * (-plane_y * dx + plane_x * dy)
+            if ty <= 0.05:
+                return  # corner behind camera -- skip entire quad
+            scr_x = int(sw * 0.5 * (1.0 + tx / ty))
+            # Floor is at the base of walls (bottom horizon line)
+            floor_screen_y = int(half + (sh * 0.5) / ty)
+            screen_pts.append((scr_x, floor_screen_y))
+
+        if len(screen_pts) < 3:
+            return
+
+        # Draw filled polygon with tile color tint
+        alpha = int(100 + 40 * math.sin(t))
+        poly_surf = pygame.Surface((sw, sh), pygame.SRCALPHA)
+        pygame.draw.polygon(poly_surf, (*ghost_color, alpha), screen_pts)
+        pulse = int(180 + 60 * math.sin(t))
+        pygame.draw.polygon(poly_surf, (*ghost_color, pulse), screen_pts, 2)
+        surface.blit(poly_surf, (0, 0))
+
+        # Label at centroid
+        from editor.layout import Layout as _L
+        centroid_x = sum(p[0] for p in screen_pts) // len(screen_pts)
+        centroid_y = sum(p[1] for p in screen_pts) // len(screen_pts)
+        lbl_font = get_font(max(8, round(10 * _L.scale)))
+        lbl = lbl_font.render(td.name[:12], True, ghost_color)
+        lx = centroid_x - lbl.get_width() // 2
+        ly = centroid_y - lbl.get_height() // 2
+        if 0 <= ly < sh and 0 <= lx < sw:
+            surface.blit(lbl, (lx, ly))
+
+    # =================================================================
+    #  HUD
+    # =================================================================
 
     def _draw_fullscreen_hud(self, surface: pygame.Surface,
                               rect: pygame.Rect,
-                              font_sm: pygame.font.Font,
-                              selected_tile: str | None):
-        """Draw editing HUD elements in fullscreen mode."""
+                              font_sm: pygame.font.Font):
         x0 = rect.x + 6
         y = rect.y + 6
 
@@ -607,41 +915,190 @@ class FPPreview:
         if self._target_tile and self._target_rc:
             td = tile_def(self._target_tile)
             r, c = self._target_rc
-            draw_text(surface, f"Looking at: {td.name} [{r},{c}]",
+            label = "wall" if self._target_is_wall else "floor"
+            draw_text(surface, f"Aim: {td.name} [{r},{c}] ({label})",
                       x0, y, Theme.TEXT, font_sm)
             y += 14
-            draw_text(surface,
-                      f"  type={td.type.value}  dist={self._target_dist:.1f}",
-                      x0, y, Theme.TEXT_DIM, font_sm)
-        y += 14
 
-        # Ghost placement indicator
+        # Ghost placement
         if self._ghost_rc:
             gr, gc = self._ghost_rc
-            draw_text(surface, f"Place at: [{gr},{gc}]",
+            action = "build" if self._target_is_wall else "paint"
+            draw_text(surface, f"Click: {action} [{gr},{gc}]",
                       x0, y, (120, 200, 120), font_sm)
             y += 14
 
-        # Selected tile (bottom-left)
-        if selected_tile:
-            by = rect.bottom - 50
-            td = tile_def(selected_tile)
-            sw_r = pygame.Rect(x0, by, 20, 20)
-            pygame.draw.rect(surface, td.color, sw_r, border_radius=2)
-            pygame.draw.rect(surface, (120, 120, 120), sw_r, 1,
-                             border_radius=2)
-            draw_text(surface, f"Brush: {td.name}",
-                      x0 + 26, by + 3, Theme.ACCENT, font_sm)
-            draw_text(surface, f"  ({td.type.value})",
-                      x0 + 26, by + 16, Theme.TEXT_DIM, font_sm)
+        # Rotation indicator
+        _DIR_LBL = ("N", "E", "S", "W")
+        rot_txt = f"Rot: {_DIR_LBL[getattr(self, '_pending_rotation', 0) % 4]}"
+        draw_text(surface, rot_txt, x0, y, Theme.ACCENT2, font_sm)
+        y += 14
 
-        # Controls hint (bottom-right)
-        hints = ("LClick=Paint  RClick=Pick  MClick=Erase  "
-                 "Scroll=Cycle  Ctrl+Z/Y=Undo/Redo  Tab=TopDown  Esc=PIP")
+        # Noclip (top-right)
+        if self.noclip:
+            nw = font_sm.size("NOCLIP")[0]
+            draw_text(surface, "NOCLIP",
+                      rect.right - nw - 8, rect.y + 6,
+                      (255, 120, 80), font_sm)
+
+        # ---- HOTBAR ----
+        self._draw_hotbar(surface, rect, font_sm)
+
+        # Controls hint (below hotbar)
+        hints = "WASD=Move  Shift=Sprint  T=Tiles  C=Noclip  Esc=Exit"
         tw = font_sm.size(hints)[0]
         draw_text(surface, hints,
-                  rect.right - tw - 6, rect.bottom - 16,
+                  rect.centerx - tw // 2, rect.bottom - 14,
                   Theme.TEXT_DIM, font_sm)
+
+    # -- hotbar drawing -----------------------------------------------
+
+    def _draw_hotbar(self, surface: pygame.Surface,
+                      rect: pygame.Rect,
+                      font_sm: pygame.font.Font):
+        """Draw the 10-slot hotbar at the bottom center of the viewport."""
+        from editor.layout import Layout as _L
+
+        swatch = max(28, round(36 * _L.scale))
+        gap = max(2, round(3 * _L.scale))
+        total_w = HOTBAR_SLOTS * swatch + (HOTBAR_SLOTS - 1) * gap
+        bar_x = rect.centerx - total_w // 2
+        bar_y = rect.bottom - swatch - 28
+
+        atlas = self._get_atlas()
+
+        # Semi-transparent background
+        bg = pygame.Surface((total_w + 8, swatch + 22), pygame.SRCALPHA)
+        bg.fill((0, 0, 0, 100))
+        surface.blit(bg, (bar_x - 4, bar_y - 16))
+
+        for i in range(HOTBAR_SLOTS):
+            x = bar_x + i * (swatch + gap)
+            y = bar_y
+
+            tile_id = self.hotbar[i]
+            td = tile_def(tile_id)
+
+            # Texture thumbnail
+            tex = atlas.get(td.wall_tex())
+            try:
+                thumb = pygame.transform.scale(tex, (swatch, swatch))
+            except (pygame.error, ValueError):
+                thumb = pygame.Surface((swatch, swatch))
+                thumb.fill(td.color)
+            surface.blit(thumb, (x, y))
+
+            # Border
+            if i == self.hotbar_slot:
+                pygame.draw.rect(surface, Theme.ACCENT,
+                                 pygame.Rect(x - 1, y - 1,
+                                             swatch + 2, swatch + 2), 2)
+            else:
+                pygame.draw.rect(surface, (80, 80, 80),
+                                 pygame.Rect(x, y, swatch, swatch), 1)
+
+            # Slot number above
+            num = str((i + 1) % 10)
+            num_col = Theme.ACCENT if i == self.hotbar_slot else Theme.TEXT_DIM
+            nw = font_sm.size(num)[0]
+            draw_text(surface, num,
+                      x + (swatch - nw) // 2, y - 14,
+                      num_col, font_sm)
+
+    # -- tile picker overlay ------------------------------------------
+
+    def _draw_tile_picker(self, surface: pygame.Surface,
+                           rect: pygame.Rect,
+                           font_sm: pygame.font.Font):
+        """Full-viewport translucent tile picker grouped by category."""
+        from editor.layout import Layout as _L
+
+        # Overlay background
+        overlay = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        surface.blit(overlay, (rect.x, rect.y))
+
+        atlas = self._get_atlas()
+        cats = self._get_picker_cats()
+
+        swatch = max(40, round(48 * _L.scale))
+        gap = max(4, round(6 * _L.scale))
+        pad = 20
+        cols = max(1, (rect.w - pad * 2 + gap) // (swatch + gap))
+
+        # Title
+        title_font = get_font(max(12, round(16 * _L.scale)))
+        title = title_font.render(
+            "TILE PICKER  (click to assign, Esc to close)",
+            True, Theme.ACCENT)
+        tx = rect.x + rect.w // 2 - title.get_width() // 2
+        surface.blit(title, (tx, rect.y + 8))
+
+        # Content area
+        content_y = rect.y + 36
+        max_y = rect.y + rect.h - 10
+        draw_y = content_y - int(self._picker_scroll)
+        mx, my = pygame.mouse.get_pos()
+        self._picker_hover = None
+
+        for cat_name, tds in cats:
+            if draw_y + 20 > max_y:
+                break
+            if draw_y >= content_y - 20:
+                hdr = font_sm.render(
+                    f"--- {cat_name} ({len(tds)}) ---",
+                    True, Theme.TEXT_DIM)
+                surface.blit(hdr, (rect.x + pad, max(content_y, draw_y)))
+            draw_y += 22
+
+            row_count = (len(tds) + cols - 1) // cols
+            for row_i in range(row_count):
+                if draw_y > max_y:
+                    break
+                for col_i in range(cols):
+                    idx = row_i * cols + col_i
+                    if idx >= len(tds):
+                        break
+                    td_item = tds[idx]
+                    sx = rect.x + pad + col_i * (swatch + gap)
+                    sy = draw_y
+
+                    if sy + swatch < content_y or sy > max_y:
+                        continue
+
+                    # Draw texture swatch
+                    tex = atlas.get(td_item.wall_tex())
+                    try:
+                        thumb = pygame.transform.scale(
+                            tex, (swatch, swatch))
+                    except (pygame.error, ValueError):
+                        thumb = pygame.Surface((swatch, swatch))
+                        thumb.fill(td_item.color)
+                    surface.blit(thumb, (sx, sy))
+
+                    # Hover detection
+                    sr = pygame.Rect(sx, sy, swatch, swatch)
+                    if sr.collidepoint(mx, my):
+                        pygame.draw.rect(surface, Theme.ACCENT, sr, 2)
+                        self._picker_hover = td_item.id
+                        # Tooltip
+                        tip = font_sm.render(td_item.name, True, Theme.TEXT)
+                        surface.blit(tip, (sx, sy + swatch + 2))
+                    else:
+                        if td_item.id in self.hotbar:
+                            pygame.draw.rect(
+                                surface, (100, 100, 100), sr, 1)
+                        else:
+                            pygame.draw.rect(
+                                surface, (50, 50, 50), sr, 1)
+
+                draw_y += swatch + gap
+            draw_y += 6
+
+        # Clamp scroll
+        total_h = draw_y + int(self._picker_scroll) - content_y
+        max_scroll = max(0, total_h - (max_y - content_y))
+        self._picker_scroll = min(self._picker_scroll, max_scroll)
 
 
 # =====================================================================
@@ -650,7 +1107,6 @@ class FPPreview:
 
 def _draw_crosshair(surface: pygame.Surface, cx: int, cy: int,
                      color: tuple):
-    """Small crosshair at screen centre."""
     pygame.draw.line(surface, color, (cx - 8, cy), (cx - 3, cy), 1)
     pygame.draw.line(surface, color, (cx + 3, cy), (cx + 8, cy), 1)
     pygame.draw.line(surface, color, (cx, cy - 8), (cx, cy - 3), 1)

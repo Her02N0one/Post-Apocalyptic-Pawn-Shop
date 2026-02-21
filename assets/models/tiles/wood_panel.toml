@@ -1,0 +1,5 @@
+name = "Wood Panel"
+type = "wall"
+category = "Walls"
+color = [100, 75, 50]
+sound = "wood"

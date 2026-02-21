@@ -1,0 +1,8 @@
+name = "Farmland"
+type = "floor"
+category = "Floors"
+color = [65, 50, 30]
+sound = "gravel"
+
+texture = "dirt"
+farmland = true

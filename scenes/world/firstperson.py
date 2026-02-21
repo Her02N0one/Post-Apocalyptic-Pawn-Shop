@@ -633,6 +633,7 @@ class FirstPerson(Scene):
             rt, rsw, rsh, rhalf, px, py,
             self.player_angle, current_fov,
             tiles, fog_lut, dn,
+            self.session.rotations,
         )
         _wall_total = _perf() - _t0
         self._prof_record('walls', _wall_total)

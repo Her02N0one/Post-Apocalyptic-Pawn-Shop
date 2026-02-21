@@ -41,7 +41,7 @@ class Layout:
     status_h: int = 26
 
     # Backward-compat aliases
-    toolbar_h: int = 0
+    toolbar_h: int = 28
     sidebar_w: int = 0
     panel_w: int = 200
 
@@ -82,6 +82,33 @@ class Layout:
     label_col: int = 90     # label column width (inspector)
     btn_h: int = 28         # standard button height
     border_r: int = 4       # standard border-radius
+    panel_tab_h: int = 60   # height reserved for panel mode tabs strip (2 rows)
+
+    # ── Horizontal top bars (computed by update) ───────────────
+    # Each bar spans full screen width.  y = top pixel, h = height.
+    menu_y: int = 0          # always 0
+    nav_y: int = 0           # menu_h
+    toolbar_y: int = 0       # menu_h + nav_h
+
+    # ── Left-panel vertical slots (computed by update) ───────────
+    # These define the non-overlapping regions of the left panel.
+    # Every panel MUST use these instead of computing its own offsets.
+    lp_tabs_y: int = 0       # top of the tab-button strip
+    lp_tabs_h: int = 0       # height of the tab-button strip
+    lp_content_y: int = 0    # first pixel of scrollable content area
+    lp_content_h: int = 0    # height of scrollable content area
+    lp_bottom_y: int = 0     # bottom edge (status bar top)
+
+    # ── Right-panel (inspector) vertical slots ───────────────────
+    rp_x: int = 0            # left pixel of the inspector
+    rp_tabs_y: int = 0       # top of the inspector tab strip
+    rp_tabs_h: int = 0       # height of the inspector tab strip
+    rp_content_y: int = 0    # first pixel of scrollable inspector content
+    rp_content_h: int = 0    # height of scrollable inspector content
+    rp_bottom_y: int = 0     # bottom edge (status bar top)
+
+    # ── Status bar ───────────────────────────────────────────────
+    status_y: int = 0        # sh - status_h
 
     @classmethod
     def s(cls, px: int) -> int:
@@ -122,7 +149,7 @@ class Layout:
         cls.menu_h = _s(22)
         cls.nav_h = _s(26)
         cls.status_h = _s(22)
-        cls.toolbar_h = 0
+        cls.toolbar_h = _s(24)
         cls.sidebar_w = 0
 
         # ── Scaled min/max clamps ───────────────────────────────
@@ -164,7 +191,7 @@ class Layout:
 
         # Canvas fills the remainder
         cls.canvas_x = cls.palette_w
-        cls.canvas_y = cls.menu_h + cls.nav_h
+        cls.canvas_y = cls.menu_h + cls.nav_h + cls.toolbar_h
         cls.canvas_w = max(cls.CANVAS_MIN,
                            sw - cls.palette_w - cls.inspector_w)
         cls.canvas_h = max(100, sh - cls.canvas_y - cls.status_h)
@@ -183,3 +210,29 @@ class Layout:
         cls.label_col = _s(70)
         cls.btn_h = _s(24)
         cls.border_r = max(2, _s(3))
+
+        # ── Left-panel vertical regions (non-overlapping) ───────
+        tab_btn_h = _s(26)                       # actual button height
+        cls.panel_tab_h = tab_btn_h * 2 + cls.pad_sm + cls.pad_sm * 2
+        cls.lp_tabs_y = cls.canvas_y + cls.pad_sm
+        cls.lp_tabs_h = cls.panel_tab_h - cls.pad_sm
+        cls.lp_content_y = cls.canvas_y + cls.panel_tab_h
+        cls.lp_bottom_y = sh - cls.status_h
+        cls.lp_content_h = cls.lp_bottom_y - cls.lp_content_y
+
+        # ── Horizontal top bars ─────────────────────────────────
+        cls.menu_y = 0
+        cls.nav_y = cls.menu_h
+        cls.toolbar_y = cls.menu_h + cls.nav_h
+
+        # ── Right-panel (inspector) vertical regions ────────────
+        cls.rp_x = sw - cls.inspector_w
+        rp_tab_h = tab_btn_h                     # inspector has 1 row of tabs
+        cls.rp_tabs_y = cls.canvas_y
+        cls.rp_tabs_h = rp_tab_h
+        cls.rp_content_y = cls.canvas_y + rp_tab_h
+        cls.rp_bottom_y = sh - cls.status_h
+        cls.rp_content_h = cls.rp_bottom_y - cls.rp_content_y
+
+        # ── Status bar ──────────────────────────────────────────
+        cls.status_y = sh - cls.status_h

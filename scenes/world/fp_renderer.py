@@ -19,6 +19,7 @@ import math
 import pygame
 import numpy as np
 
+from core.fonts import get_font
 from systems.textures import TextureAtlas
 
 # ── Re-exports (public API consumed by firstperson.py, fp_hud.py) ─
@@ -65,7 +66,6 @@ class Renderer:
 
         # ── Entity / prop caches ─────────────────────────────
         self._prop_surfaces: dict[str, pygame.Surface] = {}
-        self._font_cache: dict[int, pygame.font.Font] = {}
         self._glyph_cache: dict[tuple[str, int], tuple[pygame.Surface, pygame.Surface]] = {}
         self._ent_pool: dict[tuple[int, int], pygame.Surface] = {}
         # Single shared canvas for entity billboard rendering.
@@ -157,11 +157,7 @@ class Renderer:
 
     def get_font(self, size: int) -> pygame.font.Font:
         """Cached monospace font at *size* pixels."""
-        size = max(8, min(72, size))
-        size = (size // 2) * 2
-        if size not in self._font_cache:
-            self._font_cache[size] = pygame.font.SysFont("monospace", size)
-        return self._font_cache[size]
+        return get_font(size)
 
     # ── Numpy cache helpers ──────────────────────────────────────
 

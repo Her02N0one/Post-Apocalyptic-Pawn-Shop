@@ -1,0 +1,6 @@
+name = "Table"
+type = "half_wall"
+category = "Platforms"
+color = [100, 75, 50]
+sound = "wood"
+height = 0.35

@@ -1,0 +1,4 @@
+name = "Tile Floor"
+type = "floor"
+category = "Floors"
+color = [160, 140, 120]

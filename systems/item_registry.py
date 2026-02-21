@@ -21,7 +21,7 @@ except ModuleNotFoundError:
     import tomli as tomllib                 # type: ignore[no-redef]
 
 
-_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+from core.paths import DATA_DIR as _DATA_DIR
 
 
 @dataclass

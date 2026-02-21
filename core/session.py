@@ -54,6 +54,7 @@ class Session:
         self.world = world
         self.zone_name: str = ""
         self.tiles: list[list[str]] = []
+        self.rotations: list[list[int]] = []
         self.map_w: int = 0
         self.map_h: int = 0
         self.visited_zones: set[str] = set()
@@ -464,6 +465,7 @@ class Session:
         zd = load_zone(name)
         self.zone_name = name
         self.tiles = zd.tiles
+        self.rotations = zd.rotations if zd.rotations else [[0] * (len(zd.tiles[0]) if zd.tiles else 0) for _ in range(len(zd.tiles))]
         self.map_h = len(zd.tiles)
         self.map_w = len(zd.tiles[0]) if zd.tiles else 0
         self.first_person = zd.first_person

@@ -7,6 +7,7 @@ logic — they only *request* effects, never execute them.
 
 from __future__ import annotations
 from dataclasses import dataclass
+from typing import Union
 
 
 @dataclass(frozen=True)
@@ -34,4 +35,4 @@ class SetFlag:
 
 
 # Union of every possible UI command (for type hints)
-UICommand = CloseModal | HealPlayer | OpenTrade | SetFlag
+UICommand = Union[CloseModal, HealPlayer, OpenTrade, SetFlag]

@@ -17,13 +17,14 @@ class StatusBar:
     def draw(self, surface: pygame.Surface, font_sm: pygame.font.Font):
         L = Layout
         sw, sh = surface.get_size()
-        bar_y = sh - L.status_h
+        bar_y = L.status_y
         fh = font_sm.get_height()
         text_y = bar_y + max(1, (L.status_h - fh) // 2)
-        pygame.draw.rect(surface, Theme.PANEL,
-                         (0, bar_y, sw, L.status_h))
+
+        # Background + border drawn by EditorChrome
 
         st = self.state
+        _DIR_LABELS = ("N", "E", "S", "W")
         if st.hover_tile:
             r, c = st.hover_tile
             # Bounds-check before accessing tiles array
@@ -31,13 +32,22 @@ class StatusBar:
                 tid = st.tiles[r][c]
                 tname = TILE_NAMES.get(tid, "?")
                 ent_info = ""
-                if st.tool == Tool.ENTITY:
+                if st.tool == Tool.SELECT:
                     eidx = st.entity_at(r, c)
                     if eidx >= 0:
                         ent_info = f" ent={st.entity_name(eidx)}"
+                # Cell rotation
+                cell_rot = 0
+                if (st.rotations and 0 <= r < len(st.rotations)
+                        and 0 <= c < len(st.rotations[0])):
+                    cell_rot = st.rotations[r][c]
+                rot_info = f" rot={_DIR_LABELS[cell_rot % 4]}"
+                # Pending rotation (brush placement)
+                if st.tool in (Tool.BRUSH, Tool.FILL):
+                    rot_info += f" pen={_DIR_LABELS[st.pending_rotation % 4]}"
                 info = (f"({c},{r}) tile={tid}({tname}) "
                         f"{st.map_w}x{st.map_h} "
-                        f"z={st.zoom:.1f}x{ent_info}")
+                        f"z={st.zoom:.1f}x{rot_info}{ent_info}")
                 draw_text(surface, info, L.pad_md, text_y,
                           Theme.TEXT_DIM, font_sm)
 

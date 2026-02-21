@@ -15,8 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_DATA_PATH = _PROJECT_ROOT / "data" / "custom_entities.toml"
+from core.paths import CUSTOM_ENTITIES_PATH as _DATA_PATH
 
 
 # ── Archetype dataclass ─────────────────────────────────────────────
@@ -42,7 +41,8 @@ class ForgeArchetype:
     depth: float = 0.5
     height: float = 0.5
     z_offset: float = 0.0
-    face_textures: dict[str, str] = field(default_factory=dict)
+    texture_front: str = ""
+    texture_back: str = ""
     color: tuple[int, int, int] = (180, 180, 180)
 
     # ── billboard ──
@@ -78,8 +78,15 @@ def _parse_color(raw) -> tuple[int, int, int]:
 def _archetype_from_dict(aid: str, d: dict[str, Any]) -> ForgeArchetype:
     """Build an archetype from a single ``[entities.<id>]`` table."""
     kind = d.get("kind", "billboard")
+    # Migrate from legacy face_textures dict to directional fields
     ft_raw = d.get("face_textures", {})
-    face_textures = {str(k): str(v) for k, v in ft_raw.items()} if ft_raw else {}
+    texture_front = str(d.get("texture_front", ""))
+    texture_back = str(d.get("texture_back", ""))
+    if ft_raw and isinstance(ft_raw, dict):
+        if not texture_front:
+            texture_front = str(ft_raw.get("south", ""))
+        if not texture_back:
+            texture_back = str(ft_raw.get("north", ""))
     return ForgeArchetype(
         id=aid,
         kind=kind,
@@ -97,7 +104,8 @@ def _archetype_from_dict(aid: str, d: dict[str, Any]) -> ForgeArchetype:
         depth=float(d.get("depth", 0.5)),
         height=float(d.get("height", 0.5)),
         z_offset=float(d.get("z_offset", 0.0)),
-        face_textures=face_textures,
+        texture_front=texture_front,
+        texture_back=texture_back,
         color=_parse_color(d.get("color", [180, 180, 180])),
         # billboard
         sprite_char=str(d.get("sprite_char", "?")),
@@ -177,11 +185,10 @@ class ForgeRegistry:
                 lines.append(f'z_offset      = {a.z_offset}')
                 lines.append(f'solid         = {"true" if a.solid else "false"}')
                 lines.append(f'color         = [{a.color[0]}, {a.color[1]}, {a.color[2]}]')
-                if a.face_textures:
-                    lines.append("")
-                    lines.append(f"[entities.{aid}.face_textures]")
-                    for face, tex in sorted(a.face_textures.items()):
-                        lines.append(f'{face} = "{_q(tex)}"')
+                if a.texture_front:
+                    lines.append(f'texture_front = "{_q(a.texture_front)}"')
+                if a.texture_back:
+                    lines.append(f'texture_back  = "{_q(a.texture_back)}"')
 
             elif a.kind == "billboard":
                 lines.append(f'sprite_char   = "{_q(a.sprite_char)}"')

@@ -1,0 +1,5 @@
+name = "Door"
+type = "door"
+category = "Openings"
+color = [180, 20, 180]
+sound = "wood"

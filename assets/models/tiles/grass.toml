@@ -1,0 +1,5 @@
+name = "Grass"
+type = "floor"
+category = "Terrain"
+color = [50, 80, 40]
+sound = "grass"

@@ -1,0 +1,6 @@
+name = "Railing"
+type = "half_wall"
+category = "Barriers"
+color = [70, 65, 55]
+sound = "metal"
+height = 0.4

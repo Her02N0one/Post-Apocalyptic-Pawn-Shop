@@ -1,0 +1,5 @@
+name = "Rubble"
+type = "floor"
+category = "Terrain"
+color = [100, 85, 70]
+sound = "gravel"

@@ -32,13 +32,8 @@ try:
 except ImportError:
     msgpack = None  # type: ignore[assignment]
 
+from core.paths import ZONES_DIR
 from editor.palette_format import zone_to_palette_dict, palette_dict_to_zone
-
-
-# ── Paths ────────────────────────────────────────────────────────────
-
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ZONES_DIR     = _PROJECT_ROOT / "zones"
 
 
 # ═════════════════════════════════════════════════════════════════════

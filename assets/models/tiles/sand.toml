@@ -1,0 +1,5 @@
+name = "Sand"
+type = "floor"
+category = "Terrain"
+color = [140, 130, 90]
+sound = "sand"

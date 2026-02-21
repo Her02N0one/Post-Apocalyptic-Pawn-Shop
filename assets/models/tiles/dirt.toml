@@ -1,0 +1,5 @@
+name = "Dirt"
+type = "floor"
+category = "Terrain"
+color = [80, 70, 50]
+sound = "gravel"

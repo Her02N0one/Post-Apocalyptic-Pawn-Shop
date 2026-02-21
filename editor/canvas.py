@@ -15,14 +15,10 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 
 from core.tiles import TILE_COLORS, TILE_NAMES, TILE_REGISTRY
-from core.constants import TILE_SIZE
+from core.constants import TILE_SIZE, DIR_ARROWS
 from editor.ui import Theme, draw_text
 from editor.state import EditorState, Tool
 from editor.layout import Layout
-
-# Direction helpers
-DIR_ARROWS = {"up": "\u25B2", "down": "\u25BC",
-              "left": "\u25C0", "right": "\u25B6"}
 
 
 class Canvas:
@@ -101,41 +97,11 @@ class Canvas:
                 if st.show_grid and ts >= 8:
                     pygame.draw.rect(surface, Theme.GRID, rect, 1)
 
-        # Draw portals
-        for p in st.portals:
-            for tile in p["tiles"]:
-                r, c = tile
-                sx, sy = self.world_to_screen(c * TILE_SIZE, r * TILE_SIZE,
-                                              surface)
-                center = (sx + ts // 2, sy + ts // 2)
-                radius = max(4, ts // 3)
-                pygame.draw.circle(surface, Theme.PORTAL, center, radius)
-                pygame.draw.circle(surface, (255, 255, 255), center, radius, 1)
-                if ts >= 16:
-                    draw_text(surface, p["target_zone"][:8],
-                              sx + 2, sy + ts + 1, Theme.TEXT_DIM, font_sm)
-                    d = p.get("exit_direction", "up")
-                    arrow = DIR_ARROWS.get(d, "?")
-                    draw_text(surface, arrow, center[0] - 4, center[1] - 6,
-                              (255, 255, 255), font_sm)
-
-        # Draw anchor
-        ax, ay = st.anchor
-        asx, asy = self.world_to_screen(ax * TILE_SIZE, ay * TILE_SIZE,
-                                        surface)
-        _ar = Layout.s(8)
-        _al = Layout.s(10)
-        pygame.draw.circle(surface, Theme.ANCHOR, (asx, asy), _ar, 2)
-        pygame.draw.line(surface, Theme.ANCHOR,
-                         (asx - _al, asy), (asx + _al, asy), 1)
-        pygame.draw.line(surface, Theme.ANCHOR,
-                         (asx, asy - _al), (asx, asy + _al), 1)
-
-        # Draw entities
+        # Draw entities (portals are entities with a portal component)
         self._draw_entities(surface, font, font_sm, ts)
 
         # Draw cursor
-        self._draw_cursor(surface, ts)
+        self._draw_cursor(surface, ts, font_sm)
 
         surface.set_clip(None)
 
@@ -145,6 +111,37 @@ class Canvas:
                        ts: int):
         st = self.state
         for i, ent in enumerate(st.entities):
+            is_sel = (i == st.selected_entity)
+
+            # Portal entities — draw per-tile with portal styling
+            if ent.portal is not None:
+                ptl = ent.portal
+                for tile in ptl.tiles:
+                    if len(tile) < 2:
+                        continue
+                    r, c = tile[0], tile[1]
+                    sx, sy = self.world_to_screen(
+                        c * TILE_SIZE, r * TILE_SIZE, surface)
+                    center = (sx + ts // 2, sy + ts // 2)
+                    radius = max(4, ts // 3)
+                    ring_col = Theme.ACCENT if is_sel else Theme.PORTAL
+                    pygame.draw.circle(surface, ring_col, center, radius)
+                    pygame.draw.circle(surface, (255, 255, 255),
+                                       center, radius, 1)
+                    if is_sel:
+                        pygame.draw.circle(surface, Theme.ACCENT,
+                                           center, radius + 2, 2)
+                    if ts >= 16:
+                        draw_text(surface, ptl.target_zone[:8],
+                                  sx + 2, sy + ts + 1,
+                                  Theme.TEXT_DIM, font_sm)
+                        arrow = DIR_ARROWS.get(ptl.exit_direction, "?")
+                        draw_text(surface, arrow,
+                                  center[0] - 4, center[1] - 6,
+                                  (255, 255, 255), font_sm)
+                continue
+
+            # Regular entities
             ex, ey = ent.position.x, ent.position.y
             sx, sy = self.world_to_screen(ex * TILE_SIZE, ey * TILE_SIZE,
                                           surface)
@@ -152,9 +149,8 @@ class Canvas:
             sprite = ent.sprite
             if sprite is None:
                 # Try prefab defaults
-                _try_import_prefabs()
-                if _PREFAB_DEFAULTS:
-                    defaults = _PREFAB_DEFAULTS.get(ent.prefab, {})
+                if PREFAB_DEFAULTS:
+                    defaults = PREFAB_DEFAULTS.get(ent.prefab, {})
                     sprite_d = defaults.get("sprite", {})
                     char = sprite_d.get("char", "?")
                     color = tuple(sprite_d.get("color", [200, 200, 200]))
@@ -190,7 +186,8 @@ class Canvas:
                           sx - len(label) * 3, sy + radius + 2,
                           Theme.TEXT_DIM, font_sm)
 
-    def _draw_cursor(self, surface: pygame.Surface, ts: int):
+    def _draw_cursor(self, surface: pygame.Surface, ts: int,
+                     font_sm: pygame.font.Font | None = None):
         st = self.state
         if st.hover_tile is None:
             return
@@ -213,31 +210,33 @@ class Canvas:
                             cursor_surf.fill((*color, 80))
                         surface.blit(cursor_surf, (sx, sy))
                         pygame.draw.rect(surface, (255, 255, 255), rect, 1)
-        elif st.tool in (Tool.ENTITY, Tool.PORTAL, Tool.ANCHOR):
+
+            # Rotation direction arrow on centre cell
+            if st.tool != Tool.ERASER and ts >= 14:
+                cx_s, cy_s = self.world_to_screen(
+                    c * TILE_SIZE, r * TILE_SIZE, surface)
+                _ROT_ARROW = ("\u25B2", "\u25B6", "\u25BC", "\u25C0")  # N E S W
+                arrow = _ROT_ARROW[st.pending_rotation % 4]
+                if font_sm:
+                    glyph = font_sm.render(arrow, True, (255, 255, 255))
+                    gx = cx_s + (ts - glyph.get_width()) // 2
+                    gy = cy_s + (ts - glyph.get_height()) // 2
+                    surface.blit(glyph, (gx, gy))
+        elif st.tool == Tool.SELECT:
             sx, sy = self.world_to_screen(c * TILE_SIZE, r * TILE_SIZE,
                                           surface)
             rect = pygame.Rect(sx, sy, ts, ts)
             pygame.draw.rect(surface, (255, 255, 255), rect, 1)
+            # Pending entity placement ghost label
+            if st.pending_prefab and ts >= 12:
+                name = st.pending_prefab
+                if name.startswith("forge:"):
+                    name = name[6:]
+                from editor.ui import draw_text as _dt
+                _dt(surface, name[:12], sx + 2, sy - 12,
+                    Theme.SUCCESS, font_sm)
 
 
-# ── Lazy import of prefab defaults ──────────────────────────────────
+# ── Public import of prefab defaults ─────────────────────────────────
 
-_PREFAB_DEFAULTS: dict = {}
-_prefabs_loaded = False
-
-
-def _try_import_prefabs():
-    global _PREFAB_DEFAULTS, _prefabs_loaded
-    if _prefabs_loaded:
-        return
-    _prefabs_loaded = True
-    try:
-        from systems.spawner import _PREFAB_DEFAULTS as pd
-        _PREFAB_DEFAULTS.update(pd)
-    except ImportError:
-        pass
-
-
-def get_prefab_defaults() -> dict:
-    _try_import_prefabs()
-    return _PREFAB_DEFAULTS
+from systems.spawner import PREFAB_DEFAULTS, get_prefab_defaults  # noqa: F401

@@ -1,0 +1,6 @@
+name = "Wood Platform"
+type = "platform"
+category = "Platforms"
+color = [110, 80, 50]
+sound = "wood"
+height = 0.35

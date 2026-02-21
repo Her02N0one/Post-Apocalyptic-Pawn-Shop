@@ -1,4 +1,14 @@
-"""scenes/editor.py -- Modern tile-map editor.
+"""scenes/editor.py -- DEPRECATED in-game tile-map editor.
+
+.. deprecated::
+    This monolithic 1800-line editor is superseded by the modular
+    ``editor/`` package (launched via ``editor_main.py``).  It is
+    kept only because the game scenes (TopDown, FirstPerson,
+    DebugMenu) still push ``MapEditor`` as an in-game Scene on F4.
+
+    **Do NOT add new features here.**  New work belongs in the
+    ``editor/`` package.  Once ``editor/app.py`` can run as an
+    in-game Scene, delete this file entirely.
 
 A standalone Scene for editing zone JSON files.  Push it from TopDown
 with F4 and pop back with F4 or Escape.
@@ -33,17 +43,15 @@ from typing import Any
 import pygame
 
 from core.app import App
-from core.constants import TILE_SIZE
+from core.constants import TILE_SIZE, DIR_ARROWS, DIRECTIONS
 from core.tiles import TILE_COLORS, TILE_NAMES, TILE_REGISTRY
 from core.scene import Scene
 from core.zones import ZONES_DIR, load_zone, list_zones, Zone, Portal
-from systems.spawner import _PREFAB_DEFAULTS
+from systems.spawner import PREFAB_DEFAULTS
 
 # ===================================================================
 #  Direction helpers
 # ===================================================================
-DIRECTIONS = ["up", "down", "left", "right"]
-DIR_ARROWS = {"up": "\u25B2", "down": "\u25BC", "left": "\u25C0", "right": "\u25B6"}
 DIR_DELTA  = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
 
 # ===================================================================
@@ -257,7 +265,7 @@ class MapEditor(Scene):
         self.entity_mode: bool = False
         self._entity_selected: int = -1  # index into self.entities
         self._entity_dragging: bool = False
-        self._prefab_list: list[str] = sorted(_PREFAB_DEFAULTS.keys())
+        self._prefab_list: list[str] = sorted(PREFAB_DEFAULTS.keys())
         self._entity_panel_open: bool = False  # prefab picker
         self._entity_panel_scroll: int = 0
 
@@ -562,7 +570,7 @@ class MapEditor(Scene):
             uid = f"{base}_{n}"
 
         # Get sprite info from prefab defaults
-        defaults = _PREFAB_DEFAULTS.get(prefab, {})
+        defaults = PREFAB_DEFAULTS.get(prefab, {})
 
         ent: dict[str, Any] = {
             "id": uid,
@@ -1219,7 +1227,7 @@ class MapEditor(Scene):
             # Sprite glyph + colour from entity or prefab defaults
             sprite = ent.get("sprite", {})
             if not sprite:
-                defaults = _PREFAB_DEFAULTS.get(ent.get("prefab", ""), {})
+                defaults = PREFAB_DEFAULTS.get(ent.get("prefab", ""), {})
                 sprite = defaults.get("sprite", {})
             char = sprite.get("char", "?")
             color = tuple(sprite.get("color", [200, 200, 200]))
@@ -1368,7 +1376,7 @@ class MapEditor(Scene):
             pygame.draw.rect(surface, bg, item_rect, border_radius=4)
 
             # Prefab info
-            defaults = _PREFAB_DEFAULTS.get(prefab, {})
+            defaults = PREFAB_DEFAULTS.get(prefab, {})
             sprite_data = defaults.get("sprite", {})
             char = sprite_data.get("char", "?")
             color = tuple(sprite_data.get("color", [200, 200, 200]))

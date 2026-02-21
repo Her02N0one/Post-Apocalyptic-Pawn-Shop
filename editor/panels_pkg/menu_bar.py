@@ -17,9 +17,11 @@ _SEP = ("---", "", None)
 
 _MENU_DEFS: list[tuple[str, list[tuple[str, str, str | None]]]] = [
     ("File", [
-        ("New Zone",       "",    "new"),
+        ("New Zone...",     "",    "new"),
         ("Open Zone...",   "",    "load"),
         ("Save",           "^S",  "save"),
+        ("Save As...",     "",    "save_as"),
+        ("Rename Zone...", "",    "rename"),
         _SEP,
         ("Quit",           "",    "quit"),
     ]),
@@ -47,13 +49,11 @@ _MENU_DEFS: list[tuple[str, list[tuple[str, str, str | None]]]] = [
         ("Zone List",           "",    "panel:zones"),
     ]),
     ("Tools", [
+        ("Select",   "V", "tool:select"),
         ("Brush",    "B", "tool:brush"),
         ("Eraser",   "E", "tool:eraser"),
-        ("Fill",     "", "tool:fill"),
-        ("Picker",   "", "tool:picker"),
-        ("Entity",   "", "tool:entity"),
-        ("Portal",   "", "tool:portal"),
-        ("Anchor",   "", "tool:anchor"),
+        ("Fill",     "I", "tool:fill"),
+        ("Picker",   "",  "tool:picker"),
     ]),
     ("Editors", [
         ("Room Templates",       "", "templates"),
@@ -113,8 +113,7 @@ class MenuBar:
         pad_x = self._item_pad_x()
         text_y = max(1, (h - font_sm.get_height()) // 2)
 
-        pygame.draw.rect(surface, Theme.PANEL, (0, 0, sw, h))
-        pygame.draw.line(surface, Theme.BORDER, (0, h - 1), (sw, h - 1))
+        # Background + border drawn by EditorChrome
 
         self._top_rects.clear()
         x = L.pad_sm
@@ -136,12 +135,6 @@ class MenuBar:
                       Theme.ACCENT if is_open else Theme.TEXT,
                       font_sm)
             x += tw
-
-        # Tool indicator on the right
-        tool_label = f"Tool: {self.state.tool.title()}"
-        tool_w = font_sm.size(tool_label)[0]
-        draw_text(surface, tool_label, sw - tool_w - L.pad_md, text_y,
-                  Theme.ACCENT, font_sm)
 
         if self._open_menu is not None:
             self._draw_dropdown(surface, font_sm)

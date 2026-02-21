@@ -136,7 +136,7 @@ def _build_player(d: dict) -> Player:
 # A prefab is just a set of default components.  The descriptor can
 # override any of them.
 
-_PREFAB_DEFAULTS: dict[str, dict[str, Any]] = {
+PREFAB_DEFAULTS: dict[str, dict[str, Any]] = {
     "dummy": {
         "identity": {"name": "Mannequin", "kind": "dummy"},
         "sprite": {"char": "D", "color": [200, 200, 200], "layer": 5},
@@ -221,19 +221,19 @@ _PREFAB_DEFAULTS: dict[str, dict[str, Any]] = {
         "facing": {"direction": "down"},
     },
     "table": {
-        "identity": {"name": "Table", "kind": "dummy"},
+        "identity": {"name": "Table", "kind": "prop"},
         "sprite": {"char": "\u2550", "color": [100, 75, 45], "layer": 3},
         "collider": {"w": 0.8, "h": 0.8, "solid": True},
         "facing": {"direction": "down"},
     },
     "chair": {
-        "identity": {"name": "Chair", "kind": "dummy"},
+        "identity": {"name": "Chair", "kind": "prop"},
         "sprite": {"char": "h", "color": [110, 80, 50], "layer": 3},
         "collider": {"w": 0.4, "h": 0.4, "solid": True},
         "facing": {"direction": "down"},
     },
     "lantern": {
-        "identity": {"name": "Lantern", "kind": "dummy"},
+        "identity": {"name": "Lantern", "kind": "prop"},
         "sprite": {"char": "\u2606", "color": [255, 200, 80], "layer": 4},
         "collider": {"w": 0.3, "h": 0.3, "solid": False},
         "facing": {"direction": "down"},
@@ -247,7 +247,7 @@ _PREFAB_DEFAULTS: dict[str, dict[str, Any]] = {
         "facing": {"direction": "down"},
     },
     "counter": {
-        "identity": {"name": "Counter", "kind": "dummy"},
+        "identity": {"name": "Counter", "kind": "prop"},
         "sprite": {"char": "\u2500", "color": [130, 110, 80], "layer": 3},
         "collider": {"w": 0.9, "h": 0.5, "solid": True},
         "facing": {"direction": "down"},
@@ -261,12 +261,20 @@ _PREFAB_DEFAULTS: dict[str, dict[str, Any]] = {
         "facing": {"direction": "down"},
     },
     "potted_plant": {
-        "identity": {"name": "Potted Plant", "kind": "dummy"},
+        "identity": {"name": "Potted Plant", "kind": "prop"},
         "sprite": {"char": "\u2698", "color": [60, 140, 50], "layer": 3},
         "collider": {"w": 0.4, "h": 0.4, "solid": True},
         "facing": {"direction": "down"},
     },
 }
+
+# Backward-compat alias for code that still imports the private name.
+_PREFAB_DEFAULTS = PREFAB_DEFAULTS
+
+
+def get_prefab_defaults() -> dict[str, dict[str, Any]]:
+    """Public accessor for the prefab defaults registry."""
+    return PREFAB_DEFAULTS
 
 
 # ── Public API ───────────────────────────────────────────────────────
@@ -281,7 +289,7 @@ def spawn_from_descriptor(world: "World", desc: dict[str, Any],
 
     # Resolve prefab defaults (descriptor values override)
     prefab_name = desc.get("prefab", "")
-    defaults = _PREFAB_DEFAULTS.get(prefab_name, {})
+    defaults = PREFAB_DEFAULTS.get(prefab_name, {})
 
     # PrefabRef — links entity to its template for rebuild on load
     uid = desc.get("id", "")
@@ -380,7 +388,7 @@ def rebuild_transients(world: "World",
     """
     for eid, ref in world.all_of(PrefabRef):
         desc = descriptor_index.get(ref.uid, {})
-        defaults = _PREFAB_DEFAULTS.get(ref.prefab, {})
+        defaults = PREFAB_DEFAULTS.get(ref.prefab, {})
 
         def _merged(key: str, _d: dict = desc, _df: dict = defaults) -> dict | None:
             base = _df.get(key)

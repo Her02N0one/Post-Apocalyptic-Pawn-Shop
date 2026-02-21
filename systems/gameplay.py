@@ -54,7 +54,8 @@ def _get_loot_data() -> dict[str, Any]:
             import tomllib
         except ModuleNotFoundError:
             import tomli as tomllib  # type: ignore[no-redef]
-        path = Path(__file__).resolve().parent.parent / "data" / "loot_tables.toml"
+        from core.paths import LOOT_TABLES_PATH
+        path = LOOT_TABLES_PATH
         with open(path, "rb") as f:
             _loot_data = tomllib.load(f)
     except Exception as exc:

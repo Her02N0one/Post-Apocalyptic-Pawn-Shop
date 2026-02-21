@@ -1,0 +1,5 @@
+name = "Water"
+type = "liquid"
+category = "Terrain"
+color = [30, 60, 90]
+sound = "water"

@@ -1,0 +1,6 @@
+name = "Counter Top"
+type = "half_wall"
+category = "Platforms"
+color = [120, 100, 70]
+sound = "wood"
+height = 0.35

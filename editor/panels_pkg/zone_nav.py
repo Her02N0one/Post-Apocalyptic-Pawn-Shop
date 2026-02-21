@@ -25,13 +25,11 @@ class ZoneNav:
         _s = L.s
         sw = surface.get_width()
         h = L.nav_h
-        top = L.menu_h
+        top = L.nav_y
         fh = font_sm.get_height()
         text_y = top + max(1, (h - fh) // 2)
 
-        pygame.draw.rect(surface, (36, 36, 42), (0, top, sw, h))
-        pygame.draw.line(surface, Theme.BORDER,
-                         (0, top + h - 1), (sw, top + h - 1))
+        # Background + border drawn by EditorChrome
 
         st = self.state
         x = L.pad_md
@@ -89,8 +87,8 @@ class ZoneNav:
         if event.type != pygame.MOUSEBUTTONDOWN or event.button != 1:
             return None
         mx, my = event.pos
-        nav_top = Layout.menu_h
-        nav_bot = Layout.menu_h + Layout.nav_h
+        nav_top = Layout.nav_y
+        nav_bot = Layout.nav_y + Layout.nav_h
         if my < nav_top or my > nav_bot:
             return None
 

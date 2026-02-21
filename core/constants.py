@@ -103,3 +103,10 @@ TILE_RAILING    = "railing"
 
 # Backward-compat alias
 TILE_TELEPORTER = TILE_DOOR
+
+# ── Direction helpers ────────────────────────────────────────────────
+DIRECTIONS = ("up", "down", "left", "right")
+DIR_ARROWS: dict[str, str] = {
+    "up": "\u25B2", "down": "\u25BC",
+    "left": "\u25C0", "right": "\u25B6",
+}

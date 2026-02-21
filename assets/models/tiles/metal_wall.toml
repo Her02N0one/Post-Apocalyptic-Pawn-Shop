@@ -1,0 +1,7 @@
+name = "Metal Wall"
+type = "wall"
+category = "Walls"
+color = [80, 85, 95]
+sound = "metal"
+
+texture = "metal"

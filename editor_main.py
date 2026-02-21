@@ -3,8 +3,8 @@
 
 Usage::
 
-    python editor_main.py                # opens first zone or blank
-    python editor_main.py playground     # opens specific zone
+    python editor_main.py                # opens a blank unnamed zone
+    python editor_main.py playground     # opens a specific zone by name
 """
 
 import sys

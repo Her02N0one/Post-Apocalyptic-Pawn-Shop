@@ -1,0 +1,5 @@
+name = "Low Wall"
+type = "half_wall"
+category = "Barriers"
+color = [90, 85, 75]
+height = 0.35

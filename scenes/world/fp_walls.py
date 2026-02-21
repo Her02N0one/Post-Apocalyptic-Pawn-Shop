@@ -45,6 +45,8 @@ _WS_TEX_X = 5       # tex_x
 _WS_HS = 6          # height_scale
 _WS_RDX = 7         # ray_dir_x
 _WS_RDY = 8         # ray_dir_y
+_WS_MAP_X = 10      # map_x (grid column of hit cell)
+_WS_MAP_Y = 11      # map_y (grid row of hit cell)
 
 # AO distance cutoff — skip AO shadows for walls farther than this
 _AO_MAX_DIST = 6.0
@@ -57,25 +59,22 @@ def _face_name(side: int, rdx: float, rdy: float) -> str:
     else:  # Y boundary
         return "north" if rdy > 0 else "south"
 
-# Per-tile face override cache:  tile_id -> dict[face, tex_key] or None
-_face_cache: dict[str, dict[str, str] | None] = {}
+# Per-tile face texture resolution (rotation-aware)
+_face_has_dir: dict[str, bool] = {}
 
-def _get_face_overrides(tid: str) -> dict[str, str] | None:
-    """Return face_textures dict for a tile, or None if no overrides."""
-    cached = _face_cache.get(tid)
-    if cached is not None or tid in _face_cache:
+def _has_directional(tid: str) -> bool:
+    """Does this tile have any directional texture overrides?"""
+    cached = _face_has_dir.get(tid)
+    if cached is not None:
         return cached
     td = _tile_def(tid)
-    if td and td.face_textures:
-        result = dict(td.face_textures)
-        _face_cache[tid] = result
-        return result
-    _face_cache[tid] = None
-    return None
+    result = bool(td and td.has_directional_textures())
+    _face_has_dir[tid] = result
+    return result
 
 def invalidate_face_cache() -> None:
     """Clear the face override cache (call after tile edits)."""
-    _face_cache.clear()
+    _face_has_dir.clear()
 
 
 def draw_walls(
@@ -86,6 +85,7 @@ def draw_walls(
     angle: float, fov: float,
     tiles: list[list[str]],
     fog_lut: list[int], dn: float,
+    rotations: list[list[int]] | None = None,
 ) -> tuple[list, dict, list[float], list[tuple]]:
     """Cast rays, draw wall columns.
 
@@ -166,9 +166,10 @@ def draw_walls(
     _ao_max_dist = _AO_MAX_DIST
 
     # ── Choose C or Python geometry path ─────────────────────
-    _get_face = _get_face_overrides
+    _has_dir = _has_directional
     _get_by_key = atlas.get_by_key
     _face_nm = _face_name
+    _rots = rotations  # may be None
 
     if _USE_C_WALLS:
         # Bulk-compute geometry in C — eliminates ~120 iterations
@@ -203,13 +204,22 @@ def draw_walls(
             ao_h      = g[17]
             has_vp    = g[18]
 
-            # Face-texture override check
-            face_overrides = _get_face(tid)
+            # Face-texture override check (rotation-aware)
             face_key = None
-            if face_overrides:
+            if _has_dir(tid):
                 _ws = slices[gi]
                 face = _face_nm(ws_side, _ws[_WS_RDX], _ws[_WS_RDY])
-                face_key = face_overrides.get(face)
+                _rot = 0
+                if _rots:
+                    _my = _ws[_WS_MAP_Y]; _mx = _ws[_WS_MAP_X]
+                    if 0 <= _my < len(_rots) and 0 <= _mx < len(_rots[0]):
+                        _rot = _rots[_my][_mx]
+                td = _tile_def(tid)
+                if td:
+                    face_key = td.tex_for_face(face, _rot)
+                    # Only use override if it differs from default wall tex
+                    if face_key == td.wall_tex():
+                        face_key = None
                 if face_key:
                     cache_key = hash((face_key, tx_s, tv0, tv1,
                                       draw_h_q, col_w, ws_side, fog >> 6))
@@ -316,14 +326,22 @@ def draw_walls(
                          (draw_h_q << 23) | (col_w << 33) |
                          (ws_side << 37) | (fog_q << 38))
 
-            # Face-texture override check
-            face_overrides = _get_face(tid)
+            # Face-texture override check (rotation-aware)
             face_key = None
-            if face_overrides:
+            if _has_dir(tid):
                 face = _face_nm(ws_side, ws[_WS_RDX], ws[_WS_RDY])
-                face_key = face_overrides.get(face)
-                if face_key:
-                    cache_key = hash((face_key, tx_s, tv0, tv1,
+                _rot = 0
+                if _rots:
+                    _my = ws[_WS_MAP_Y]; _mx = ws[_WS_MAP_X]
+                    if 0 <= _my < len(_rots) and 0 <= _mx < len(_rots[0]):
+                        _rot = _rots[_my][_mx]
+                td = _tile_def(tid)
+                if td:
+                    face_key = td.tex_for_face(face, _rot)
+                    if face_key == td.wall_tex():
+                        face_key = None
+            if face_key:
+                cache_key = hash((face_key, tx_s, tv0, tv1,
                                       draw_h_q, col_w, ws_side, fog_q))
 
             # Two-generation lookup — NO prev-hit promotion.

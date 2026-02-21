@@ -1,0 +1,5 @@
+name = "Shelf Wall"
+type = "wall"
+category = "Walls"
+color = [95, 80, 60]
+sound = "wood"

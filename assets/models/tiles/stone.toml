@@ -1,0 +1,4 @@
+name = "Stone"
+type = "floor"
+category = "Terrain"
+color = [60, 60, 70]

@@ -40,7 +40,8 @@ except ImportError:
 WallSlice = namedtuple('WallSlice', [
     'screen_x', 'distance', 'height', 'tile_id', 'side',
     'tex_x', 'height_scale', 'ray_dir_x', 'ray_dir_y', 'wall_x',
-], defaults=[0, 0.0, 0, 0, 0, 0.0, 1.0, 0.0, 0.0, 0.0])
+    'map_x', 'map_y',
+], defaults=[0, 0.0, 0, 0, 0, 0.0, 1.0, 0.0, 0.0, 0.0, 0, 0])
 WallSlice.__doc__ = """One vertical column of a rendered wall."""
 
 BillboardSprite = namedtuple('BillboardSprite', [
@@ -225,7 +226,7 @@ def cast_walls(
                     _hh_append(_WS(
                         x, _perp, _line_h, tid, side,
                         _wx - _floor(_wx), _get_hs(tid),
-                        rd_x, rd_y, _wx,
+                        rd_x, rd_y, _wx, mx, my,
                     ))
                     # Skip half-walls so the ray keeps going until a
                     # full wall or map edge.
@@ -264,7 +265,7 @@ def cast_walls(
         # Emit background (full) wall FIRST, then half-walls
         # farthest-to-nearest (painter's order).
         _append(_WS(x, perp, line_h, tid_hit, side, wx_frac,
-                     _get_hs(tid_hit), rd_x, rd_y, wx))
+                     _get_hs(tid_hit), rd_x, rd_y, wx, mx, my))
 
         for _hd in reversed(half_hits):
             _append(_hd)
@@ -347,11 +348,13 @@ def _cast_walls_c(
         flat, wl, hl, hs, step,
     )
     _WS = WallSlice
-    # Convert compact-int tile_id (index 3) back to string
+    # Convert compact-int tile_id (index 3) back to string.
+    # C ext doesn't emit map_x/map_y — append defaults.
     result = []
     for t in raw:
         lst = list(t)
         lst[3] = tile_int_to_str(lst[3])
+        lst.extend([0, 0])  # map_x, map_y placeholders
         result.append(_WS._make(lst))
     return result
 

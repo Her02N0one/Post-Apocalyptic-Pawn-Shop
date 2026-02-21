@@ -1,0 +1,6 @@
+name = "Crate Stack"
+type = "half_wall"
+category = "Platforms"
+color = [130, 100, 60]
+sound = "wood"
+height = 0.55

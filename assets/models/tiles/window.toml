@@ -1,0 +1,6 @@
+name = "Window"
+type = "wall"
+category = "Walls"
+color = [100, 140, 180]
+sound = "glass"
+transparent = true

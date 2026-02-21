@@ -2,10 +2,12 @@
 
 Provides the common lifecycle shared by every left panel:
 
-1. Background / chrome drawing
-2. Scroll-region clip setup / teardown
-3. Scroll-wheel handling with clamping
-4. Content-region geometry helpers
+1. Clip-region setup / teardown using Layout's authoritative regions
+2. Scroll-wheel handling with clamping
+3. Content-region geometry helpers
+
+**Background and tab-strip rendering is handled by EditorChrome** —
+individual panels must NOT draw their own background.
 
 Subclasses override two methods:
 
@@ -26,23 +28,27 @@ from dataclasses import dataclass
 
 import pygame
 
-from editor.ui import Theme, draw_text, draw_panel_bg, clamp_scroll
+from editor.ui import Theme, draw_text, clamp_scroll
 from editor.layout import Layout
 
 
 # ── Region info passed to subclass draw_content / on_item_click ──
 
-@dataclass(slots=True)
+@dataclass()
 class PanelRegion:
-    """Pre-computed geometry for the scrollable content area."""
+    """Pre-computed geometry for the scrollable content area.
 
-    left: int           # panel left edge x
+    All values come from ``Layout.lp_*`` fields — the single source
+    of truth for left-panel geometry.
+    """
+
+    left: int           # panel left edge x (always 0)
     top: int            # panel top edge y (canvas_y)
-    pw: int             # panel width
-    panel_h: int        # total panel height (top → status bar)
-    content_top: int    # first y pixel for scrollable content
-    content_bot: int    # last y pixel (just above status bar)
-    clip: pygame.Rect   # clip rect to apply before drawing items
+    pw: int             # panel width (palette_w)
+    panel_h: int        # total panel height (canvas_y → status bar)
+    content_top: int    # first y pixel for scrollable content (lp_content_y)
+    content_bot: int    # last y pixel (lp_bottom_y)
+    clip: pygame.Rect   # clip rect for scrollable content
     scroll_y: float     # current scroll offset
     mx: int             # current mouse x
     my: int             # current mouse y
@@ -62,8 +68,11 @@ class PanelRegion:
 class PanelBase:
     """Abstract base for scrollable left-side panels.
 
-    Handles background, clip, scroll-wheel, and scroll clamping so
-    every subclass is free to focus on content drawing and hit-testing.
+    Handles clip, scroll-wheel, and scroll clamping so every subclass
+    is free to focus on content drawing and hit-testing.
+
+    **Background rendering is handled by EditorChrome** — panels
+    must NOT call ``draw_panel_bg`` or fill the panel area.
 
     Subclass API
     -------------
@@ -85,7 +94,15 @@ class PanelBase:
 
     def draw(self, surface: pygame.Surface, font: pygame.font.Font,
              font_sm: pygame.font.Font):
-        region = self._begin_draw(surface, font_sm)
+        region = self._make_region(surface)
+
+        # Title drawn above content clip
+        if self.title:
+            L = Layout
+            draw_text(surface, self.title,
+                      region.left + L.pad_md,
+                      region.content_top + L.pad_sm,
+                      Theme.ACCENT, font_sm)
 
         surface.set_clip(region.clip)
         self.draw_content(surface, font, font_sm, region)
@@ -98,26 +115,22 @@ class PanelBase:
         L = Layout
         left = 0
         pw = L.palette_w
-        top = L.canvas_y
-        sh = surface.get_height()
 
-        # Scroll wheel
+        # Scroll wheel — only inside content region
         if event.type == pygame.MOUSEWHEEL:
             mx, my = pygame.mouse.get_pos()
-            if left <= mx < left + pw and my > top:
+            if left <= mx < left + pw and L.lp_content_y <= my < L.lp_bottom_y:
                 self.scroll_y = max(0,
                                     self.scroll_y - event.y * L.scroll_step)
-                content_top = top + L.header_h
-                content_bot = sh - L.status_h
-                visible_h = content_bot - content_top
                 self.scroll_y = clamp_scroll(self.scroll_y,
-                                             self._total_h, visible_h)
+                                             self._total_h,
+                                             L.lp_content_h)
                 return "consumed"
 
-        # Delegate to subclass for clicks
+        # Delegate to subclass for clicks — only inside content region
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mx, my = event.pos
-            if left <= mx < left + pw and my > top + L.header_h:
+            if left <= mx < left + pw and my >= L.lp_content_y:
                 region = self._make_region(surface)
                 return self.on_item_click(event, region)
 
@@ -140,31 +153,11 @@ class PanelBase:
 
     def _make_region(self, surface: pygame.Surface) -> PanelRegion:
         L = Layout
-        sh = surface.get_height()
-        top = L.canvas_y
-        left = 0
-        pw = L.palette_w
-        panel_h = sh - top - L.status_h
-        content_top = top + L.header_h
-        content_bot = sh - L.status_h
         mx, my = pygame.mouse.get_pos()
-        clip = pygame.Rect(left, content_top, pw, content_bot - content_top)
+        clip = pygame.Rect(0, L.lp_content_y, L.palette_w, L.lp_content_h)
         return PanelRegion(
-            left=left, top=top, pw=pw, panel_h=panel_h,
-            content_top=content_top, content_bot=content_bot,
+            left=0, top=L.canvas_y, pw=L.palette_w,
+            panel_h=L.lp_bottom_y - L.canvas_y,
+            content_top=L.lp_content_y, content_bot=L.lp_bottom_y,
             clip=clip, scroll_y=self.scroll_y, mx=mx, my=my,
         )
-
-    def _begin_draw(self, surface: pygame.Surface,
-                    font_sm: pygame.font.Font) -> PanelRegion:
-        """Draw shared chrome and return the content region."""
-        region = self._make_region(surface)
-        draw_panel_bg(surface, region.left, region.top,
-                      region.pw, region.panel_h)
-        if self.title:
-            L = Layout
-            draw_text(surface, self.title,
-                      region.left + L.pad_md,
-                      region.top + L.pad_sm,
-                      Theme.ACCENT, font_sm)
-        return region

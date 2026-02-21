@@ -30,7 +30,6 @@ class Theme:
     DANGER      = (255, 80, 80)
     SUCCESS     = (80, 220, 120)
     PORTAL      = (200, 60, 220)
-    ANCHOR      = (60, 200, 240)
     ENTITY      = (100, 220, 160)
     GRID        = (60, 60, 66)
     HIGHLIGHT   = (70, 70, 80)
@@ -97,6 +96,68 @@ def draw_text_centered(surface: pygame.Surface, text: str,
     surface.blit(img, (x, y))
 
 
+# ── Tab / toolbar button ────────────────────────────────────────────
+
+# Shared colours for all tab-style buttons so they are defined in
+# exactly one place instead of being duplicated across panel_tabs /
+# toolbar / any future strip widget.
+
+TAB_BG          = (120, 122, 135)
+TAB_BG_HOVER    = (145, 148, 168)
+TAB_BG_SELECTED = (65, 105, 190)
+TAB_FG          = (240, 240, 245)
+TAB_FG_SELECTED = (255, 255, 255)
+TAB_BORDER      = (155, 158, 172)
+
+
+def draw_tab_button(
+    surface: pygame.Surface,
+    rect: pygame.Rect,
+    label: str,
+    font: pygame.font.Font,
+    *,
+    selected: bool = False,
+    hovered: bool = False,
+    border_r: int = 3,
+) -> None:
+    """Draw a single tab / toolbar button with clipped, centred text.
+
+    This is the **single source of truth** for tab-button rendering.
+    Both ``PanelTabs`` and ``Toolbar`` call this instead of rolling
+    their own draw logic.
+    """
+    # Pick colours
+    if selected:
+        bg, fg = TAB_BG_SELECTED, TAB_FG_SELECTED
+    elif hovered:
+        bg, fg = TAB_BG_HOVER, TAB_FG
+    else:
+        bg, fg = TAB_BG, TAB_FG
+
+    # Background
+    pygame.draw.rect(surface, bg, rect, border_radius=border_r)
+    # Border so button stands out from panel background
+    pygame.draw.rect(surface, TAB_BORDER, rect, 1, border_radius=border_r)
+
+    # Accent underline for selected state
+    if selected:
+        pygame.draw.line(
+            surface, Theme.ACCENT,
+            (rect.x + 2, rect.bottom - 1),
+            (rect.right - 2, rect.bottom - 1), 2,
+        )
+
+    # Render text, clip to button bounds so it never overflows
+    img = font.render(str(label), True, fg)
+    # If image is wider than the rect interior, crop it
+    inner_w = rect.w - 4  # 2 px padding each side
+    if img.get_width() > inner_w:
+        img = img.subsurface((0, 0, inner_w, img.get_height()))
+    tx = rect.x + (rect.w - img.get_width()) // 2
+    ty = rect.y + (rect.h - img.get_height()) // 2
+    surface.blit(img, (tx, ty))
+
+
 # ── Button ──────────────────────────────────────────────────────────
 
 class Button:
@@ -139,51 +200,65 @@ class Button:
         return False
 
 
-# ── ToggleButton ────────────────────────────────────────────────────
-
-class ToggleButton(Button):
-    def __init__(self, rect: pygame.Rect, label: str, active: bool = False,
-                 **kwargs):
-        super().__init__(rect, label, **kwargs)
-        self.active = active
-        self.active_border = Theme.ACCENT
-
-    def draw(self, surface: pygame.Surface, font: pygame.font.Font):
-        bg = self.active_color if self.active else (
-            self.hover_color if self._hovered else self.color)
-        pygame.draw.rect(surface, bg, self.rect, border_radius=4)
-        border = self.active_border if self.active else self.border_color
-        pygame.draw.rect(surface, border, self.rect, 2 if self.active else 1,
-                         border_radius=4)
-        draw_text_centered(surface, self.label, self.rect, self.text_color, font)
-
-    def handle_event(self, event: pygame.event.Event) -> bool:
-        clicked = super().handle_event(event)
-        if clicked:
-            self.active = not self.active
-        return clicked
-
-
 # ── TextField ───────────────────────────────────────────────────────
 
 class TextField:
     def __init__(self, rect: pygame.Rect, ctx: UIContext,
                  value: str = "", placeholder: str = "",
                  on_change: Callable[[str], None] | None = None,
-                 on_submit: Callable[[str], None] | None = None):
+                 on_submit: Callable[[str], None] | None = None,
+                 maxlen: int = 256,
+                 filter_fn: Callable[[str], str] | None = None):
         self.rect = pygame.Rect(rect)
         self.uid = ctx.alloc_id()
         self.ctx = ctx
-        self.value = value
+        self.value = value[:maxlen]
         self.placeholder = placeholder
         self.on_change = on_change
         self.on_submit = on_submit
-        self._cursor_pos = len(value)
+        self.maxlen = maxlen
+        self.filter_fn = filter_fn
+        self._cursor_pos = len(self.value)
         self._cursor_blink = 0.0
+        self._sel_start: int | None = None  # selection anchor (None = no sel)
 
     @property
     def focused(self) -> bool:
         return self.ctx.has_focus(self.uid)
+
+    @property
+    def _has_sel(self) -> bool:
+        return self._sel_start is not None and self._sel_start != self._cursor_pos
+
+    def _sel_range(self) -> tuple[int, int]:
+        """Return (lo, hi) of the current selection."""
+        a = self._sel_start if self._sel_start is not None else self._cursor_pos
+        return (min(a, self._cursor_pos), max(a, self._cursor_pos))
+
+    def _delete_selection(self) -> bool:
+        """Delete selected text. Returns True if something was deleted."""
+        if not self._has_sel:
+            return False
+        lo, hi = self._sel_range()
+        self.value = self.value[:lo] + self.value[hi:]
+        self._cursor_pos = lo
+        self._sel_start = None
+        return True
+
+    def _insert(self, text: str) -> bool:
+        """Insert text at cursor, respecting maxlen and filter. Returns True if value changed."""
+        self._delete_selection()
+        if self.filter_fn:
+            text = self.filter_fn(text)
+        if not text:
+            return False
+        avail = self.maxlen - len(self.value)
+        if avail <= 0:
+            return False
+        text = text[:avail]
+        self.value = self.value[:self._cursor_pos] + text + self.value[self._cursor_pos:]
+        self._cursor_pos += len(text)
+        return True
 
     def draw(self, surface: pygame.Surface, font: pygame.font.Font,
              dt: float = 0.016):
@@ -204,6 +279,18 @@ class TextField:
             cursor_x = font.size(self.value[:self._cursor_pos])[0]
             if cursor_x > clip.w - 8:
                 area.x = cursor_x - clip.w + 8
+
+        # Selection highlight
+        if self.focused and self._has_sel:
+            lo, hi = self._sel_range()
+            sel_x0 = font.size(self.value[:lo])[0] - area.x
+            sel_x1 = font.size(self.value[:hi])[0] - area.x
+            sel_rect = pygame.Rect(clip.x + sel_x0,
+                                   clip.y + 1,
+                                   sel_x1 - sel_x0,
+                                   clip.h - 2)
+            pygame.draw.rect(surface, (60, 100, 180), sel_rect)
+
         surface.blit(img, (clip.x, clip.y + (clip.h - img.get_height()) // 2),
                      area)
 
@@ -222,24 +309,35 @@ class TextField:
             if self.rect.collidepoint(event.pos):
                 self.ctx.take_focus(self.uid)
                 self._cursor_blink = 0.0
+                self._sel_start = None
                 return False
             elif self.focused:
                 self.ctx.release_focus(self.uid)
+                self._sel_start = None
                 return False
 
         if not self.focused:
             return False
 
         if event.type == pygame.KEYDOWN:
+            shift = bool(event.mod & pygame.KMOD_SHIFT)
+            ctrl = bool(event.mod & pygame.KMOD_CTRL)
+
             if event.key == pygame.K_RETURN:
                 if self.on_submit:
                     self.on_submit(self.value)
                 self.ctx.release_focus(self.uid)
+                self._sel_start = None
                 return True
             elif event.key == pygame.K_ESCAPE:
                 self.ctx.release_focus(self.uid)
+                self._sel_start = None
                 return False
             elif event.key == pygame.K_BACKSPACE:
+                if self._delete_selection():
+                    if self.on_change:
+                        self.on_change(self.value)
+                    return True
                 if self._cursor_pos > 0:
                     self.value = (self.value[:self._cursor_pos - 1]
                                   + self.value[self._cursor_pos:])
@@ -248,6 +346,10 @@ class TextField:
                         self.on_change(self.value)
                     return True
             elif event.key == pygame.K_DELETE:
+                if self._delete_selection():
+                    if self.on_change:
+                        self.on_change(self.value)
+                    return True
                 if self._cursor_pos < len(self.value):
                     self.value = (self.value[:self._cursor_pos]
                                   + self.value[self._cursor_pos + 1:])
@@ -255,24 +357,80 @@ class TextField:
                         self.on_change(self.value)
                     return True
             elif event.key == pygame.K_LEFT:
+                if shift:
+                    if self._sel_start is None:
+                        self._sel_start = self._cursor_pos
+                else:
+                    self._sel_start = None
                 self._cursor_pos = max(0, self._cursor_pos - 1)
             elif event.key == pygame.K_RIGHT:
+                if shift:
+                    if self._sel_start is None:
+                        self._sel_start = self._cursor_pos
+                else:
+                    self._sel_start = None
                 self._cursor_pos = min(len(self.value), self._cursor_pos + 1)
             elif event.key == pygame.K_HOME:
+                if shift:
+                    if self._sel_start is None:
+                        self._sel_start = self._cursor_pos
+                else:
+                    self._sel_start = None
                 self._cursor_pos = 0
             elif event.key == pygame.K_END:
+                if shift:
+                    if self._sel_start is None:
+                        self._sel_start = self._cursor_pos
+                else:
+                    self._sel_start = None
                 self._cursor_pos = len(self.value)
-            elif event.key == pygame.K_a and event.mod & pygame.KMOD_CTRL:
+            # Ctrl+A — select all
+            elif event.key == pygame.K_a and ctrl:
+                self._sel_start = 0
                 self._cursor_pos = len(self.value)
-            else:
-                ch = event.unicode
-                if ch and ch.isprintable():
-                    self.value = (self.value[:self._cursor_pos] + ch
-                                  + self.value[self._cursor_pos:])
-                    self._cursor_pos += 1
+            # Ctrl+C — copy
+            elif event.key == pygame.K_c and ctrl:
+                if self._has_sel:
+                    lo, hi = self._sel_range()
+                    try:
+                        pygame.scrap.put(pygame.SCRAP_TEXT,
+                                         self.value[lo:hi].encode("utf-8"))
+                    except Exception:
+                        pass
+            # Ctrl+X — cut
+            elif event.key == pygame.K_x and ctrl:
+                if self._has_sel:
+                    lo, hi = self._sel_range()
+                    try:
+                        pygame.scrap.put(pygame.SCRAP_TEXT,
+                                         self.value[lo:hi].encode("utf-8"))
+                    except Exception:
+                        pass
+                    self._delete_selection()
                     if self.on_change:
                         self.on_change(self.value)
                     return True
+            # Ctrl+V — paste
+            elif event.key == pygame.K_v and ctrl:
+                try:
+                    raw = pygame.scrap.get(pygame.SCRAP_TEXT)
+                    if raw:
+                        text = raw.decode("utf-8").rstrip("\x00")
+                        # Filter to printable only
+                        text = "".join(c for c in text if c.isprintable())
+                        if self._insert(text):
+                            if self.on_change:
+                                self.on_change(self.value)
+                            return True
+                except Exception:
+                    pass
+            else:
+                ch = event.unicode
+                if ch and ch.isprintable():
+                    if self._insert(ch):
+                        if self.on_change:
+                            self.on_change(self.value)
+                        return True
         return False
 
 
@@ -316,8 +474,16 @@ class NumberField:
         self._text.value = self._format()
         self._text._cursor_pos = len(self._text.value)
 
+    def _sync_layout(self):
+        """Reposition internal widgets to match self.rect (for scrolling)."""
+        r = self.rect
+        self._text.rect.update(r.x, r.y, r.w - 40, r.h)
+        self._btn_up.update(r.right - 38, r.y, 18, r.h)
+        self._btn_dn.update(r.right - 18, r.y, 18, r.h)
+
     def draw(self, surface: pygame.Surface, font: pygame.font.Font,
              dt: float = 0.016):
+        self._sync_layout()
         self._text.draw(surface, font, dt)
         # Up/Down buttons
         for btn_rect, label in [(self._btn_up, "+"), (self._btn_dn, "-")]:
@@ -354,6 +520,85 @@ class NumberField:
         self.value = _clamp(v, self.min_val, self.max_val)
         self._text.value = self._format()
         self._text._cursor_pos = len(self._text.value)
+
+
+# ── Checkbox ────────────────────────────────────────────────────────
+
+# ── Slider ──────────────────────────────────────────────────────────
+
+class Slider:
+    """Horizontal slider with continuous drag support.
+
+    The slider captures mouse drags properly: clicking the bar starts
+    a drag that tracks ``MOUSEMOTION`` globally until ``MOUSEBUTTONUP``,
+    so fast mouse movements won't lose the drag.
+    """
+
+    def __init__(self, rect: pygame.Rect,
+                 value: float = 0.0,
+                 min_val: float = 0.0, max_val: float = 1.0,
+                 step: float = 0.0,
+                 bar_color: tuple[int, int, int] = Theme.ACCENT,
+                 on_change: Callable[[float], None] | None = None,
+                 fmt: str = "{:.2f}"):
+        self.rect = pygame.Rect(rect)
+        self.value = _clamp(value, min_val, max_val)
+        self.min_val = min_val
+        self.max_val = max_val
+        self.step = step
+        self.bar_color = bar_color
+        self.on_change = on_change
+        self.fmt = fmt
+        self._dragging = False
+
+    def _frac(self) -> float:
+        span = self.max_val - self.min_val
+        if span <= 0:
+            return 0.0
+        return (self.value - self.min_val) / span
+
+    def _set_from_x(self, mx: int):
+        frac = _clamp((mx - self.rect.x) / max(1, self.rect.w), 0.0, 1.0)
+        raw = self.min_val + frac * (self.max_val - self.min_val)
+        if self.step > 0:
+            raw = round(raw / self.step) * self.step
+        new_val = _clamp(raw, self.min_val, self.max_val)
+        if new_val != self.value:
+            self.value = new_val
+            if self.on_change:
+                self.on_change(self.value)
+
+    def draw(self, surface: pygame.Surface, font: pygame.font.Font):
+        # Track
+        pygame.draw.rect(surface, Theme.FIELD_BG, self.rect, border_radius=3)
+        # Fill
+        frac = self._frac()
+        fill_w = int(self.rect.w * frac)
+        if fill_w > 0:
+            fill_r = pygame.Rect(self.rect.x, self.rect.y,
+                                 fill_w, self.rect.h)
+            pygame.draw.rect(surface, self.bar_color, fill_r, border_radius=3)
+        # Value text
+        label = self.fmt.format(self.value)
+        tw = font.size(label)[0]
+        draw_text(surface, label, self.rect.right + 4,
+                  self.rect.y + (self.rect.h - font.get_height()) // 2,
+                  Theme.TEXT, font)
+
+    def handle_event(self, event: pygame.event.Event) -> bool:
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.rect.collidepoint(event.pos):
+                self._dragging = True
+                self._set_from_x(event.pos[0])
+                return True
+        if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            if self._dragging:
+                self._dragging = False
+                return True
+        if event.type == pygame.MOUSEMOTION and self._dragging:
+            self._set_from_x(event.pos[0])
+            return True
+        return False
 
 
 # ── Checkbox ────────────────────────────────────────────────────────
@@ -512,8 +757,17 @@ class ColorField:
             pygame.Rect(rect.x + 24 + 2 * w_each, rect.y, w_each, rect.h),
             ctx, value=color[2], min_val=0, max_val=255, step=5, is_int=True)
 
+    def _sync_layout(self):
+        """Reposition internal sub-fields to match self.rect."""
+        r = self.rect
+        w_each = (r.w - 30) // 3
+        self._r.rect.update(r.x + 20, r.y, w_each, r.h)
+        self._g.rect.update(r.x + 22 + w_each, r.y, w_each, r.h)
+        self._b.rect.update(r.x + 24 + 2 * w_each, r.y, w_each, r.h)
+
     def draw(self, surface: pygame.Surface, font: pygame.font.Font,
              dt: float = 0.016):
+        self._sync_layout()
         # Swatch
         sw = pygame.Rect(self.rect.x, self.rect.y + 2, 16, self.rect.h - 4)
         pygame.draw.rect(surface, self.color, sw, border_radius=2)
@@ -648,18 +902,7 @@ def draw_label(surface: pygame.Surface, label: str,
     draw_text(surface, label, x, y + Layout.pad_sm, Theme.TEXT_DIM, font)
 
 
-# ── Panel rendering helpers ─────────────────────────────────────────
-
-def draw_panel_bg(surface: pygame.Surface, left: int, top: int,
-                  pw: int, panel_h: int):
-    """Draw the standard semi-transparent panel background + right border."""
-    panel_surf = pygame.Surface((pw, panel_h), pygame.SRCALPHA)
-    panel_surf.fill((*Theme.PANEL, 230))
-    surface.blit(panel_surf, (left, top))
-    pygame.draw.line(surface, Theme.BORDER,
-                     (left + pw - 1, top),
-                     (left + pw - 1, top + panel_h))
-
+# ── List item / row helpers ─────────────────────────────────────────
 
 def draw_item_row(surface: pygame.Surface, rect: pygame.Rect, *,
                   hovered: bool = False, selected: bool = False,

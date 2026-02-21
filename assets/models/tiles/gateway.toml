@@ -1,0 +1,5 @@
+name = "Gateway"
+type = "door"
+category = "Openings"
+color = [120, 100, 80]
+sound = "wood"

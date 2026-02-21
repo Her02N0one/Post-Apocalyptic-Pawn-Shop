@@ -27,7 +27,7 @@ from core.ecs import Component
 if TYPE_CHECKING:
     from core.ecs import World
 
-SAVES_DIR = Path(__file__).resolve().parent.parent / "saves"
+from core.paths import SAVES_DIR
 
 # ── Registry: component class name → class ───────────────────────────
 # Populated at import time from components.__init__

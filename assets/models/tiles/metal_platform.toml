@@ -1,0 +1,6 @@
+name = "Metal Platform"
+type = "platform"
+category = "Platforms"
+color = [100, 105, 115]
+sound = "metal"
+height = 0.4

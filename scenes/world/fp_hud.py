@@ -10,6 +10,7 @@ import math
 
 import pygame
 
+from core.fonts import get_font as _get_font_cached
 from core.tiles import SOLID_IDS, HALF_WALL_IDS, DOOR_IDS
 from core.types import EntityKind
 from components import (
@@ -46,7 +47,6 @@ class HUD:
     """First-person heads-up display and overlays."""
 
     def __init__(self) -> None:
-        self._font_cache: dict[int, pygame.font.Font] = {}
         # Minimap caches
         self._mm_base: pygame.Surface | None = None
         self._mm_zone: str = ""
@@ -59,11 +59,7 @@ class HUD:
     # ── Font cache ───────────────────────────────────────────────
 
     def _get_font(self, size: int) -> pygame.font.Font:
-        size = max(8, min(72, size))
-        size = (size // 2) * 2
-        if size not in self._font_cache:
-            self._font_cache[size] = pygame.font.SysFont("monospace", size)
-        return self._font_cache[size]
+        return _get_font_cached(size)
 
     # ══════════════════════════════════════════════════════════════
     #  Main HUD

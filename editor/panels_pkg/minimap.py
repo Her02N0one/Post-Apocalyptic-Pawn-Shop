@@ -59,8 +59,11 @@ class Minimap:
                     pygame.draw.rect(surface, color, (tx, ty, pw, pw))
 
         # Portal dots
-        for p in st.portals:
-            for tile in p.get("tiles", []):
+        for ent in st.portals:
+            ptl = ent.portal
+            if ptl is None:
+                continue
+            for tile in ptl.tiles:
                 if not isinstance(tile, (list, tuple)) or len(tile) < 2:
                     continue
                 pr, pc = tile[0], tile[1]

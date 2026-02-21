@@ -99,11 +99,8 @@ class PerfLogger:
         if self._active:
             return f"Already logging → {self._filepath}"
 
-        logs_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(
-                os.path.abspath(__file__)))),
-            "logs",
-        )
+        from core.paths import LOGS_DIR
+        logs_dir = str(LOGS_DIR)
         os.makedirs(logs_dir, exist_ok=True)
         ts = time.strftime("%Y%m%d_%H%M%S")
         self._filepath = os.path.join(logs_dir, f"perf_{ts}.csv")

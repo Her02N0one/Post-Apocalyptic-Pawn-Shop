@@ -95,6 +95,14 @@ class EDCombatStats:
     attack_cooldown: float = 2.0
     hostile: bool = False
 
+@dataclass
+class EDPortal:
+    """Portal connection to another zone."""
+    tiles: list[list[int]] = field(default_factory=list)
+    target_zone: str = ""
+    target_pos: list[float] = field(default_factory=lambda: [0.0, 0.0])
+    exit_direction: str = "up"
+
 
 # ─── Main entity definition ─────────────────────────────────────────
 
@@ -121,11 +129,24 @@ class EntityDef:
     inventory: EDInventory | None = None
     dialogue: EDDialogue | None = None
     combat_stats: EDCombatStats | None = None
+    portal: EDPortal | None = None
 
     # Freeform extras (forge_archetype, dev_notes, tags, etc.)
     dev_notes: str = ""
     tags: list[str] = field(default_factory=list)
     forge_archetype: str = ""
+
+    # Catch-all for unknown/game-specific keys (pushable, persist, etc.)
+    # Preserved verbatim during round-trip so the editor never drops data.
+    extras: dict[str, Any] = field(default_factory=dict)
+
+    # Keys that are handled explicitly (not stored in extras)
+    _KNOWN_KEYS: ClassVar[frozenset[str]] = frozenset({
+        "id", "prefab", "position", "identity", "facing", "sprite",
+        "collider", "health", "tile_entity", "wall_sprite", "inventory",
+        "dialogue", "combat_stats", "portal",
+        "dev_notes", "tags", "forge_archetype",
+    })
 
     # ── Serialisation ───────────────────────────────────────────
 
@@ -197,12 +218,25 @@ class EntityDef:
                 "hostile": self.combat_stats.hostile,
             }
 
+        if self.portal is not None:
+            d["portal"] = {
+                "tiles": [list(t) for t in self.portal.tiles],
+                "target_zone": self.portal.target_zone,
+                "target_pos": list(self.portal.target_pos),
+                "exit_direction": self.portal.exit_direction,
+            }
+
         if self.dev_notes:
             d["dev_notes"] = self.dev_notes
         if self.tags:
             d["tags"] = list(self.tags)
         if self.forge_archetype:
             d["forge_archetype"] = self.forge_archetype
+
+        # Preserve any unknown/game-specific keys verbatim
+        for k, v in self.extras.items():
+            if k not in d:  # don't overwrite typed fields
+                d[k] = v
 
         return d
 
@@ -288,10 +322,24 @@ class EntityDef:
                 hostile=bool(cs.get("hostile", False)),
             )
 
+        if "portal" in d:
+            pt = d["portal"]
+            ent.portal = EDPortal(
+                tiles=[list(t) for t in pt.get("tiles", [])],
+                target_zone=pt.get("target_zone", ""),
+                target_pos=list(pt.get("target_pos", [0.0, 0.0])),
+                exit_direction=pt.get("exit_direction", "up"),
+            )
+
         ent.dev_notes = d.get("dev_notes", "")
         raw_tags = d.get("tags", [])
         ent.tags = list(raw_tags) if isinstance(raw_tags, list) else []
         ent.forge_archetype = d.get("forge_archetype", "")
+
+        # Capture all unrecognised keys into extras so nothing is lost
+        for k, v in d.items():
+            if k not in cls._KNOWN_KEYS:
+                ent.extras[k] = v
 
         return ent
 
@@ -317,6 +365,7 @@ class EntityDef:
             "inventory":    lambda: EDInventory(),
             "dialogue":     lambda: EDDialogue(),
             "combat_stats": lambda: EDCombatStats(),
+            "portal":       lambda: EDPortal(),
         }
         factory = _FACTORIES.get(comp_name)
         if factory is None:
@@ -338,7 +387,7 @@ class EntityDef:
     COMPONENT_NAMES: ClassVar[list[str]] = [
         "identity", "facing", "sprite", "collider", "health",
         "tile_entity", "wall_sprite", "inventory", "dialogue",
-        "combat_stats",
+        "combat_stats", "portal",
     ]
 
     def copy(self) -> "EntityDef":

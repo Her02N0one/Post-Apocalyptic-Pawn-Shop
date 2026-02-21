@@ -1,0 +1,7 @@
+name = "Wood Floor"
+type = "floor"
+category = "Floors"
+color = [70, 50, 35]
+sound = "wood"
+
+texture = "wood"

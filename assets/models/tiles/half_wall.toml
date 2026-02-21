@@ -1,0 +1,4 @@
+name = "Half Wall"
+type = "half_wall"
+category = "Barriers"
+color = [100, 95, 85]
