@@ -65,6 +65,9 @@ class Session:
         # Values are fractions of a wall unit (0.0 = ground, 1.0 = full).
         self.floor_heights: list[list[float]] = []
         self.ceil_heights: list[list[float]] = []
+        # Per-cell floor/ceiling texture overrides ("" = use default).
+        self.floor_textures: list[list[str]] = []
+        self.ceil_textures: list[list[str]] = []
 
         # uid → zone descriptor dict (for rebuilding transient components)
         self._descriptor_index: dict[str, dict[str, Any]] = {}
@@ -476,6 +479,8 @@ class Session:
         self.first_person = zd.first_person
         self.floor_heights = zd.floor_heights
         self.ceil_heights = zd.ceil_heights
+        self.floor_textures = zd.floor_textures
+        self.ceil_textures = zd.ceil_textures
         self._cache_descriptors_from_list(zd.entities)
         self._build_portal_map(zd)
         return zd

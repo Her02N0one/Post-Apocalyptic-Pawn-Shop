@@ -53,6 +53,18 @@ MOUSE_SENS = 0.003          # rad/px
 
 _EDITOR_DN = 1.0            # always daylight
 
+# FP edit modes — cycle with G key
+FP_MODE_TILE    = "tile"
+FP_MODE_FLOOR_H = "floor_h"
+FP_MODE_CEIL_H  = "ceil_h"
+
+_FP_MODES = [FP_MODE_TILE, FP_MODE_FLOOR_H, FP_MODE_CEIL_H]
+_FP_MODE_LABELS = {
+    FP_MODE_TILE:    "Tiles",
+    FP_MODE_FLOOR_H: "Floor Height",
+    FP_MODE_CEIL_H:  "Ceil Height",
+}
+
 # Hotbar defaults -- sensible starting tile set
 _DEFAULT_HOTBAR = [
     "wall", "brick_wall", "stone", "grass", "concrete",
@@ -93,6 +105,10 @@ class FPPreview:
         self._ghost_rc: tuple[int, int] | None = None
         # Noclip
         self.noclip: bool = True
+        # Edit mode (tile / floor_h / ceil_h)
+        self.edit_mode: str = FP_MODE_TILE
+        self._surface_height: float = 0.3   # active height for painting
+        self._surface_step: float = 0.05    # step per scroll tick
         # Hotbar (10 tile slots)
         self.hotbar: list[str] = list(_DEFAULT_HOTBAR)
         self._sanitize_hotbar()
@@ -294,6 +310,17 @@ class FPPreview:
             state.toast(f"Noclip: {'ON' if self.noclip else 'OFF'}")
             return True
 
+        # Edit mode cycle (G key)
+        if key == pygame.K_g:
+            idx = _FP_MODES.index(self.edit_mode)
+            self.edit_mode = _FP_MODES[(idx + 1) % len(_FP_MODES)]
+            label = _FP_MODE_LABELS[self.edit_mode]
+            if self.edit_mode != FP_MODE_TILE:
+                state.toast(f"Mode: {label}  (H={self._surface_height:.2f})")
+            else:
+                state.toast(f"Mode: {label}")
+            return True
+
         # Rotation
         if key == pygame.K_r:
             _DIRS = ("N", "E", "S", "W")
@@ -333,6 +360,11 @@ class FPPreview:
             self.angle += dx * MOUSE_SENS
             return True
 
+        # --- Surface height modes ---
+        if self.edit_mode in (FP_MODE_FLOOR_H, FP_MODE_CEIL_H):
+            return self._handle_surface_mouse(event, state)
+
+        # --- Tile mode (default) ---
         # Left-click = PLACE
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             self._do_place(state)
@@ -352,6 +384,60 @@ class FPPreview:
         if event.type == pygame.MOUSEWHEEL:
             new_slot = (self.hotbar_slot - event.y) % HOTBAR_SLOTS
             self._set_hotbar_slot(new_slot, state)
+            return True
+
+        return False
+
+    # -- surface height mouse handler ---------------------------------
+
+    def _handle_surface_mouse(self, event: pygame.event.Event,
+                               state: "EditorState") -> bool:
+        """Handle mouse in floor_h / ceil_h edit modes."""
+        is_floor = (self.edit_mode == FP_MODE_FLOOR_H)
+        grid = state.floor_heights if is_floor else state.ceil_heights
+        default_h = 0.0 if is_floor else 1.0
+        label = "Floor" if is_floor else "Ceil"
+
+        # Scroll = adjust active height value
+        if event.type == pygame.MOUSEWHEEL:
+            self._surface_height += event.y * self._surface_step
+            self._surface_height = round(
+                max(0.0, min(2.0, self._surface_height)), 2)
+            state.toast(f"{label} H: {self._surface_height:.2f}")
+            return True
+
+        rc = self._target_rc
+        if rc is None or not grid:
+            return False
+        r, c = rc
+
+        # Left-click = paint active height
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if 0 <= r < len(grid) and 0 <= c < len(grid[0]):
+                state.push_undo()
+                grid[r][c] = self._surface_height
+                state.dirty = True
+                state.toast(f"{label} [{r},{c}] = {self._surface_height:.2f}")
+                if self._renderer:
+                    self._renderer.notify_tiles_changed()
+            return True
+
+        # Right-click = pick height from target cell
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+            if 0 <= r < len(grid) and 0 <= c < len(grid[0]):
+                self._surface_height = round(grid[r][c], 2)
+                state.toast(f"Picked {label} H: {self._surface_height:.2f}")
+            return True
+
+        # Middle-click = reset to default
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 2:
+            if 0 <= r < len(grid) and 0 <= c < len(grid[0]):
+                state.push_undo()
+                grid[r][c] = default_h
+                state.dirty = True
+                state.toast(f"Reset {label} [{r},{c}] to {default_h:.2f}")
+                if self._renderer:
+                    self._renderer.notify_tiles_changed()
             return True
 
         return False
@@ -382,7 +468,8 @@ class FPPreview:
                 if state:
                     state.selected_tile = self._picker_hover
                     td = tile_def(self._picker_hover)
-                    state.toast(f"Slot {self.hotbar_slot + 1}: {td.name}")
+                    name = td.name if td else self._picker_hover
+                    state.toast(f"Slot {self.hotbar_slot + 1}: {name}")
                 self._close_picker()
             return True
 
@@ -406,7 +493,8 @@ class FPPreview:
         tile_id = self.hotbar[self.hotbar_slot]
         state.selected_tile = tile_id
         td = tile_def(tile_id)
-        state.toast(f"[{self.hotbar_slot + 1}] {td.name}")
+        name = td.name if td else tile_id
+        state.toast(f"[{self.hotbar_slot + 1}] {name}")
 
     # -- placement actions --------------------------------------------
 
@@ -419,6 +507,9 @@ class FPPreview:
         else:
             return
 
+        if not (0 <= r < state.map_h and 0 <= c < state.map_w):
+            return
+
         tile_id = self.selected_tile
         state.push_undo()
         state.tiles[r][c] = tile_id
@@ -428,7 +519,8 @@ class FPPreview:
         if self._renderer:
             self._renderer.notify_tiles_changed()
         td = tile_def(tile_id)
-        state.toast(f"Placed {td.name} at [{r},{c}]")
+        name = td.name if td else tile_id
+        state.toast(f"Placed {name} at [{r},{c}]")
 
     def _do_eyedropper(self, state: "EditorState"):
         """Right-click: pick the aimed tile into the current hotbar slot."""
@@ -436,12 +528,15 @@ class FPPreview:
             self.hotbar[self.hotbar_slot] = self._target_tile
             state.selected_tile = self._target_tile
             td = tile_def(self._target_tile)
-            state.toast(f"Picked: {td.name} -> slot {self.hotbar_slot + 1}")
+            name = td.name if td else self._target_tile
+            state.toast(f"Picked: {name} -> slot {self.hotbar_slot + 1}")
 
     def _do_erase(self, state: "EditorState"):
         """Middle-click: erase the aimed cell."""
         if self._target_rc:
             r, c = self._target_rc
+            if not (0 <= r < state.map_h and 0 <= c < state.map_w):
+                return
             state.push_undo()
             state.tiles[r][c] = state.erase_tile
             if state.rotations and 0 <= r < len(state.rotations) and 0 <= c < len(state.rotations[0]):
@@ -456,7 +551,8 @@ class FPPreview:
     # =================================================================
 
     def update(self, dt: float, tiles: list[list[str]],
-               map_w: int, map_h: int):
+               map_w: int, map_h: int,
+               state: "EditorState | None" = None):
         if not self.active:
             return
 
@@ -503,6 +599,10 @@ class FPPreview:
                 self.py = ny
 
         self._update_crosshair(tiles, map_w, map_h)
+
+        # Sync inspected_tile with FP target when in fullscreen
+        if self.fullscreen and state is not None and self._target_rc:
+            state.inspected_tile = self._target_rc
 
     # -- crosshair / DDA ---------------------------------------------
 
@@ -552,6 +652,8 @@ class FPPreview:
 
             tid = tiles[my][mx]
             td = tile_def(tid)
+            if td is None:
+                break
             if td.flags & (TF.WALL | TF.SOLID):
                 hit = True
                 break
@@ -610,7 +712,7 @@ class FPPreview:
                 if not (0 <= r < map_h and 0 <= c < map_w):
                     return False
                 td = tile_def(tiles[r][c])
-                if td.solid:
+                if td is not None and td.solid:
                     return False
         return True
 
@@ -690,7 +792,8 @@ class FPPreview:
         cross_col = (200, 200, 200)
         if self.fullscreen and self._target_tile:
             td = tile_def(self._target_tile)
-            cross_col = tuple(min(255, c + 60) for c in td.color)
+            if td is not None:
+                cross_col = tuple(min(255, c + 60) for c in td.color)
         _draw_crosshair(surface, cx, cy, cross_col)
 
         # 7. HUD
@@ -796,6 +899,8 @@ class FPPreview:
 
         # Render actual tile texture (rotation-aware)
         td = tile_def(tile_id)
+        if td is None:
+            return
         atlas = self._get_atlas()
         rot = getattr(self, '_pending_rotation', 0)
         # Pick face from angle: the ghost is ahead of us, so we see
@@ -856,6 +961,8 @@ class FPPreview:
         gr, gc = self._ghost_rc  # type: ignore[misc]
 
         td = tile_def(tile_id)
+        if td is None:
+            return
         ghost_color = tuple(min(255, c + 60) for c in td.color)
         t = pygame.time.get_ticks() / 800.0
 
@@ -927,28 +1034,44 @@ class FPPreview:
                   x0, y, Theme.TEXT_DIM, font_sm)
         y += 14
 
+        # Edit mode indicator
+        mode_label = _FP_MODE_LABELS.get(self.edit_mode, self.edit_mode)
+        if self.edit_mode != FP_MODE_TILE:
+            mode_col = (255, 200, 80)
+            mode_text = f"MODE: {mode_label}  H={self._surface_height:.2f}"
+        else:
+            mode_col = Theme.ACCENT
+            mode_text = f"MODE: {mode_label}"
+        draw_text(surface, mode_text, x0, y, mode_col, font_sm)
+        y += 14
+
         # Target info
         if self._target_tile and self._target_rc:
             td = tile_def(self._target_tile)
             r, c = self._target_rc
             label = "wall" if self._target_is_wall else "floor"
-            draw_text(surface, f"Aim: {td.name} [{r},{c}] ({label})",
+            name = td.name if td else self._target_tile
+            draw_text(surface, f"Aim: {name} [{r},{c}] ({label})",
                       x0, y, Theme.TEXT, font_sm)
             y += 14
 
         # Ghost placement
         if self._ghost_rc:
             gr, gc = self._ghost_rc
-            action = "build" if self._target_is_wall else "paint"
+            if self.edit_mode == FP_MODE_TILE:
+                action = "build" if self._target_is_wall else "paint"
+            else:
+                action = f"set H={self._surface_height:.2f}"
             draw_text(surface, f"Click: {action} [{gr},{gc}]",
                       x0, y, (120, 200, 120), font_sm)
             y += 14
 
-        # Rotation indicator
-        _DIR_LBL = ("N", "E", "S", "W")
-        rot_txt = f"Rot: {_DIR_LBL[getattr(self, '_pending_rotation', 0) % 4]}"
-        draw_text(surface, rot_txt, x0, y, Theme.ACCENT2, font_sm)
-        y += 14
+        # Rotation indicator (tile mode only)
+        if self.edit_mode == FP_MODE_TILE:
+            _DIR_LBL = ("N", "E", "S", "W")
+            rot_txt = f"Rot: {_DIR_LBL[getattr(self, '_pending_rotation', 0) % 4]}"
+            draw_text(surface, rot_txt, x0, y, Theme.ACCENT2, font_sm)
+            y += 14
 
         # Noclip (top-right)
         if self.noclip:
@@ -961,7 +1084,10 @@ class FPPreview:
         self._draw_hotbar(surface, rect, font_sm)
 
         # Controls hint (below hotbar)
-        hints = "WASD=Move  Shift=Sprint  T=Tiles  C=Noclip  Esc=Exit"
+        if self.edit_mode == FP_MODE_TILE:
+            hints = "WASD=Move  T=Tiles  G=Mode  C=Noclip  Esc=Exit"
+        else:
+            hints = "L=Paint  R=Pick  M=Reset  Scroll=Height  G=Mode  Esc=Exit"
         tw = font_sm.size(hints)[0]
         draw_text(surface, hints,
                   rect.centerx - tw // 2, rect.bottom - 14,

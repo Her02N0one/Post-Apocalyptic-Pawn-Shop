@@ -197,7 +197,7 @@ class Inspector:
         erase_dd = Dropdown(
             pygame.Rect(px + L.label_col, y, w - L.label_col, L.field_h),
             erase_ids, selected=erase_idx,
-            on_change=lambda i, _ids=erase_ids, _st=st: setattr(_st, 'erase_tile', _ids[i]))
+            on_change=lambda i, v, _ids=erase_ids, _st=st: setattr(_st, 'erase_tile', _ids[i]))
         add(LabeledWidgetEntry(x=px, y=y, label="Erase Tile:", widget=erase_dd))
         y += L.item_h
 
@@ -241,12 +241,12 @@ class Inspector:
         y += L.item_h
 
         prefab_name = ent.prefab
-        prefab_idx = (self._prefab_list.index(prefab_name)
+        prefab_idx = (self._prefab_list.index(prefab_name) + 1
                       if prefab_name in self._prefab_list else 0)
         prefab_dd = Dropdown(
             pygame.Rect(px + lc, y, w - lc, fh),
             options=["(none)"] + self._prefab_list,
-            selected=prefab_idx + 1)
+            selected=prefab_idx)
         prefab_dd.on_change = lambda i, v, _e=ent: (
             setattr(_e, "prefab", v if v != "(none)" else ""))
         add(LabeledWidgetEntry(x=px, y=y, label="Prefab:",
@@ -698,10 +698,11 @@ class Inspector:
             add(KVEntry(x=px, y=y, label="Sound:", value=td.sound))
             y += L.s(20)
 
-        # ── Cell rotation (hovered tile) ───────────────────
+        # ── Cell rotation (inspected tile) ──────────────────
         _DIR_LABELS = ("N", "E", "S", "W")
-        if st.hover_tile:
-            hr, hc = st.hover_tile
+        cell_rc = st.inspected_tile
+        if cell_rc:
+            hr, hc = cell_rc
             if 0 <= hr < st.map_h and 0 <= hc < st.map_w:
                 cell_rot = 0
                 if (st.rotations and 0 <= hr < len(st.rotations)
@@ -751,11 +752,11 @@ class Inspector:
         y += L.pad_md
 
         # ── Cell floor/ceiling heights (editable) ─────────
-        if st.hover_tile:
-            hr, hc = st.hover_tile
+        if cell_rc:
+            hr, hc = cell_rc
             if (0 <= hr < st.map_h and 0 <= hc < st.map_w
                     and st.floor_heights and st.ceil_heights):
-                add(SectionEntry(x=px, y=y, text="Cell Heights", w=w))
+                add(SectionEntry(x=px, y=y, text="Cell Surfaces", w=w))
                 y += L.header_h
                 add(KVEntry(x=px, y=y, label="Cell:",
                              value=f"({hr}, {hc})"))
@@ -767,11 +768,11 @@ class Inspector:
                                 w - L.label_col, L.field_h),
                     self.ctx, value=round(cur_fh, 2),
                     min_val=0.0, max_val=1.0, step=0.05, decimals=2)
-                fh_field.on_change = lambda v, _r=hr, _c=hc, _st=st: (
-                    _st.push_undo(),
-                    _st.floor_heights.__getitem__(_r).__setitem__(_c, float(v)),
-                    setattr(_st, 'dirty', True),
-                )
+                def _set_floor_h(v, _r=hr, _c=hc, _st=st):
+                    if _r < len(_st.floor_heights) and _c < len(_st.floor_heights[0]):
+                        _st.floor_heights[_r][_c] = float(v)
+                        _st.dirty = True
+                fh_field.on_change = _set_floor_h
                 add(LabeledWidgetEntry(x=px, y=y, label="Floor H:",
                                         widget=fh_field))
                 y += L.item_h
@@ -782,14 +783,35 @@ class Inspector:
                                 w - L.label_col, L.field_h),
                     self.ctx, value=round(cur_ch, 2),
                     min_val=0.0, max_val=2.0, step=0.05, decimals=2)
-                ch_field.on_change = lambda v, _r=hr, _c=hc, _st=st: (
-                    _st.push_undo(),
-                    _st.ceil_heights.__getitem__(_r).__setitem__(_c, float(v)),
-                    setattr(_st, 'dirty', True),
-                )
+                def _set_ceil_h(v, _r=hr, _c=hc, _st=st):
+                    if _r < len(_st.ceil_heights) and _c < len(_st.ceil_heights[0]):
+                        _st.ceil_heights[_r][_c] = float(v)
+                        _st.dirty = True
+                ch_field.on_change = _set_ceil_h
                 add(LabeledWidgetEntry(x=px, y=y, label="Ceil H:",
                                         widget=ch_field))
                 y += L.item_h
+
+                # Floor / ceiling texture info
+                floor_tex = ""
+                if st.floor_textures and hr < len(st.floor_textures) and hc < len(st.floor_textures[0]):
+                    floor_tex = st.floor_textures[hr][hc]
+                ceil_tex = ""
+                if st.ceil_textures and hr < len(st.ceil_textures) and hc < len(st.ceil_textures[0]):
+                    ceil_tex = st.ceil_textures[hr][hc]
+                add(KVEntry(x=px, y=y, label="Floor Tex:",
+                             value=floor_tex if floor_tex else "(default)"))
+                y += L.s(20)
+                add(KVEntry(x=px, y=y, label="Ceil Tex:",
+                             value=ceil_tex if ceil_tex else "(default)"))
+                y += L.s(20)
+
+                # Gap value (ceiling - floor)
+                gap = cur_ch - cur_fh
+                gap_color = Theme.TEXT if gap > 0 else Theme.DANGER
+                add(KVEntry(x=px, y=y, label="Gap:",
+                             value=f"{gap:.2f}"))
+                y += L.s(20)
 
         # ── Texture preview ────────────────────────────────
         tex_sz = L.s(64)
@@ -853,12 +875,12 @@ class Inspector:
                 self._rebuild_entity_widgets_list(surface)
             widgets = self._entity_widgets
         else:
-            # Rebuild tile widgets if selected tile, hover cell, or geometry changed
-            hover_changed = (st.hover_tile != self._last_hover_tile)
+            # Rebuild tile widgets if selected tile, inspected cell, or geometry changed
+            hover_changed = (st.inspected_tile != self._last_hover_tile)
             if (st.selected_tile != self._last_tile_id
                     or hover_changed or geometry_changed or tab_changed):
                 self._last_tile_id = st.selected_tile
-                self._last_hover_tile = st.hover_tile
+                self._last_hover_tile = st.inspected_tile
                 self._rebuild_tile_widgets(surface)
             widgets = self._tile_widgets
 

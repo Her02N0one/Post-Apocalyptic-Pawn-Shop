@@ -32,7 +32,7 @@ from editor.panels import (
     MenuBar, TilePalette, ZonePanel, EntityPanel,
     TextureBrowserPanel, PortalPanel, RoomTemplatePanel,
     Minimap, StatusBar, ZoneNav, PanelSplitter, PanelTabs,
-    Toolbar, EditorChrome,
+    Toolbar, EditorChrome, SurfacePanel,
 )
 from editor.inspector import Inspector
 from editor.modals import (
@@ -99,6 +99,7 @@ class EditorApp(ActionsMixin, CanvasEventsMixin):
         self.texture_panel = TextureBrowserPanel(self.state, atlas=self.atlas)
         self.portal_panel = PortalPanel(self.state)
         self.template_panel = RoomTemplatePanel(self.state)
+        self.surface_panel = SurfacePanel(self.state, self.ctx, atlas=self.atlas)
         self.minimap = Minimap(self.state)
         self.status = StatusBar(self.state)
         self.inspector = Inspector(self.state, self.ctx, atlas=self.atlas)
@@ -120,6 +121,7 @@ class EditorApp(ActionsMixin, CanvasEventsMixin):
             "textures":  self.texture_panel,
             "portals":   self.portal_panel,
             "templates": self.template_panel,
+            "surfaces":  self.surface_panel,
         }
 
         # ── Input layer system ──────────────────────────────────
@@ -506,7 +508,26 @@ class EditorApp(ActionsMixin, CanvasEventsMixin):
         if self.fp_preview.active and not (
                 self.forge.active or self.loot_editor.active
                 or self.template_editor.active or self.modals.active):
-            self.fp_preview.update(dt, st.tiles, st.map_w, st.map_h)
+            self.fp_preview.update(dt, st.tiles, st.map_w, st.map_h, state=st)
+
+        # Auto-toggle canvas surface overlay based on active panel
+        from editor.canvas import SurfaceOverlay
+        from editor.panels_pkg.surface_panel import SurfaceTarget, SurfaceTool
+        if self.menu_bar.panel_mode == "surfaces":
+            sp = self.surface_panel
+            if sp.is_height_tool or sp.tool == SurfaceTool.PICK or sp.tool == SurfaceTool.RESET:
+                if sp.target == SurfaceTarget.FLOOR:
+                    self.canvas.surface_overlay = SurfaceOverlay.FLOOR_HEIGHT
+                else:
+                    self.canvas.surface_overlay = SurfaceOverlay.CEIL_HEIGHT
+            elif sp.is_texture_tool:
+                if sp.target == SurfaceTarget.FLOOR:
+                    self.canvas.surface_overlay = SurfaceOverlay.FLOOR_TEXTURE
+                else:
+                    self.canvas.surface_overlay = SurfaceOverlay.CEIL_TEXTURE
+        else:
+            self.canvas.surface_overlay = SurfaceOverlay.NONE
+
         # Cursor: resize arrow when hovering a splitter
         cur = self.splitter.cursor()
         if cur is not None:

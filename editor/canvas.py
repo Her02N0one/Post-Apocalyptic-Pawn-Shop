@@ -14,11 +14,22 @@ _root = str(Path(__file__).resolve().parent.parent)
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
-from core.tiles import TILE_COLORS, TILE_NAMES, TILE_REGISTRY
+from core.tiles import TILE_COLORS, TILE_NAMES, TILE_REGISTRY, tile_def, TF
 from core.constants import TILE_SIZE, DIR_ARROWS
 from editor.ui import Theme, draw_text
 from editor.state import EditorState, Tool
 from editor.layout import Layout
+
+
+# ── Surface overlay mode ─────────────────────────────────────────────
+
+class SurfaceOverlay:
+    """Controls what surface data the canvas overlays on top of tiles."""
+    NONE = "none"
+    FLOOR_HEIGHT = "floor_height"
+    CEIL_HEIGHT = "ceil_height"
+    FLOOR_TEXTURE = "floor_texture"
+    CEIL_TEXTURE = "ceil_texture"
 
 
 class Canvas:
@@ -26,6 +37,7 @@ class Canvas:
 
     def __init__(self, state: EditorState):
         self.state = state
+        self.surface_overlay: str = SurfaceOverlay.NONE
 
     # ── Coordinate transforms ────────────────────────────────────
 
@@ -83,7 +95,9 @@ class Canvas:
 
             sw, sh = surface.get_size()
 
-            # Draw tiles
+            # Draw tiles with enriched detail
+            _ROT_ARROW = ("\u25B2", "\u25B6", "\u25BC", "\u25C0")  # N E S W
+            _height_overlay = pygame.Surface((ts, ts), pygame.SRCALPHA) if ts >= 1 else None
             for r in range(st.map_h):
                 for c in range(st.map_w):
                     sx, sy = self.world_to_screen(c * TILE_SIZE, r * TILE_SIZE,
@@ -94,8 +108,41 @@ class Canvas:
                     color = TILE_COLORS.get(tid, (120, 120, 120))
                     rect = pygame.Rect(sx, sy, ts, ts)
                     pygame.draw.rect(surface, color, rect)
-                    if st.show_grid and ts >= 8:
+
+                    # Subtle floor-height shading (darkens raised floors)
+                    if (st.floor_heights and r < len(st.floor_heights)
+                            and c < len(st.floor_heights[0])):
+                        fh = st.floor_heights[r][c]
+                        if fh > 0.001 and _height_overlay is not None:
+                            alpha = min(80, int(fh * 120))
+                            _height_overlay.fill((0, 0, 0, alpha))
+                            surface.blit(_height_overlay, (sx, sy))
+
+                    # Wall indicator: thick inner border
+                    td = tile_def(tid)
+                    if td and (td.flags & (TF.WALL | TF.SOLID)):
+                        bw = max(2, ts // 8)
+                        wall_col = tuple(max(0, ch - 50) for ch in color)
+                        pygame.draw.rect(surface, wall_col, rect, bw)
+                    elif st.show_grid and ts >= 8:
                         pygame.draw.rect(surface, Theme.GRID, rect, 1)
+
+                    # Rotation arrow on non-zero-rotation tiles at zoom
+                    if (ts >= 18 and st.rotations
+                            and r < len(st.rotations)
+                            and c < len(st.rotations[0])):
+                        rot = st.rotations[r][c]
+                        if rot != 0 and font_sm:
+                            arrow = _ROT_ARROW[rot % 4]
+                            glyph = font_sm.render(
+                                arrow, True, (220, 220, 220))
+                            gx = sx + (ts - glyph.get_width()) // 2
+                            gy = sy + (ts - glyph.get_height()) // 2
+                            surface.blit(glyph, (gx, gy))
+
+            # Surface overlay (floor/ceiling height or texture visualization)
+            if self.surface_overlay != SurfaceOverlay.NONE:
+                self._draw_surface_overlay(surface, vp, ts, font_sm)
 
             # Draw entities (portals are entities with a portal component)
             self._draw_entities(surface, font, font_sm, ts)
@@ -194,6 +241,20 @@ class Canvas:
         r, c = st.hover_tile
         half = st.brush_size // 2
 
+        # Surface editing mode: draw a distinct cursor
+        if self.surface_overlay != SurfaceOverlay.NONE:
+            for rr in range(r - half, r - half + st.brush_size):
+                for cc in range(c - half, c - half + st.brush_size):
+                    if 0 <= rr < st.map_h and 0 <= cc < st.map_w:
+                        sx, sy = self.world_to_screen(
+                            cc * TILE_SIZE, rr * TILE_SIZE, surface)
+                        rect = pygame.Rect(sx, sy, ts, ts)
+                        cursor_surf = pygame.Surface((ts, ts), pygame.SRCALPHA)
+                        cursor_surf.fill((255, 255, 255, 40))
+                        surface.blit(cursor_surf, (sx, sy))
+                        pygame.draw.rect(surface, (255, 220, 80), rect, 2)
+            return
+
         if st.tool in (Tool.BRUSH, Tool.ERASER, Tool.FILL):
             for rr in range(r - half, r - half + st.brush_size):
                 for cc in range(c - half, c - half + st.brush_size):
@@ -235,6 +296,94 @@ class Canvas:
                 from editor.ui import draw_text as _dt
                 _dt(surface, name[:12], sx + 2, sy - 12,
                     Theme.SUCCESS, font_sm)
+
+    # ── Surface overlay drawing ──────────────────────────────────
+
+    def _draw_surface_overlay(self, surface: pygame.Surface,
+                              vp: pygame.Rect, ts: int,
+                              font_sm: pygame.font.Font | None):
+        """Draw a colored overlay showing floor/ceiling heights or textures."""
+        st = self.state
+        mode = self.surface_overlay
+        overlay = pygame.Surface((ts, ts), pygame.SRCALPHA)
+
+        for r in range(st.map_h):
+            for c in range(st.map_w):
+                sx, sy = self.world_to_screen(
+                    c * TILE_SIZE, r * TILE_SIZE, surface)
+                if (sx + ts < vp.x or sy + ts < vp.y
+                        or sx > vp.right or sy > vp.bottom):
+                    continue
+
+                if mode == SurfaceOverlay.FLOOR_HEIGHT:
+                    grid = st.floor_heights
+                    if not grid or r >= len(grid) or c >= len(grid[0]):
+                        continue
+                    val = grid[r][c]
+                    # Color: blue(0.0) → green(0.5) → yellow(1.0)
+                    t = max(0.0, min(1.0, val))
+                    if t < 0.5:
+                        f = t * 2.0
+                        cr = int(40 * (1 - f))
+                        cg = int(40 + 160 * f)
+                        cb = int(200 * (1 - f))
+                    else:
+                        f = (t - 0.5) * 2.0
+                        cr = int(40 + 200 * f)
+                        cg = int(200 - 40 * f)
+                        cb = 0
+                    alpha = 100 if val > 0.001 else 30
+                    overlay.fill((cr, cg, cb, alpha))
+                    surface.blit(overlay, (sx, sy))
+                    # Label if zoomed in enough
+                    if ts >= 24 and font_sm and val > 0.001:
+                        lbl = f"{val:.2f}"
+                        draw_text(surface, lbl, sx + 2, sy + 2,
+                                  (255, 255, 255), font_sm)
+
+                elif mode == SurfaceOverlay.CEIL_HEIGHT:
+                    grid = st.ceil_heights
+                    if not grid or r >= len(grid) or c >= len(grid[0]):
+                        continue
+                    val = grid[r][c]
+                    # Color: red(low) → purple(1.0) → cyan(2.0)
+                    t = max(0.0, min(1.0, val / 2.0))
+                    cr = int(200 * (1 - t))
+                    cg = int(50 + 150 * t)
+                    cb = int(80 + 170 * t)
+                    alpha = 100 if abs(val - 1.0) > 0.01 else 30
+                    overlay.fill((cr, cg, cb, alpha))
+                    surface.blit(overlay, (sx, sy))
+                    if ts >= 24 and font_sm and abs(val - 1.0) > 0.01:
+                        lbl = f"{val:.2f}"
+                        draw_text(surface, lbl, sx + 2, sy + 2,
+                                  (255, 255, 255), font_sm)
+
+                elif mode == SurfaceOverlay.FLOOR_TEXTURE:
+                    grid = st.floor_textures
+                    if not grid or r >= len(grid) or c >= len(grid[0]):
+                        continue
+                    tex = grid[r][c]
+                    if tex:
+                        overlay.fill((60, 180, 60, 80))
+                        surface.blit(overlay, (sx, sy))
+                        if ts >= 20 and font_sm:
+                            lbl = tex[:6]
+                            draw_text(surface, lbl, sx + 1, sy + 1,
+                                      (200, 255, 200), font_sm)
+
+                elif mode == SurfaceOverlay.CEIL_TEXTURE:
+                    grid = st.ceil_textures
+                    if not grid or r >= len(grid) or c >= len(grid[0]):
+                        continue
+                    tex = grid[r][c]
+                    if tex:
+                        overlay.fill((60, 60, 180, 80))
+                        surface.blit(overlay, (sx, sy))
+                        if ts >= 20 and font_sm:
+                            lbl = tex[:6]
+                            draw_text(surface, lbl, sx + 1, sy + 1,
+                                      (200, 200, 255), font_sm)
 
 
 # ── Public import of prefab defaults ─────────────────────────────────

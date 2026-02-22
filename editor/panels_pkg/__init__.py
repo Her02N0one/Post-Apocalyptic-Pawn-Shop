@@ -19,5 +19,6 @@ from editor.panels_pkg.status_bar import StatusBar      # noqa: F401
 from editor.panels_pkg.splitter import PanelSplitter    # noqa: F401
 from editor.panels_pkg.panel_tabs import PanelTabs      # noqa: F401
 from editor.panels_pkg.toolbar import Toolbar            # noqa: F401
+from editor.panels_pkg.surface_panel import SurfacePanel  # noqa: F401
 
 

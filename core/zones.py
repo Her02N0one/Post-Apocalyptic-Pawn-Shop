@@ -22,6 +22,24 @@ from core.tiles import migrate_int_grid
 
 
 @dataclass
+class OverlayWall:
+    """A free-form wall segment not bound to the tile grid.
+
+    Endpoints (x1,y1)→(x2,y2) are in tile-coordinate space.
+    Supports fences, diagonal walls, partial walls, and
+    transparent surfaces that the standard tile grid cannot express.
+    """
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    texture: str = "brick_wall"
+    height_scale: float = 1.0
+    transparent: bool = False   # color-key: magenta pixels see through
+    blocks: bool = True         # blocks player movement
+
+
+@dataclass
 class Portal:
     """A one-way link from tile(s) in this zone to a position in another."""
     tiles: list[tuple[int, int]]
@@ -48,6 +66,10 @@ class Zone:
     ceil_heights: list[list[float]] = field(default_factory=list)
     floor_textures: list[list[str]] = field(default_factory=list)
     ceil_textures: list[list[str]] = field(default_factory=list)
+    # Per-tile spatial lighting (0.0=dark .. 1.0=full bright)
+    light_levels: list[list[float]] = field(default_factory=list)
+    # Free-form wall segments (fences, partitions, diagonal walls)
+    overlay_walls: list[OverlayWall] = field(default_factory=list)
 
 
 def load_zone(name: str) -> Zone:
@@ -134,6 +156,25 @@ def load_zone(name: str) -> Zone:
     else:
         ceil_textures = [[""] * width for _ in range(height)]
 
+    raw_ll = data.get("light_levels", [])
+    light_levels: list[list[float]]
+    if raw_ll and len(raw_ll) == height:
+        light_levels = [[float(v) for v in row] for row in raw_ll]
+    else:
+        light_levels = [[1.0] * width for _ in range(height)]
+
+    # ── Overlay walls (free-form segments) ──
+    overlay_walls: list[OverlayWall] = []
+    for ow in data.get("overlay_walls", []):
+        overlay_walls.append(OverlayWall(
+            x1=float(ow.get("x1", 0)), y1=float(ow.get("y1", 0)),
+            x2=float(ow.get("x2", 0)), y2=float(ow.get("y2", 0)),
+            texture=str(ow.get("texture", "brick_wall")),
+            height_scale=float(ow.get("height_scale", 1.0)),
+            transparent=bool(ow.get("transparent", False)),
+            blocks=bool(ow.get("blocks", True)),
+        ))
+
     return Zone(
         name=name,
         width=width,
@@ -148,6 +189,8 @@ def load_zone(name: str) -> Zone:
         ceil_heights=ceil_heights,
         floor_textures=floor_textures,
         ceil_textures=ceil_textures,
+        light_levels=light_levels,
+        overlay_walls=overlay_walls,
     )
 
 

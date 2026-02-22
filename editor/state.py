@@ -182,6 +182,10 @@ class EditorState:
 
         # Hover
         self.hover_tile: tuple[int, int] | None = None
+        # Pinned tile — persists when cursor leaves canvas so inspector
+        # fields stay visible.  Updated on hover (while over canvas) and
+        # on click in SELECT mode.
+        self.inspected_tile: tuple[int, int] | None = None
 
         # Toast
         self.toast_msg: str = ""
@@ -241,6 +245,7 @@ class EditorState:
         # Reset selection
         self.selected_entity = -1
         self.entity_dragging = False
+        self.inspected_tile = (self.map_h // 2, self.map_w // 2)
 
         # Center camera
         self.cam_x = -(self.map_w * 32) / 2
@@ -283,8 +288,11 @@ class EditorState:
 
         self.first_person = bool(data.get("first_person", False))
 
+        self.overlay_walls = data.get("overlay_walls", [])
+
         self.selected_entity = -1
         self.entity_dragging = False
+        self.inspected_tile = (self.map_h // 2, self.map_w // 2)
         self.cam_x = -(self.map_w * 32) / 2
         self.cam_y = -(self.map_h * 32) / 2
         self.history.clear()
@@ -340,6 +348,8 @@ class EditorState:
         if self.ceil_textures and any(
                 v != "" for row in self.ceil_textures for v in row):
             data["ceil_textures"] = self.ceil_textures
+        if hasattr(self, 'overlay_walls') and self.overlay_walls:
+            data["overlay_walls"] = self.overlay_walls
         return data
 
     def new_zone(self, name: str, width: int = 30, height: int = 20):
@@ -355,8 +365,10 @@ class EditorState:
         self.ceil_textures = [[""] * width for _ in range(height)]
         self.entities: list[EntityDef] = []
         self.first_person = False
+        self.overlay_walls: list[dict] = []
         self.selected_entity = -1
         self.pending_rotation = 0
+        self.inspected_tile = (height // 2, width // 2)
         self.cam_x = -(width * 32) / 2
         self.cam_y = -(height * 32) / 2
         self.history.clear()
@@ -498,6 +510,124 @@ class EditorState:
             self.rotations[r][c] = rot
             stack.extend([(r-1, c), (r+1, c), (r, c-1), (r, c+1)])
         self.toast(f"Filled {len(visited)} tiles")
+
+    # ── Surface painting (floor/ceiling) ────────────────────────
+
+    def paint_surface_height(self, row: int, col: int,
+                             target: str, value: float):
+        """Paint a height value on floor or ceiling grid, respecting brush size.
+
+        Args:
+            target: "floor" or "ceil"
+            value: Height value to paint
+        """
+        grid = self.floor_heights if target == "floor" else self.ceil_heights
+        if not grid:
+            return
+        half = self.brush_size // 2
+        for rr in range(row - half, row - half + self.brush_size):
+            for cc in range(col - half, col - half + self.brush_size):
+                if 0 <= rr < self.map_h and 0 <= cc < self.map_w:
+                    grid[rr][cc] = value
+
+    def paint_surface_texture(self, row: int, col: int,
+                              target: str, texture: str):
+        """Paint a texture key on floor or ceiling grid, respecting brush size.
+
+        Args:
+            target: "floor" or "ceil"
+            texture: Texture key string ("" for default)
+        """
+        grid = self.floor_textures if target == "floor" else self.ceil_textures
+        if not grid:
+            return
+        half = self.brush_size // 2
+        for rr in range(row - half, row - half + self.brush_size):
+            for cc in range(col - half, col - half + self.brush_size):
+                if 0 <= rr < self.map_h and 0 <= cc < self.map_w:
+                    grid[rr][cc] = texture
+
+    def flood_fill_surface_height(self, row: int, col: int,
+                                  target: str, value: float):
+        """Flood-fill a height value on floor or ceiling grid.
+
+        Fills all contiguous cells that share the same current height.
+        """
+        grid = self.floor_heights if target == "floor" else self.ceil_heights
+        if not grid or not (0 <= row < self.map_h and 0 <= col < self.map_w):
+            return
+        old_val = grid[row][col]
+        if abs(old_val - value) < 0.001:
+            return
+        stack = [(row, col)]
+        visited: set[tuple[int, int]] = set()
+        while stack:
+            r, c = stack.pop()
+            if (r, c) in visited:
+                continue
+            if not (0 <= r < self.map_h and 0 <= c < self.map_w):
+                continue
+            if abs(grid[r][c] - old_val) > 0.001:
+                continue
+            visited.add((r, c))
+            grid[r][c] = value
+            stack.extend([(r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)])
+        self.toast(f"Filled {len(visited)} cells ({target} height)")
+
+    def flood_fill_surface_texture(self, row: int, col: int,
+                                   target: str, texture: str):
+        """Flood-fill a texture key on floor or ceiling grid.
+
+        Fills all contiguous cells that share the same current texture.
+        """
+        grid = self.floor_textures if target == "floor" else self.ceil_textures
+        if not grid or not (0 <= row < self.map_h and 0 <= col < self.map_w):
+            return
+        old_tex = grid[row][col]
+        if old_tex == texture:
+            return
+        stack = [(row, col)]
+        visited: set[tuple[int, int]] = set()
+        while stack:
+            r, c = stack.pop()
+            if (r, c) in visited:
+                continue
+            if not (0 <= r < self.map_h and 0 <= c < self.map_w):
+                continue
+            if grid[r][c] != old_tex:
+                continue
+            visited.add((r, c))
+            grid[r][c] = texture
+            stack.extend([(r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)])
+        self.toast(f"Filled {len(visited)} cells ({target} texture)")
+
+    def reset_surface(self, row: int, col: int, target: str):
+        """Reset floor or ceiling to defaults, respecting brush size.
+
+        Defaults: floor_height=0.0, ceil_height=1.0, texture=""
+        """
+        h_grid = self.floor_heights if target == "floor" else self.ceil_heights
+        t_grid = self.floor_textures if target == "floor" else self.ceil_textures
+        default_h = 0.0 if target == "floor" else 1.0
+        half = self.brush_size // 2
+        for rr in range(row - half, row - half + self.brush_size):
+            for cc in range(col - half, col - half + self.brush_size):
+                if 0 <= rr < self.map_h and 0 <= cc < self.map_w:
+                    if h_grid:
+                        h_grid[rr][cc] = default_h
+                    if t_grid:
+                        t_grid[rr][cc] = ""
+
+    def pick_surface(self, row: int, col: int, target: str
+                     ) -> tuple[float, str]:
+        """Read the height and texture at a cell. Returns (height, tex_key)."""
+        if not (0 <= row < self.map_h and 0 <= col < self.map_w):
+            return (0.0 if target == "floor" else 1.0, "")
+        h_grid = self.floor_heights if target == "floor" else self.ceil_heights
+        t_grid = self.floor_textures if target == "floor" else self.ceil_textures
+        h = h_grid[row][col] if h_grid and row < len(h_grid) and col < len(h_grid[0]) else (0.0 if target == "floor" else 1.0)
+        t = t_grid[row][col] if t_grid and row < len(t_grid) and col < len(t_grid[0]) else ""
+        return (h, t)
 
     # ── Entity helpers ──────────────────────────────────────────
 

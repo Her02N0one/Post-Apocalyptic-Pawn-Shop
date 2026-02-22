@@ -15,4 +15,5 @@ from editor.panels_pkg import (       # noqa: F401
     PanelTabs,
     Toolbar,
     EditorChrome,
+    SurfacePanel,
 )

@@ -20,9 +20,10 @@ from editor.layout import Layout
 _TABS_ROW1: list[tuple[str, str]] = [
     ("Tiles",    "tiles"),
     ("Entities", "entities"),
-    ("Textures", "textures"),
+    ("Surfaces", "surfaces"),
 ]
 _TABS_ROW2: list[tuple[str, str]] = [
+    ("Textures", "textures"),
     ("Portals",   "portals"),
     ("Templates", "templates"),
     ("Zones",     "zones"),

@@ -576,6 +576,22 @@ def tall_wall_lut() -> bytearray:
     return ba
 
 
+def alt_tex_lut() -> list[int]:
+    """List[compact_int] → alt texture compact_int, or -1 if none.
+
+    For tall walls the C renderer uses this for the upward extension texture.
+    """
+    n = max(len(_INT_REV), 1)
+    out = [-1] * n
+    for i, key in _INT_REV.items():
+        td = TILE_REGISTRY.get(key)
+        if td and td.alt_texture:
+            alt_id = tile_str_to_int(td.alt_texture)
+            if alt_id >= 0:
+                out[i] = alt_id
+    return out
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  Old int→str migration map
 # ═══════════════════════════════════════════════════════════════════

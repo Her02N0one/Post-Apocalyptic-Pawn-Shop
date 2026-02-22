@@ -10,10 +10,22 @@ import pygame
 
 from editor.state import Tool
 from editor.entity_factory import create_forge_entity
+from editor.panels_pkg.surface_panel import SurfaceTool, SurfaceTarget
 
 
 class CanvasEventsMixin:
     """Canvas interaction, entity placement, FP helpers, and exports."""
+
+    # ── Surface editing mode check ──────────────────────────────
+
+    def _is_surface_mode(self) -> bool:
+        """True when the left panel is in surface-editing mode."""
+        return getattr(self, 'menu_bar', None) is not None and \
+               getattr(self.menu_bar, 'panel_mode', '') == 'surfaces'
+
+    def _get_surface_panel(self):
+        """Return the SurfacePanel instance, or None."""
+        return getattr(self, 'surface_panel', None)
 
     # ── FP Preview / Edit helpers ───────────────────────────────
 
@@ -45,12 +57,19 @@ class CanvasEventsMixin:
         st = self.state
         vp = self.canvas.viewport_rect(self.screen)
 
+        # Check if we're in surface editing mode
+        surface_mode = self._is_surface_mode()
+        sp = self._get_surface_panel() if surface_mode else None
+
         # Mouse motion → hover + pan + drag
         if event.type == pygame.MOUSEMOTION:
             mx, my = event.pos
             if vp.collidepoint(mx, my):
                 st.hover_tile = self.canvas.screen_to_tile(
                     mx, my, self.screen)
+                # Only update inspected_tile when the cell changes (not every pixel)
+                if st.hover_tile is not None and st.hover_tile != st.inspected_tile:
+                    st.inspected_tile = st.hover_tile
             else:
                 st.hover_tile = None
 
@@ -71,15 +90,16 @@ class CanvasEventsMixin:
                     ent.position.y = float(r) + 0.5
                     st.dirty = True
 
-            # Paint while dragging
+            # Paint while dragging (surface mode or tile mode)
             if (event.buttons[0] and st.hover_tile
                     and not st._panning and not st.entity_dragging):
-                if st.tool == Tool.BRUSH:
-                    r, c = st.hover_tile
+                r, c = st.hover_tile
+                if surface_mode and sp:
+                    self._surface_paint_drag(sp, r, c)
+                elif st.tool == Tool.BRUSH:
                     st.paint(r, c)
                     st.dirty = True
                 elif st.tool == Tool.ERASER:
-                    r, c = st.hover_tile
                     st.erase(r, c)
                     st.dirty = True
 
@@ -109,6 +129,12 @@ class CanvasEventsMixin:
                 if not tile:
                     return
                 r, c = tile
+
+                # Surface editing mode: intercept all left clicks
+                if surface_mode and sp:
+                    self._surface_click(sp, r, c)
+                    return
+
                 tool = st.tool
 
                 if tool == Tool.SELECT:
@@ -124,10 +150,11 @@ class CanvasEventsMixin:
                         self.inspector.set_tab("entity")
                         self.inspector.force_rebuild()
                     else:
-                        # Deselect entity, select tile for inspection
+                        # Deselect entity, pin tile for inspection
                         st.selected_entity = -1
                         if 0 <= r < st.map_h and 0 <= c < st.map_w:
                             st.selected_tile = st.tiles[r][c]
+                            st.inspected_tile = (r, c)
                             self.inspector.set_tab("tile")
                         self.inspector.force_rebuild()
 
@@ -162,16 +189,79 @@ class CanvasEventsMixin:
                     st.push_undo()
                     self.inspector.force_rebuild()
 
-        # Right-click → deselect entity
+        # Right-click → deselect entity or pick surface
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
             mx, my = event.pos
             if vp.collidepoint(mx, my):
+                # In surface mode, right-click acts as pick
+                if surface_mode and sp:
+                    tile = self.canvas.screen_to_tile(mx, my, self.screen)
+                    if tile:
+                        r, c = tile
+                        h, t = st.pick_surface(r, c, sp.target)
+                        sp.active_height = h
+                        sp.active_texture = t
+                        sp._height_field = None
+                        sp._last_height_val = -999.0
+                        st.toast(f"Picked: H={h:.2f} T={t or '—'}")
+                    return
                 if st.selected_entity >= 0:
                     st.selected_entity = -1
                     self.inspector.force_rebuild()
                 elif st.pending_prefab:
                     st.pending_prefab = ""
                     st.toast("Placement cancelled")
+
+    # ── Surface editing helpers ─────────────────────────────────
+
+    def _surface_click(self, sp, row: int, col: int):
+        """Handle a canvas left-click while in surface editing mode."""
+        st = self.state
+        target = sp.target
+        tool = sp.tool
+
+        # Only push undo for mutating operations (not PICK)
+        if tool != SurfaceTool.PICK:
+            st.push_undo()
+
+        if tool == SurfaceTool.HEIGHT:
+            st.paint_surface_height(row, col, target, sp.active_height)
+            st.dirty = True
+        elif tool == SurfaceTool.TEXTURE:
+            st.paint_surface_texture(row, col, target, sp.active_texture)
+            st.dirty = True
+        elif tool == SurfaceTool.FILL_H:
+            st.flood_fill_surface_height(row, col, target, sp.active_height)
+            st.dirty = True
+        elif tool == SurfaceTool.FILL_T:
+            st.flood_fill_surface_texture(row, col, target, sp.active_texture)
+            st.dirty = True
+        elif tool == SurfaceTool.PICK:
+            h, t = st.pick_surface(row, col, target)
+            sp.active_height = h
+            sp.active_texture = t
+            sp._height_field = None
+            sp._last_height_val = -999.0
+            st.toast(f"Picked: H={h:.2f} T={t or '—'}")
+        elif tool == SurfaceTool.RESET:
+            st.reset_surface(row, col, target)
+            st.dirty = True
+
+    def _surface_paint_drag(self, sp, row: int, col: int):
+        """Handle mouse drag painting in surface mode."""
+        st = self.state
+        target = sp.target
+        tool = sp.tool
+
+        if tool == SurfaceTool.HEIGHT:
+            st.paint_surface_height(row, col, target, sp.active_height)
+            st.dirty = True
+        elif tool == SurfaceTool.TEXTURE:
+            st.paint_surface_texture(row, col, target, sp.active_texture)
+            st.dirty = True
+        elif tool == SurfaceTool.RESET:
+            st.reset_surface(row, col, target)
+            st.dirty = True
 
     # ── Entity placement from pending_prefab ───────────────────
 

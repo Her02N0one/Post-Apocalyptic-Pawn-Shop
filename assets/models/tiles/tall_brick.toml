@@ -1,0 +1,7 @@
+name = "Tall Brick"
+type = "wall"
+category = "Walls"
+color = [130, 75, 55]
+texture = "brick_wall"
+tall_wall = true
+alt_texture = "stone"

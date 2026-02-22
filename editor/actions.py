@@ -11,7 +11,7 @@ from editor.state import Tool
 
 # Valid panel mode identifiers (same set used by app.py)
 PANEL_MODES = frozenset(
-    {"tiles", "entities", "textures", "portals", "templates", "zones"}
+    {"tiles", "entities", "textures", "portals", "templates", "zones", "surfaces"}
 )
 
 

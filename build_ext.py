@@ -16,21 +16,36 @@ Requirements
 * **Linux / macOS**: ``gcc`` or ``clang`` (usually pre-installed).
 """
 
+import platform
 from setuptools import setup, Extension
+
+# Optimisation flags for the C extensions
+_extra_compile = []
+if platform.system() != "Windows":
+    _extra_compile = ["-O2", "-ffast-math"]
 
 ext_cast = Extension(
     "systems._fast_cast",
     sources=["systems/_fast_cast.c"],
     language="c",
+    extra_compile_args=_extra_compile,
 )
 
 ext_walls = Extension(
     "systems._fast_walls",
     sources=["systems/_fast_walls.c"],
     language="c",
+    extra_compile_args=_extra_compile,
+)
+
+ext_ray_render = Extension(
+    "systems._ray_render",
+    sources=["systems/_ray_render.c"],
+    language="c",
+    extra_compile_args=_extra_compile,
 )
 
 setup(
     name="fast_extensions",
-    ext_modules=[ext_cast, ext_walls],
+    ext_modules=[ext_cast, ext_walls, ext_ray_render],
 )
