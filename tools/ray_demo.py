@@ -286,8 +286,6 @@ def main() -> None:
     # ── Camera state ──────────────────────────────────────────────
     px, py = find_spawn(zone, renderer)
     angle = math.pi * 1.5       # face north
-    pitch = 0.0                  # vertical look (radians, + = up)
-    PITCH_MAX = math.pi * 0.30   # ~55° up/down
     player_fh = renderer.floor_height_at(px, py)  # current floor under player
     cam_h = player_fh + EYE_HEIGHT                # smooth camera height
 
@@ -310,7 +308,7 @@ def main() -> None:
 
     # ── Helper: load a zone by index ──────────────────────────────
     def switch_zone(idx: int) -> None:
-        nonlocal zone, zone_name, zone_idx, px, py, angle, pitch, is_interior
+        nonlocal zone, zone_name, zone_idx, px, py, angle, is_interior
         nonlocal renderer, editor_3d, player_fh, cam_h
         zone_idx = idx % len(all_zones)
         zone_name = all_zones[zone_idx]
@@ -321,7 +319,6 @@ def main() -> None:
         editor_3d.set_zone(zone)
         px, py = find_spawn(zone, renderer)
         angle = math.pi * 1.5
-        pitch = 0.0
         player_fh = renderer.floor_height_at(px, py)
         cam_h = player_fh + EYE_HEIGHT
         pygame.display.set_caption(f"Ray Demo \u2014 {zone_name}")
@@ -361,7 +358,7 @@ def main() -> None:
                             editor_3d.cam_y = cam_h
                             editor_3d.cam_z = py
                             editor_3d.yaw = angle - math.pi * 0.5
-                            editor_3d.pitch = pitch
+                            editor_3d.pitch = 0.0
                             pygame.display.set_caption(
                                 f"Ray Demo — {zone_name} [3D EDITOR]")
                         else:
@@ -370,8 +367,6 @@ def main() -> None:
                             px = editor_3d.cam_x
                             py = editor_3d.cam_z
                             angle = editor_3d.yaw + math.pi * 0.5
-                            pitch = max(-PITCH_MAX,
-                                       min(PITCH_MAX, editor_3d.pitch))
                             # Zone data already updated by sculpt editor
                             renderer.update_zone(zone, atlas, dn)
                             renderer._is_interior = int(is_interior)
@@ -434,7 +429,6 @@ def main() -> None:
                     elif event.key == pygame.K_r:
                         px, py = find_spawn(zone, renderer)
                         angle = math.pi * 1.5
-                        pitch = 0.0
                         player_fh = renderer.floor_height_at(px, py)
                         cam_h = player_fh + EYE_HEIGHT
 
@@ -474,11 +468,8 @@ def main() -> None:
         # ── Mouse look ────────────────────────────────────────────
         if mouse_captured:
             if view_mode == "2d":
-                mx, my = pygame.mouse.get_rel()
+                mx, _ = pygame.mouse.get_rel()
                 angle += mx * MOUSE_SENS
-                pitch = max(-PITCH_MAX,
-                            min(PITCH_MAX,
-                                pitch - my * MOUSE_SENS))
             # 3D mode mouse look is handled in editor_3d.update()
 
         # ── Per-mode update + render ──────────────────────────────
@@ -546,7 +537,7 @@ def main() -> None:
 
         # ── Render ────────────────────────────────────────────────
         t0 = time.perf_counter()
-        frame_surf = renderer.render(px, py, angle, cam_h, pitch)
+        frame_surf = renderer.render(px, py, angle, cam_h)
         if show_entities:
             renderer.render_entities(px, py, angle)
         render_ms = (time.perf_counter() - t0) * 1000

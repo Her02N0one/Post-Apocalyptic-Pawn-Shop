@@ -26,15 +26,11 @@ LOGS_DIR      = PROJECT_ROOT / "logs"
 # ── Assets sub-paths ─────────────────────────────────────────────
 TEXTURES_DIR      = ASSETS_DIR / "textures"
 TILE_TEX_DIR      = TEXTURES_DIR / "tiles"
-SOUNDS_DIR        = ASSETS_DIR / "sounds"
 MODELS_DIR        = ASSETS_DIR / "models"
-PARTICLES_DIR     = ASSETS_DIR / "particles"
-LANG_DIR          = ASSETS_DIR / "lang"
 TILES_TOML_DIR    = MODELS_DIR / "tiles"
 
 # ── Data sub-paths ───────────────────────────────────────────────
 LOOT_TABLES_PATH  = DATA_DIR / "loot_tables.toml"
 ITEMS_PATH        = DATA_DIR / "items.toml"
-CHARACTERS_PATH   = DATA_DIR / "characters.toml"
-TUNING_PATH       = DATA_DIR / "tuning.toml"
+
 CUSTOM_ENTITIES_PATH = DATA_DIR / "custom_entities.toml"

@@ -1,11 +1,9 @@
-"""core package initialization.
-
-Making `core` an explicit package so imports like `import core.ecs`
-work reliably when running `main.py` from the project root.
+"""core package — engine primitives shared across the game.
 
 Submodules
 ----------
-app, ecs, scene, data, events, save, nbt, constants, tuning, zone, subzone
+app, ecs, scene, events, save, constants, zones, tiles, session,
+paths, types, fonts
 """
 
-__all__ = ["app", "ecs", "scene", "data", "subzone"]
+__all__ = ["app", "ecs", "scene", "events", "save", "constants"]

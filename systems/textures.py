@@ -32,11 +32,6 @@ _TEX_MASK = TEX_SIZE - 1  # for & instead of %
 _ATLAS_COLS = 8
 _TEX_DIR = Path(TILE_TEX_DIR)
 
-# Legacy path — kept so old code importing it doesn't crash,
-# but atlas.png is no longer written to disk.
-from core.paths import ASSETS_DIR as _ASSETS_DIR
-_ATLAS_PATH = _ASSETS_DIR / "atlas.png"
-
 
 class TextureAtlas:
     """Lazy-built in-memory atlas of 64×64 textures, one per tile ID.
@@ -91,22 +86,10 @@ class TextureAtlas:
         ty = int(v * TEX_SIZE) & _TEX_MASK
         return surf.get_at((tx, ty))[:3]  # type: ignore[return-value]
 
-    def save_atlas(self) -> Path:
-        """Legacy no-op.  Atlas is memory-only now."""
-        return _ATLAS_PATH
-
     def ensure_all(self) -> None:
         """Make sure every tile in the registry has a loaded texture."""
         for tid in TILE_REGISTRY:
             self.get(tid)
-
-    def _try_load_atlas(self) -> None:
-        """Legacy no-op."""
-
-
-def _save_atlas(surfaces: dict[str, pygame.Surface]) -> Path:
-    """Legacy no-op.  Returns _ATLAS_PATH for compat."""
-    return _ATLAS_PATH
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -157,14 +140,6 @@ def _load_texture_by_key(key: str) -> pygame.Surface:
     surf.fill((80, 80, 80))
     return surf
 
-
-# Alias kept so old call-sites still work
-_load_or_generate = _load_texture
-_generate = _load_texture
-
-
-# export_texture and export_all_textures removed — the editor
-# only imports textures, never exports them.
 
 
 # ═════════════════════════════════════════════════════════════════════

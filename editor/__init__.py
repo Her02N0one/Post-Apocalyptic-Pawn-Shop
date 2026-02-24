@@ -1,8 +1,10 @@
-"""editor — Standalone map editor for Post-Apocalyptic Pawn Shop.
+"""editor — 3D zone editor for Post-Apocalyptic Pawn Shop.
 
 Launch with::
 
-    python editor_main.py
+    python zone_editor.py [zone_name]
 
-Or from the game's debug menu.
+Sub-packages:
+    view_3d/    3D sculpt/paint/segment editor core
+    fly_camera  Shared first-person camera math
 """

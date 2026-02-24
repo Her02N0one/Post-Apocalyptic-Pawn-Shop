@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from core.paths import ZONES_DIR
 from core.tiles import migrate_int_grid
@@ -66,8 +69,35 @@ class Zone:
     ceil_heights: list[list[float]] = field(default_factory=list)
     floor_textures: list[list[str]] = field(default_factory=list)
     ceil_textures: list[list[str]] = field(default_factory=list)
+    # Per-cell wall texture override ("" = use tile default texture)
+    # Set by the 3D voxel editor so the block's chosen texture carries
+    # through to the 2.5D renderer even if the tile type doesn't match.
+    wall_textures: list[list[str]] = field(default_factory=list)
+    # Per-cell per-face wall texture overrides: face_textures[r][c] = [N,S,E,W]
+    # Higher priority than wall_textures.  Empty string = use wall_textures or default.
+    face_textures: list[list[list[str]]] = field(default_factory=list)
     # Per-tile spatial lighting (0.0=dark .. 1.0=full bright)
     light_levels: list[list[float]] = field(default_factory=list)
+    # Per-face stacked texture segments:
+    # wall_segments[r][c][face] = [[tex_key, y_top], ...]
+    # Sorted bottom-to-top.  Bottom of first = floor_height.
+    # Empty list [] = no segments (use face_textures single-texture).
+    wall_segments: list[list[list[list]]] = field(default_factory=list)
+    # ── Step-wall data (floor/ceiling mass side faces) ──────────
+    # Per-cell per-face textures for floor mass cardinal faces (visible
+    # when this cell's floor is higher than a neighbour).
+    # floor_step_textures[r][c] = [N, S, E, W].  "" = inherit wall_textures.
+    floor_step_textures: list[list[list[str]]] = field(default_factory=list)
+    # Per-cell per-face textures for ceiling mass cardinal faces (visible
+    # when this cell's ceiling is lower than a neighbour or has no ceiling).
+    ceil_step_textures: list[list[list[str]]] = field(default_factory=list)
+    # Per-face stacked segments for floor/ceiling step walls.
+    # Same structure as wall_segments.
+    floor_step_segments: list[list[list[list]]] = field(default_factory=list)
+    ceil_step_segments: list[list[list[list]]] = field(default_factory=list)
+    # Per-cell upper wall height override.  0.0 = auto (derived from the
+    # tallest neighbouring ceiling).  Any value > ceil_height overrides.
+    upper_wall_height: list[list[float]] = field(default_factory=list)
     # Free-form wall segments (fences, partitions, diagonal walls)
     overlay_walls: list[OverlayWall] = field(default_factory=list)
 
@@ -140,7 +170,7 @@ def load_zone(name: str) -> Zone:
     if raw_ch and len(raw_ch) == height:
         ceil_heights = [[float(v) for v in row] for row in raw_ch]
     else:
-        ceil_heights = [[1.0] * width for _ in range(height)]
+        ceil_heights = [[10.0] * width for _ in range(height)]
 
     raw_ft = data.get("floor_textures", [])
     floor_textures: list[list[str]]
@@ -155,13 +185,102 @@ def load_zone(name: str) -> Zone:
         ceil_textures = [[str(v) for v in row] for row in raw_ct]
     else:
         ceil_textures = [[""] * width for _ in range(height)]
+    raw_wt = data.get("wall_textures", [])
+    wall_textures: list[list[str]]
+    if raw_wt and len(raw_wt) == height:
+        wall_textures = [[str(v) for v in row] for row in raw_wt]
+    else:
+        wall_textures = [[""]*width for _ in range(height)]
 
+    raw_ft = data.get("face_textures", [])
+    face_textures: list[list[list[str]]]
+    if raw_ft and len(raw_ft) == height:
+        face_textures = []
+        for row in raw_ft:
+            frow: list[list[str]] = []
+            for cell in row:
+                if isinstance(cell, list) and len(cell) == 4:
+                    frow.append([str(v) for v in cell])
+                elif isinstance(cell, str) and cell:
+                    frow.append([cell, cell, cell, cell])  # migrate single → 4
+                else:
+                    frow.append(["", "", "", ""])
+            face_textures.append(frow)
+    else:
+        face_textures = [[[""]*4 for _ in range(width)] for _ in range(height)]
     raw_ll = data.get("light_levels", [])
     light_levels: list[list[float]]
     if raw_ll and len(raw_ll) == height:
         light_levels = [[float(v) for v in row] for row in raw_ll]
     else:
         light_levels = [[1.0] * width for _ in range(height)]
+
+    # ── Per-face stacked wall segments ──
+    raw_ws = data.get("wall_segments", [])
+    wall_segments: list[list[list[list]]]
+    if raw_ws and len(raw_ws) == height:
+        wall_segments = []
+        for row in raw_ws:
+            wsrow: list[list[list]] = []
+            for cell in row:
+                if isinstance(cell, list) and len(cell) == 4:
+                    # cell = [ face0_segs, face1_segs, face2_segs, face3_segs ]
+                    wsrow.append([
+                        [[str(s[0]), float(s[1])] for s in (face or [])]
+                        for face in cell
+                    ])
+                else:
+                    wsrow.append([[], [], [], []])
+            wall_segments.append(wsrow)
+    else:
+        wall_segments = [[[[], [], [], []] for _ in range(width)]
+                         for _ in range(height)]
+
+    # ── Step-wall textures & segments ──
+    def _load_step_tex(key: str) -> list[list[list[str]]]:
+        raw = data.get(key, [])
+        if raw and len(raw) == height:
+            result = []
+            for row in raw:
+                frow: list[list[str]] = []
+                for cell in row:
+                    if isinstance(cell, list) and len(cell) == 4:
+                        frow.append([str(v) for v in cell])
+                    else:
+                        frow.append(["", "", "", ""])
+                result.append(frow)
+            return result
+        return [[["", "", "", ""] for _ in range(width)] for _ in range(height)]
+
+    def _load_step_seg(key: str) -> list[list[list[list]]]:
+        raw = data.get(key, [])
+        if raw and len(raw) == height:
+            result = []
+            for row in raw:
+                wsrow: list[list[list]] = []
+                for cell in row:
+                    if isinstance(cell, list) and len(cell) == 4:
+                        wsrow.append([
+                            [[str(s[0]), float(s[1])] for s in (face or [])]
+                            for face in cell
+                        ])
+                    else:
+                        wsrow.append([[], [], [], []])
+                result.append(wsrow)
+            return result
+        return [[[[], [], [], []] for _ in range(width)] for _ in range(height)]
+
+    floor_step_textures = _load_step_tex("floor_step_textures")
+    ceil_step_textures = _load_step_tex("ceil_step_textures")
+    floor_step_segments = _load_step_seg("floor_step_segments")
+    ceil_step_segments = _load_step_seg("ceil_step_segments")
+
+    raw_uwh = data.get("upper_wall_height", [])
+    upper_wall_height: list[list[float]]
+    if raw_uwh and len(raw_uwh) == height:
+        upper_wall_height = [[float(v) for v in row] for row in raw_uwh]
+    else:
+        upper_wall_height = [[0.0] * width for _ in range(height)]
 
     # ── Overlay walls (free-form segments) ──
     overlay_walls: list[OverlayWall] = []
@@ -189,7 +308,15 @@ def load_zone(name: str) -> Zone:
         ceil_heights=ceil_heights,
         floor_textures=floor_textures,
         ceil_textures=ceil_textures,
+        wall_textures=wall_textures,
+        face_textures=face_textures,
         light_levels=light_levels,
+        wall_segments=wall_segments,
+        floor_step_textures=floor_step_textures,
+        ceil_step_textures=ceil_step_textures,
+        floor_step_segments=floor_step_segments,
+        ceil_step_segments=ceil_step_segments,
+        upper_wall_height=upper_wall_height,
         overlay_walls=overlay_walls,
     )
 
@@ -199,3 +326,21 @@ def list_zones() -> list[str]:
     if not ZONES_DIR.exists():
         return []
     return sorted(p.stem for p in ZONES_DIR.glob("*.json"))
+
+
+def find_spawn(zone: "Zone",
+               is_solid_fn: "Callable[[float, float], bool]"
+               ) -> tuple[float, float]:
+    """Find a walkable spawn position in *zone*.
+
+    Tries the zone anchor first, then scans every cell.
+    Falls back to the zone centre if nothing is walkable.
+    """
+    px, py = float(zone.anchor[1]), float(zone.anchor[0])
+    if not is_solid_fn(px, py):
+        return px, py
+    for r in range(zone.height):
+        for c in range(zone.width):
+            if not is_solid_fn(c + 0.5, r + 0.5):
+                return c + 0.5, r + 0.5
+    return zone.width / 2.0, zone.height / 2.0

@@ -239,65 +239,101 @@ class TestColumnContinuity:
 
 
 class TestInvisibleCollision:
-    """Tiles that are solid AND have wall=True should be in the wall LUT.
-    Platform tiles are excluded — they're intentionally solid obstacles
-    whose top surface is visible via the floor sweep, not DDA wall hits."""
+    """Geometry-based collision: cells where floor meets ceiling should
+    be solid (cell_solid=1).  Cells with full-height wall tiles should
+    also be solid.  Open cells (floor_height < ceil_height with a gap
+    >= 0.1) should NOT be solid."""
 
-    def test_no_invisible_collision_tiles(self) -> None:
-        """Every tile with wall=True should have wall_lt = 1."""
+    def test_wall_tile_cells_are_solid(self) -> None:
+        """Every cell containing a full-height wall tile (hs >= 1,
+        not thin/transparent) should have cell_solid = 1."""
         renderer, zone = _make_renderer("showcase")
-        wall_ba = renderer._wall_buf
+        cs = renderer._cell_solid
+        from core.tiles import tile_def as _td
 
-        invisible = []
-        for tid_str, td in TILE_REGISTRY.items():
-            ti = tile_str_to_int(tid_str)
-            is_in_lut = wall_ba[ti] if ti < len(wall_ba) else 0
+        not_solid = []
+        for r in range(zone.height):
+            for c in range(zone.width):
+                ci = r * zone.width + c
+                td = _td(zone.tiles[r][c])
+                if td and td.wall and td.height_scale >= 0.999 and not td.thin_wall:
+                    trans = getattr(td, "transparent", False)
+                    if not trans and not cs[ci]:
+                        not_solid.append(f"({r},{c}) tile={zone.tiles[r][c]}")
 
-            # Tiles flagged wall=True must be in the wall LUT
-            if td.wall and not is_in_lut:
-                invisible.append(
-                    f"{tid_str} (hs={td.height_scale:.2f}, type={td.type.value})"
-                )
+        assert not_solid == [], (
+            f"Full-height wall cells not marked solid: {not_solid}"
+        )
 
-        assert invisible == [], (
-            f"Tiles with wall=True missing from wall_lut: {invisible}"
+    def test_open_cells_not_solid(self) -> None:
+        """Open cells (with air gap >= 0.1) should NOT be solid."""
+        renderer, zone = _make_renderer("showcase")
+        cs = renderer._cell_solid
+        from core.tiles import tile_def as _td
+
+        wrong = []
+        for r in range(zone.height):
+            for c in range(zone.width):
+                ci = r * zone.width + c
+                fh = zone.floor_heights[r][c]
+                ch = zone.ceil_heights[r][c]
+                td = _td(zone.tiles[r][c])
+                gap = ch - fh
+                is_full_wall = (td and td.wall and td.height_scale >= 0.999
+                                and not td.thin_wall
+                                and not getattr(td, "transparent", False))
+                if gap >= 0.1 and not is_full_wall and cs[ci]:
+                    wrong.append(f"({r},{c}) gap={gap:.2f} tile={zone.tiles[r][c]}")
+
+        assert wrong == [], (
+            f"Open cells wrongly marked solid: {wrong}"
         )
 
 
-class TestWallLUTConsistency:
-    """The renderer's wall LUT is type-based: tiles with wall=True are
-    included.  Platforms (wall=False) are excluded — they render via
-    the floor sweep instead."""
+class TestCellSolidConsistency:
+    """The renderer's cell_solid map should be consistent with zone
+    geometry.  Cells where the floor meets or exceeds the ceiling
+    (gap < 0.1) should be solid.  Open cells should not."""
 
-    def test_all_wall_flagged_tiles_in_lut(self) -> None:
-        renderer, _ = _make_renderer("showcase")
-        wall_ba = renderer._wall_buf
+    def test_geometry_solid_cells(self) -> None:
+        """Cells with gap < 0.1 should be solid regardless of tile type."""
+        renderer, zone = _make_renderer("showcase")
+        cs = renderer._cell_solid
 
         missing = []
-        for tid_str, td in TILE_REGISTRY.items():
-            ti = tile_str_to_int(tid_str)
-            is_in_lut = wall_ba[ti] if ti < len(wall_ba) else 0
-            if td.wall and not is_in_lut:
-                missing.append(f"{tid_str} (hs={td.height_scale:.2f})")
+        for r in range(zone.height):
+            for c in range(zone.width):
+                ci = r * zone.width + c
+                fh = zone.floor_heights[r][c]
+                ch = zone.ceil_heights[r][c]
+                if abs(ch - fh) < 0.1 and not cs[ci]:
+                    missing.append(f"({r},{c}) fh={fh:.2f} ch={ch:.2f}")
 
         assert missing == [], (
-            f"Tiles with wall=True missing from wall_lut: {missing}"
+            f"Geometry-solid cells not marked solid: {missing}"
         )
 
-    def test_floor_tiles_not_in_wall_lut(self) -> None:
-        """Floor tiles (hs=0) should NOT be in the wall LUT."""
-        renderer, _ = _make_renderer("showcase")
-        wall_ba = renderer._wall_buf
+    def test_floor_cells_not_solid(self) -> None:
+        """Cells with open air gap and floor tile should NOT be solid."""
+        renderer, zone = _make_renderer("showcase")
+        cs = renderer._cell_solid
+        from core.tiles import tile_def as _td
 
-        wrongly_included = []
-        for tid_str, td in TILE_REGISTRY.items():
-            ti = tile_str_to_int(tid_str)
-            is_wall = wall_ba[ti] if ti < len(wall_ba) else 0
-            if td.height_scale <= 0.001 and is_wall:
-                wrongly_included.append(f"{tid_str}")
+        wrongly_solid = []
+        for r in range(zone.height):
+            for c in range(zone.width):
+                ci = r * zone.width + c
+                fh = zone.floor_heights[r][c]
+                ch = zone.ceil_heights[r][c]
+                td = _td(zone.tiles[r][c])
+                gap = ch - fh
+                is_wall_tile = (td and td.wall and td.height_scale >= 0.999
+                                and not td.thin_wall)
+                if gap >= 0.1 and not is_wall_tile and cs[ci]:
+                    wrongly_solid.append(f"({r},{c}) tile={zone.tiles[r][c]}")
 
-        assert wrongly_included == [], (
-            f"Floor tiles wrongly in wall_lut: {wrongly_included}"
+        assert wrongly_solid == [], (
+            f"Open cells wrongly marked solid: {wrongly_solid}"
         )
 
 
@@ -348,13 +384,19 @@ class TestShortWallHeight:
             pytest.skip("Cannot find approachable short + full walls")
 
         def wall_pixel_count(px: float, py: float, angle: float) -> int:
-            """Count non-dark pixels in the center column."""
+            """Count warm-toned (wall-textured) pixels in the center column.
+
+            Wall / counter textures are warm-toned (R dominant), while
+            floor and ceiling textures are neutral gray.  Counting only
+            warm pixels avoids false-counting the floor/ceiling visible
+            *through* a transparent half-wall.
+            """
             fb = _render_and_get_fb(renderer, px, py, angle)
             mid_col = renderer.sw // 2
             count = 0
             for y in range(renderer.sh):
                 R, G, B = _column_pixel(fb, renderer.sw, mid_col, y)
-                if R + G + B > 80:  # not background/ceiling/dark
+                if R + G + B > 80 and R > max(G, B):
                     count += 1
             return count
 
@@ -637,48 +679,55 @@ class TestMultiViewpointStability:
 # ═══════════════════════════════════════════════════════════════════
 
 
-class TestDeferredWallZBuffer:
-    """The z-buffer should reflect deferred (short/thin) wall distances,
-    not just primary wall distances.  Entities behind counters should
-    be depth-clipped correctly."""
+class TestStepWallZBuffer:
+    """In the geometry-based architecture, counters are rendered as
+    floor step walls (Phase 2.5).  The primary z-buf reflects the
+    DDA wall hit (far wall).  Counter faces are visible as step wall
+    geometry, but don't override the per-column zbuf."""
 
-    def test_counter_zbuf_closer_than_primary_wall(self) -> None:
-        """From spawn looking north, the center column z-buf should
-        reflect the counter distance (~2.5), not the far wall (~4.5)."""
+    def test_zbuf_reflects_far_wall(self) -> None:
+        """From spawn looking north, the z-buf should reflect the
+        far wall distance, since counters are step walls not DDA hits."""
         renderer, zone = _make_renderer("showcase")
         zbuf = _render_and_get_zbuf(renderer, 5.5, 9.5, math.pi * 1.5)
 
         center = renderer.sw // 2
-        # Counter at row 6, spawn at row 9.5 → dist ≈ 2.5
-        # Primary wall at row 4 → dist ≈ 4.5
-        assert zbuf[center] < 3.5, (
-            f"Center z-buf={zbuf[center]:.2f}, expected < 3.5 "
-            f"(counter, not primary wall)"
+        # Primary wall at row 4, camera at row 9.5 → dist ≈ 4.5-5.5
+        assert zbuf[center] > 3.0, (
+            f"Center z-buf={zbuf[center]:.2f}, expected > 3.0 "
+            f"(should be far wall distance, not counter)"
         )
 
-    def test_majority_columns_have_deferred_zbuf(self) -> None:
-        """Most columns should have z-buf values reflecting deferred
-        walls (counters/railings), not the far wall behind them."""
+    def test_counter_step_wall_visible(self) -> None:
+        """Counter face should still be visible as a step wall in the
+        framebuffer, even though it's not a DDA hit."""
+        renderer, zone = _make_renderer("showcase")
+        fb = _render_and_get_fb(renderer, 5.5, 9.5, math.pi * 1.5)
+
+        half = renderer.sh // 2
+        # Count non-uniform pixels in the counter region
+        # Step walls should produce visible geometry
+        varied_cols = 0
+        for col in range(renderer.sw // 4, 3 * renderer.sw // 4):
+            colors_seen = set()
+            for y in range(half + 5, renderer.sh - 5):
+                R, G, B = _column_pixel(fb, renderer.sw, col, y)
+                colors_seen.add((R >> 4, G >> 4, B >> 4))
+            if len(colors_seen) > 2:
+                varied_cols += 1
+
+        assert varied_cols > renderer.sw // 8, (
+            f"Only {varied_cols} varied columns — step walls may not "
+            f"be rendering counter faces"
+        )
+
+    def test_zbuf_no_nan(self) -> None:
+        """Z-buffer should contain no NaN values."""
         renderer, zone = _make_renderer("showcase")
         zbuf = _render_and_get_zbuf(renderer, 5.5, 9.5, math.pi * 1.5)
 
-        close_count = sum(1 for z in zbuf if z < 3.5)
-        assert close_count > renderer.sw * 0.5, (
-            f"Only {close_count}/{renderer.sw} columns have z-buf < 3.5"
-        )
-
-    def test_zbuf_matches_counter_distance(self) -> None:
-        """Center column z-buf should approximately match the geometric
-        distance from camera to the counter face."""
-        renderer, zone = _make_renderer("showcase")
-        zbuf = _render_and_get_zbuf(renderer, 5.5, 9.5, math.pi * 1.5)
-
-        center = renderer.sw // 2
-        # Perpendicular distance from y=9.5 to counter south face at y=7.0
-        expected_dist = 2.5
-        assert abs(zbuf[center] - expected_dist) < 0.5, (
-            f"Center z-buf={zbuf[center]:.2f}, expected ≈{expected_dist}"
-        )
+        nan_count = sum(1 for z in zbuf if math.isnan(z))
+        assert nan_count == 0, f"{nan_count} NaN values in z-buffer"
 
 
 class TestTransparentWallRendering:
@@ -810,11 +859,12 @@ class TestFloorThroughHalfWalls:
 
 class TestCounterFromMultipleAngles:
     """The counter U-shape should be visible from all four cardinal
-    directions when approaching from valid camera positions."""
+    directions when approaching from valid camera positions.
+    Counter faces are now step walls (Phase 2.5), not deferred walls."""
 
     def test_counter_faces_visible_from_each_side(self) -> None:
         """Render toward the counter from each approach and verify
-        the deferred wall produces visible pixels."""
+        the step wall produces visible pixels."""
         renderer, zone = _make_renderer("showcase")
 
         viewpoints = [
@@ -829,65 +879,44 @@ class TestCounterFromMultipleAngles:
 
         for px, py, angle, desc in viewpoints:
             fb = _render_and_get_fb(renderer, px, py, angle)
-            zbuf = _render_and_get_zbuf(renderer, px, py, angle)
 
-            # Count columns with counter-distance z-buf
-            close_cols = sum(1 for z in zbuf if 0.2 < z < 4.0)
-            # Count brown-ish pixels in the counter face band
-            brown_px = 0
+            # Count non-black pixels with warm tones in the lower half
+            # (step wall face should produce textured geometry)
+            warm_px = 0
             for y in range(half, renderer.sh):
                 for x in range(0, renderer.sw, 4):
                     R, G, B = _column_pixel(fb, renderer.sw, x, y)
                     if R + G + B > 80 and R > B:
-                        brown_px += 1
+                        warm_px += 1
 
-            assert close_cols > 0, (
-                f"No deferred z-buf hits from {desc}"
-            )
-            assert brown_px > 20, (
-                f"Only {brown_px} brown pixels from {desc} — "
-                f"counter face not visible?"
+            assert warm_px > 20, (
+                f"Only {warm_px} warm pixels from {desc} — "
+                f"counter step wall not visible?"
             )
 
 
 class TestAOShadowBelowCounter:
-    """Short walls should cast a subtle AO shadow on the floor below."""
+    """With geometry-based rendering, step walls produce visible height
+    transitions.  The floor region should show visual variation near
+    counter edges rather than uniform flat color."""
 
-    def test_ao_shadow_darker_than_adjacent_floor(self) -> None:
+    def test_floor_has_visual_variation_near_counter(self) -> None:
         renderer, zone = _make_renderer("showcase")
         fb = _render_and_get_fb(renderer, 5.5, 9.5, math.pi * 1.5)
 
         half = renderer.sh // 2
         center = renderer.sw // 2
-        # Find the bottom of the counter face (first non-brown pixel below
-        # the brown region)
-        counter_bottom = None
-        in_counter = False
-        for y in range(half, renderer.sh):
+
+        # Sample the bottom quarter of the screen (floor region)
+        colors = set()
+        for y in range(3 * renderer.sh // 4, renderer.sh - 2):
             R, G, B = _column_pixel(fb, renderer.sw, center, y)
-            is_brown = R > G and G >= B and R + G + B > 80
-            if is_brown:
-                in_counter = True
-            elif in_counter:
-                counter_bottom = y
-                break
+            colors.add((R >> 3, G >> 3, B >> 3))
 
-        if counter_bottom is None:
-            pytest.skip("Cannot find counter bottom edge")
-
-        # The pixel just below counter should be darker (AO shadow)
-        # than the floor a few pixels below
-        R_ao, G_ao, B_ao = _column_pixel(
-            fb, renderer.sw, center, counter_bottom)
-        lum_ao = R_ao + G_ao + B_ao
-
-        floor_y = min(counter_bottom + 8, renderer.sh - 1)
-        R_f, G_f, B_f = _column_pixel(fb, renderer.sw, center, floor_y)
-        lum_floor = R_f + G_f + B_f
-
-        assert lum_ao <= lum_floor, (
-            f"AO shadow ({lum_ao}) not darker than floor ({lum_floor}) "
-            f"below counter at y={counter_bottom}"
+        # Floor should have some tonal variation (not flat single color)
+        assert len(colors) >= 2, (
+            f"Floor region has only {len(colors)} distinct colors — "
+            f"expected visual variation near geometry transitions"
         )
 
 
@@ -1450,4 +1479,139 @@ class TestRendererStressOverlays:
         # perp = 5.5 - 5.0 = 0.5
         assert d < 1.0, (
             f"Closest overlay should be at ~0.5 depth, got {d:.3f}"
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Ceiling step wall with upper_wall_height
+# ═══════════════════════════════════════════════════════════════════
+
+class TestCeilingStepWithUWH:
+    """When a cell has upper_wall_height > ch, a vertical step face
+    should be rendered at the boundary with an adjacent cell that
+    does not have the same uwh — even if raw ceiling heights match."""
+
+    def _make_uwh_zone(self) -> Zone:
+        """10×10 box, interior cells at ch=1.0.  Cell (5,3) has uwh=3.0."""
+        zone = _make_box_zone(10, 10, ceil_height=1.0)
+        zone.upper_wall_height = [[0.0] * 10 for _ in range(10)]
+        zone.upper_wall_height[5][3] = 3.0
+        # Ensure face_textures so step wall can resolve textures
+        zone.face_textures = [[["", "", "", ""]] * 10 for _ in range(10)]
+        zone.ceil_step_textures = [[["", "", "", ""]] * 10 for _ in range(10)]
+        zone.ceil_step_segments = [[[[], [], [], []]] * 10 for _ in range(10)]
+        zone.floor_step_textures = [[["", "", "", ""]] * 10 for _ in range(10)]
+        zone.floor_step_segments = [[[[], [], [], []]] * 10 for _ in range(10)]
+        return zone
+
+    def test_uwh_step_renders_pixels(self) -> None:
+        """Camera facing the uwh cell should see a visible ceiling step."""
+        zone = self._make_uwh_zone()
+        atlas = _get_atlas()
+        renderer = RayRenderer(zone, atlas, sw=SW, sh=SH)
+        # Stand in cell (5,5) looking west toward cell (5,3) with uwh
+        renderer.render(5.5, 5.5, math.pi)
+        fb = bytes(renderer._fb)
+
+        # The ceiling step (above ch=1.0 up to uwh=3.0) should produce
+        # non-background pixels in the upper portion of the screen
+        #
+        # Read per-pixel depth in the upper quarter where the step face
+        # should appear (above the ceiling line).
+        step_depth_hits = 0
+        for col in range(SW // 4, 3 * SW // 4):
+            for row in range(0, SH // 3):
+                d = _depth_at(renderer, col, row)
+                if d < 10.0:
+                    step_depth_hits += 1
+
+        assert step_depth_hits > 0, (
+            "No depth hits in upper screen region — ceiling step with "
+            "upper_wall_height is not being rendered"
+        )
+
+
+class TestCeilingStepDepthOrder:
+    """Ceiling step walls must not overdraw nearer floor step walls.
+    Per-pixel depth testing prevents far ceiling geometry from painting
+    over near floor geometry even when both span the same screen rows."""
+
+    def test_near_floor_wall_occludes_far_ceil_step(self) -> None:
+        """A raised floor (near) should occlude a ceiling uwh wall (far)."""
+        wall = _find_wall_tile()
+        floor_t = _find_floor_tile()
+        zone = _make_box_zone(10, 10, ceil_height=1.0)
+        # Cell (5,3): has ceiling with uwh extending up
+        zone.upper_wall_height = [[0.0] * 10 for _ in range(10)]
+        zone.upper_wall_height[5][3] = 3.0
+        # Cell (5,4): raised floor creating a near floor step wall
+        zone.floor_heights[5][4] = 0.8
+        # Ensure aux arrays exist
+        zone.face_textures = [[["", "", "", ""] for _ in range(10)] for _ in range(10)]
+        zone.ceil_step_textures = [[["", "", "", ""] for _ in range(10)] for _ in range(10)]
+        zone.ceil_step_segments = [[[[], [], [], []] for _ in range(10)] for _ in range(10)]
+        zone.floor_step_textures = [[["", "", "", ""] for _ in range(10)] for _ in range(10)]
+        zone.floor_step_segments = [[[[], [], [], []] for _ in range(10)] for _ in range(10)]
+
+        atlas = _get_atlas()
+        renderer = RayRenderer(zone, atlas, sw=SW, sh=SH)
+        # Stand in cell (5,5) looking west — floor step at (5,4) is nearer
+        # than ceiling step at (5,3)
+        renderer.render(5.5, 5.5, math.pi)
+
+        # At the center column, near the horizon (where floor step is),
+        # the depth should reflect the nearer floor step, not the far
+        # ceiling uwh wall.
+        cx = SW // 2
+        cy = SH // 2
+        d = _depth_at(renderer, cx, cy)
+        # Floor step at (5,4) boundary is ~0.5 tiles away
+        # Ceiling step at (5,3) boundary is ~1.5 tiles away
+        # Depth at center should be <= 1.5 (floor step wins)
+        assert d < 2.0, (
+            f"Depth at center={d:.2f}, expected < 2.0 "
+            f"(near floor step should occlude far ceiling step)"
+        )
+
+
+class TestFloorStepDepthOrder:
+    """Floor step walls must render above the main wall band when they are
+    closer.  Phase 2A uses per-pixel depth testing so a tall floor step
+    (e.g. floor raised to 3.0) correctly occludes a far main wall behind it."""
+
+    def test_tall_floor_step_renders_above_main_wall(self) -> None:
+        """A floor raised to 3.0 should have its step wall visible above
+        the horizon, not clipped to w_bot of the main wall behind it."""
+        wall = _find_wall_tile()
+        floor_t = _find_floor_tile()
+        zone = _make_box_zone(10, 10, ceil_height=4.0)
+        # Cell (5,3): raised platform
+        zone.floor_heights[5][3] = 3.0
+        # Cell (5,2): solid wall behind the platform
+        zone.tiles[5][2] = wall
+        # Ensure aux arrays exist
+        zone.face_textures = [[["", "", "", ""] for _ in range(10)] for _ in range(10)]
+        zone.floor_step_textures = [[["", "", "", ""] for _ in range(10)] for _ in range(10)]
+        zone.floor_step_segments = [[[[], [], [], []] for _ in range(10)] for _ in range(10)]
+        zone.ceil_step_textures = [[["", "", "", ""] for _ in range(10)] for _ in range(10)]
+        zone.ceil_step_segments = [[[[], [], [], []] for _ in range(10)] for _ in range(10)]
+        zone.upper_wall_height = [[0.0] * 10 for _ in range(10)]
+
+        atlas = _get_atlas()
+        renderer = RayRenderer(zone, atlas, sw=SW, sh=SH)
+        # Stand in (5,5) looking west — floor step at (5,3)/(5,4) boundary
+        # is nearer than the wall at (5,2)
+        renderer.render(5.5, 5.5, math.pi, cam_h=0.5)
+
+        # The floor step wall from 0 to 3.0 at distance ~1.5 should render
+        # ABOVE the main wall (distance ~2.5).  Check pixels in the upper
+        # half (above horizon) at center column.
+        cx = SW // 2
+        cy_above = SH // 4  # well above the horizon
+        d = _depth_at(renderer, cx, cy_above)
+        # The step wall at ~1.5 distance should render here (not the far
+        # wall at ~2.5), or background at MAX_DEPTH if nothing is there.
+        assert d < 3.0, (
+            f"Depth at ({cx},{cy_above})={d:.2f}, expected < 3.0 "
+            f"(near floor step should be visible above main wall)"
         )

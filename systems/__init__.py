@@ -1,20 +1,19 @@
-"""systems — All game mechanics, on-screen and off-screen.
+"""systems — Game mechanics and rendering systems.
 
-On-screen systems run every frame via engine/tick.py.  Off-screen
-systems run on an event queue via the offscreen/ subpackage.  The seam
-between the two modes is offscreen/lod.py.
-
-Subpackages
------------
-engine/       — frame pipeline (tick), input, entity spawning, particle VFX
-movement/     — physics / collision, A* pathfinding
-combat/       — engagement FSM, damage, targeting, projectiles, movement
-                + offscreen.py (stat-check combat for off-screen encounters)
-ai/           — brain registry, perception, steering, defense, wander, villager
-                + offscreen.py (off-screen AI decision cycle)
-actions/      — player action handlers (attacks, interact, inventory)
-offscreen/    — off-screen world simulation (scheduler, LOD, travel, checkpoints)
-items/        — inventory consumption, loot tables
-social/       — settlements, crime & law, dialogue trees, faction disposition
-scheduling/   — NPC needs, scheduled activities, communal meals
+Modules
+-------
+raycaster       Pure-Python DDA wall-casting
+ray_renderer    Python wrapper for C raycaster (_ray_render)
+textures        Tile texture atlas loading / caching
+physics         Tile-collision movement system
+pathfinding     A*, BFS flood-fill, line-of-sight
+gameplay        Item pickup, containers, loot, inventory
+interaction     Nearby-entity detection + facing preference
+spawner         Entity creation from data descriptors
+beast_spawner   Periodic hostile-creature spawning
+combat_sim      Off-screen stat-check combat
+zone_sim        Off-screen zone simulation (NPC movement, portals)
+lod             Level-of-detail entity promote / demote
+item_registry   Item template lookup from items.toml
+dialogue_gen    Contextual NPC dialogue tree generation
 """

@@ -54,12 +54,8 @@ Detection Range Hierarchy (small → large):
     30 m   LOD high-detail simulation zone
 """
 
-# ── Unit scale ──────────────────────────────────────────────────────
-TILE_METRES = 1.0  # 1 tile = 1 metre (canonical scale)
-
 # ── Game-time conversion ────────────────────────────────────────────
 DAY_LENGTH: float = 300.0              # real seconds per in-game day
-SECONDS_PER_GAME_MINUTE: float = DAY_LENGTH / (24.0 * 60.0)  # ~0.2083 s
 
 # Render
 TILE_SIZE = 32
@@ -78,7 +74,8 @@ from core.tiles import (                          # noqa: E402
     tile_def,
 )
 
-# Legacy scalar aliases (prefer ``tile_def(id)`` for new code)
+# Tile-ID aliases used by tests and gameplay code.
+# Prefer ``tile_def(id)`` or bare string IDs for new code.
 TILE_VOID       = "void"
 TILE_GRASS      = "grass"
 TILE_DIRT       = "dirt"
@@ -86,27 +83,7 @@ TILE_STONE      = "stone"
 TILE_WATER      = "water"
 TILE_WOOD_FLOOR = "wood_floor"
 TILE_WALL       = "wall"
-TILE_SAND       = "sand"
-TILE_RUBBLE     = "rubble"
-TILE_DOOR       = "door"   # was TILE_TELEPORTER
+TILE_DOOR       = "door"
 TILE_WINDOW     = "window"
-TILE_FARMLAND   = "farmland"
-TILE_GATEWAY    = "gateway"
-TILE_CONCRETE   = "concrete"
-TILE_TILE_FLOOR = "tile_floor"
-TILE_METAL_WALL = "metal_wall"
 TILE_HALF_WALL  = "half_wall"
 TILE_LOW_WALL   = "low_wall"
-TILE_PILLAR     = "pillar"
-TILE_COUNTER_TOP = "counter_top"
-TILE_RAILING    = "railing"
-
-# Backward-compat alias
-TILE_TELEPORTER = TILE_DOOR
-
-# ── Direction helpers ────────────────────────────────────────────────
-DIRECTIONS = ("up", "down", "left", "right")
-DIR_ARROWS: dict[str, str] = {
-    "up": "\u25B2", "down": "\u25BC",
-    "left": "\u25C0", "right": "\u25B6",
-}
