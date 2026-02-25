@@ -57,7 +57,10 @@ COL_TOOL_SELECT  = (255, 220, 100)
 COL_FACE_HL      = (255, 255, 255, 90)  # face highlight overlay alpha
 
 # ─── Tool definitions ─────────────────────────────────────────────
-TOOLS = ("sculpt", "paint", "fill", "erase", "segment", "select")
+# ─── Stamp tool colour ────────────────────────────────────────────
+COL_TOOL_STAMP   = (180, 140, 255)
+
+TOOLS = ("sculpt", "paint", "fill", "erase", "segment", "select", "stamp")
 TOOL_LABELS = {
     "sculpt":  "SCULPT",
     "paint":   "PAINT",
@@ -65,6 +68,7 @@ TOOL_LABELS = {
     "erase":   "ERASER",
     "segment": "DETAIL",
     "select":  "SELECT",
+    "stamp":   "MODEL",
 }
 TOOL_COLORS = {
     "sculpt":  COL_TOOL_WALL,
@@ -73,6 +77,7 @@ TOOL_COLORS = {
     "erase":   COL_TOOL_ERASE,
     "segment": COL_TOOL_SEGMENT,
     "select":  COL_TOOL_SELECT,
+    "stamp":   COL_TOOL_STAMP,
 }
 TOOL_KEYS = {  # key → tool name
     pygame.K_1: "sculpt",
@@ -81,6 +86,7 @@ TOOL_KEYS = {  # key → tool name
     pygame.K_4: "erase",
     pygame.K_5: "segment",
     pygame.K_6: "select",
+    pygame.K_7: "stamp",
 }
 TOOL_HINTS = {
     "sculpt": {
@@ -171,6 +177,17 @@ TOOL_HINTS = {
             },
         },
         "keys": "X=floor/ceiling mode",
+    },
+    "stamp": {
+        "title": "Model",
+        "actions": {
+            "any": {
+                "LMB": "Apply preset",
+                "RMB": "Capture cell → name",
+                "Scroll": "Cycle presets",
+            },
+        },
+        "keys": "M=cycle apply mode | 7=Model tool",
     },
 }
 

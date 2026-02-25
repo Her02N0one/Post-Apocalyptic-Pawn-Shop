@@ -1,0 +1,14 @@
+# Wooden Counter — Raised floor (counter height) with wood textures.
+# Creates a half-height platform suitable for shop counters.
+
+name = "Wooden Counter"
+category = "Floors"
+color = [160, 120, 60]
+
+# apply_mode: "replace" | "stack_floor" | "stack_ceil" | "merge"
+apply_mode = "stack_floor"
+
+# floor_height: 0.0–10.0 (at 10.0 the cell becomes a solid column)
+floor_height = 0.5
+floor_texture = "wood_floor"
+floor_step_textures = ["wood_panel", "wood_panel", "wood_panel", "wood_panel"]

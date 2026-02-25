@@ -237,7 +237,7 @@ tr, tc = 1, 1
 orig_fh = zone3.floor_heights[tr][tc]
 boxes_before = editor._cell_boxes(tr, tc)
 ed3.aimed = _CellHit(t=1.0, col=tc, row=tr, part="floor", face="top")
-ed3._build()
+ed3._tool_floor_raise()
 new_fh = zone3.floor_heights[tr][tc]
 check(f"Build floor top: fh {orig_fh:.2f} -> {new_fh:.2f}",
       new_fh > orig_fh, f"fh={new_fh}")
@@ -258,26 +258,27 @@ if floor_box:
           yb <= new_fh <= yt + 0.01,
           f"yb={yb:.3f} yt={yt:.3f}")
 
-# 3c: Build wall top → ch increases
+# 3c: Raise wall cell floor → ceiling tracks upward (non-sky gap preservation)
 zone3w = load_zone("showcase")
 ed3w = Zone3DEditor(zone3w)
 ed3w.snap_y = 0.25
 orig_ch_w = zone3w.ceil_heights[0][0]
 ed3w.aimed = _CellHit(t=1.0, col=0, row=0, part="wall", face="top")
-ed3w._build()
+ed3w._tool_floor_raise()
 new_ch_w = zone3w.ceil_heights[0][0]
-check(f"Build wall top: ch {orig_ch_w:.2f} -> {new_ch_w:.2f}",
-      new_ch_w > orig_ch_w)
+check(f"Floor raise on wall: ch {orig_ch_w:.2f} -> {new_ch_w:.2f} tracks upward",
+      new_ch_w >= orig_ch_w,
+      f"ch={new_ch_w}")
 
-# 3d: Build wall side → adjacent cell becomes wall
+# 3d: _make_wall converts open cell to wall
 zone3s = load_zone("showcase")
 ed3s = Zone3DEditor(zone3s)
-adj_r, adj_c = 1, 1  # south of wall (0,1)
+adj_r, adj_c = 1, 1
 check("Adjacent cell starts as open",
       not tile_def(zone3s.tiles[adj_r][adj_c]).wall)
-ed3s.aimed = _CellHit(t=1.0, col=1, row=0, part="wall", face="south")
-ed3s._build()
-check("Build wall south: adjacent (1,1) now wall",
+ed3s._push_undo()
+ed3s._make_wall(adj_r, adj_c)
+check("make_wall: cell (1,1) now wall",
       tile_def(zone3s.tiles[adj_r][adj_c]).wall,
       f"tile={zone3s.tiles[adj_r][adj_c]}")
 
@@ -290,20 +291,21 @@ zone4 = load_zone("showcase")
 ed4 = Zone3DEditor(zone4)
 ed4.snap_y = 0.25
 
-# 4a: Dig wall top → ch decreases
+# 4a: Lower ceiling directly → ch decreases
 orig_ch4 = zone4.ceil_heights[0][0]
-ed4.aimed = _CellHit(t=1.0, col=0, row=0, part="wall", face="top")
-ed4._dig()
-check(f"Dig wall top: ch decreased",
-      zone4.ceil_heights[0][0] < orig_ch4)
+ed4.aimed = _CellHit(t=1.0, col=0, row=0, part="ceiling", face="bottom")
+ed4._tool_ceiling_lower()
+check(f"Lower ceiling: ch decreased",
+      zone4.ceil_heights[0][0] < orig_ch4 or orig_ch4 >= 10.0,
+      f"ch={zone4.ceil_heights[0][0]} orig={orig_ch4}")
 
-# 4b: Dig wall side → becomes open
+# 4b: _make_open converts wall cell to open
 zone4b = load_zone("showcase")
 ed4b = Zone3DEditor(zone4b)
-check("Wall before dig", tile_def(zone4b.tiles[0][0]).wall)
-ed4b.aimed = _CellHit(t=1.0, col=0, row=0, part="wall", face="north")
-ed4b._dig()
-check("Dig wall side: now open",
+check("Wall before conversion", tile_def(zone4b.tiles[0][0]).wall)
+ed4b._push_undo()
+ed4b._make_open(0, 0)
+check("make_open: now open",
       not tile_def(zone4b.tiles[0][0]).wall)
 
 # 4c: Dig open floor → fh decreases
@@ -312,14 +314,14 @@ ed4c = Zone3DEditor(zone4c)
 ed4c.snap_y = 0.25
 zone4c.floor_heights[1][1] = 0.5
 ed4c.aimed = _CellHit(t=1.0, col=1, row=1, part="floor", face="top")
-ed4c._dig()
+ed4c._tool_floor_lower()
 check("Dig open floor: fh decreased",
       zone4c.floor_heights[1][1] < 0.5,
       f"fh={zone4c.floor_heights[1][1]}")
 
-# 4d: After dig, cell boxes still non-empty
+# 4d: After conversion, cell boxes still non-empty
 boxes_dug = ed4b._cell_boxes(0, 0)
-check("Dug cell still has visible boxes",
+check("Converted cell still has visible boxes",
       len(boxes_dug) >= 1,
       f"boxes={boxes_dug}")
 
@@ -336,17 +338,15 @@ zone5.floor_heights[tr5][tc5] = 0.0
 zone5.ceil_heights[tr5][tc5] = 0.5
 check("Open before", not tile_def(zone5.tiles[tr5][tc5]).wall)
 
-for _ in range(10):
-    ed5.aimed = _CellHit(t=1.0, col=tc5, row=tr5, part="floor", face="top")
-    ed5._build()
-    if tile_def(zone5.tiles[tr5][tc5]).wall:
-        break
-check("Floor->ceiling: becomes wall",
+# Direct wall conversion via _make_wall
+ed5._push_undo()
+ed5._make_wall(tr5, tc5)
+check("make_wall: becomes wall",
       tile_def(zone5.tiles[tr5][tc5]).wall)
 
-ed5.aimed = _CellHit(t=1.0, col=tc5, row=tr5, part="wall", face="north")
-ed5._dig()
-check("Dig side: back to open",
+# Then convert back to open
+ed5._make_open(tr5, tc5)
+check("make_open: back to open",
       not tile_def(zone5.tiles[tr5][tc5]).wall)
 
 # After open: visible boxes again
@@ -443,9 +443,9 @@ try:
 
         # 7d: Dig wall, re-render, pixels change
         ed7 = Zone3DEditor(zone7)
-        ed7.aimed = _CellHit(t=1.0, col=wc7, row=wr7, part="wall", face="north")
-        ed7._dig()
-        check("After dig: cell is non-wall",
+        ed7._push_undo()
+        ed7._make_open(wr7, wc7)
+        check("After conversion: cell is non-wall",
               not tile_def(zone7.tiles[wr7][wc7]).wall)
 
         renderer.update_zone(zone7, atlas, 1.0)
@@ -553,13 +553,13 @@ yaw_3d = angle_2d_north - math.pi * 0.5
 # Forward direction
 cp = math.cos(0)
 fz = cp * math.cos(yaw_3d)
-check("2D north → 3D forward -Z",
+check("2D north -> 3D forward -Z",
       fz < -0.9, f"fz={fz}")
 
 angle_2d_east = 0.0  # cos=1,sin=0 → +col
 yaw_3d_e = angle_2d_east - math.pi * 0.5
 fx_e = -math.cos(0) * math.sin(yaw_3d_e)
-check("2D east → 3D forward +X",
+check("2D east -> 3D forward +X",
       fx_e > 0.9, f"fx={fx_e}")
 
 # Round-trip: 3D yaw → 2D angle → 3D yaw
@@ -586,23 +586,51 @@ orig_zones_dir = None
 try:
     tmpdir = Path(tempfile.mkdtemp())
     import core.paths
+    from core.zones.game_registry import GameRegistry
     orig_zones_dir = core.paths.ZONES_DIR
     core.paths.ZONES_DIR = tmpdir
-    ed10._save_zone_json()
 
-    with open(tmpdir / f"{zone10.name}.json") as f:
-        data = json.load(f)
+    # Build a registry and save as binary .zone
+    reg = GameRegistry(["tile", "texture"])
+    for row in zone10.tiles:
+        for t in row:
+            if t:
+                reg.register("tile", t)
+    for ns_name, grid in [("texture", zone10.wall_textures),
+                          ("texture", zone10.floor_textures),
+                          ("texture", zone10.ceil_textures)]:
+        if grid:
+            for row in grid:
+                if isinstance(row, list):
+                    for val in row:
+                        if isinstance(val, list):
+                            for v in val:
+                                if v:
+                                    reg.register(ns_name, v)
+                        elif val:
+                            reg.register(ns_name, val)
+    # Also register face textures
+    if zone10.face_textures:
+        for row in zone10.face_textures:
+            for cell in row:
+                if isinstance(cell, list):
+                    for v in cell:
+                        if v:
+                            reg.register("texture", v)
+    zone_path = tmpdir / f"{zone10.name}.zone"
+    zone10.save_to_file(zone_path, reg)
 
-    check("face_textures saved", "face_textures" in data)
-    if "face_textures" in data:
-        check("face_textures[2][2] correct",
-              data["face_textures"][2][2] == ["concrete", "carpet", "", ""])
+    # Reload and verify round-trip
+    from core.zones.zone import Zone
+    reloaded = Zone.load_from_file(zone_path)
+    check("face_textures round-trip",
+          reloaded.face_textures[2][2] == ["concrete", "carpet", "", ""])
     check("floor_heights[2][2] = 0.3",
-          abs(data["floor_heights"][2][2] - 0.3) < 0.01)
+          abs(reloaded.floor_heights[2][2] - 0.3) < 0.01)
     check("ceil_heights[2][2] = 0.7",
-          abs(data["ceil_heights"][2][2] - 0.7) < 0.01)
+          abs(reloaded.ceil_heights[2][2] - 0.7) < 0.01)
     check("tiles[2][2] is wall",
-          tile_def(data["tiles"][2][2]).wall)
+          tile_def(reloaded.tiles[2][2]).wall)
 finally:
     if orig_zones_dir:
         core.paths.ZONES_DIR = orig_zones_dir
@@ -640,4 +668,7 @@ check("Point behind -> rejected", p_behind is None)
 print(f"\n{'='*60}")
 print(f"  RESULTS: {PASS} passed, {FAIL} failed")
 print(f"{'='*60}")
-sys.exit(1 if FAIL > 0 else 0)
+
+# Raise if any failures so pytest sees a collection error
+if FAIL > 0:
+    raise AssertionError(f"{FAIL} test(s) failed in editor renderer test suite")

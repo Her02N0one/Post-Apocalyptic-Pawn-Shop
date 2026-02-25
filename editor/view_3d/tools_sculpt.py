@@ -52,7 +52,9 @@ class SculptMixin:
         self.dirty = True
 
     def _tool_floor_lower(self) -> None:
-        """Lower floor height (pure shape change, no segmenting)."""
+        """Lower floor height.  Cleans up floor step segments when they
+        become invalid (floor returns to ground level or segments
+        extend beyond the new height)."""
         hit = self.aimed
         if not hit:
             return
@@ -65,11 +67,8 @@ class SculptMixin:
         self._push_undo()
         self._ensure_face_textures()
         zone.floor_heights[r][c] = new_fh
-        # Keep existing segment top-edges in sync with new height
-        for fi in range(4):
-            segs = zone.floor_step_segments[r][c][fi]
-            if segs:
-                segs[-1][1] = max(0.0, new_fh)
+        # Trim / clear floor step segments
+        self._trim_floor_segments(r, c, new_fh)
         self.dirty = True
 
     # ── Ceiling lower / raise / delete ────────────────────────────
@@ -96,7 +95,8 @@ class SculptMixin:
         self.dirty = True
 
     def _tool_ceiling_raise(self) -> None:
-        """Raise ceiling (clamped to SKY_HEIGHT)."""
+        """Raise ceiling (clamped to SKY_HEIGHT).  Clears ceiling step
+        segments when the ceiling reaches open sky."""
         hit = self.aimed
         if not hit:
             return
@@ -110,10 +110,13 @@ class SculptMixin:
             return
         self._push_undo()
         zone.ceil_heights[r][c] = new_ch
+        # Sky = no ceiling mass = no ceiling step segments
+        if new_ch >= SKY_HEIGHT - 0.01:
+            self._clear_ceil_segments(r, c)
         self.dirty = True
 
     def _tool_ceiling_delete(self) -> None:
-        """Delete ceiling (set to open sky)."""
+        """Delete ceiling (set to open sky).  Clears ceiling step segments."""
         hit = self.aimed
         if not hit:
             return
@@ -124,6 +127,7 @@ class SculptMixin:
             return
         self._push_undo()
         zone.ceil_heights[r][c] = SKY_HEIGHT
+        self._clear_ceil_segments(r, c)
         self.dirty = True
 
     # ── Toggle ceiling (T key) ────────────────────────────────────
@@ -142,9 +146,7 @@ class SculptMixin:
             zone.ceil_heights[r][c] = fh + DEFAULT_CEIL
         else:
             zone.ceil_heights[r][c] = SKY_HEIGHT
-            if hasattr(zone, 'upper_wall_height') and zone.upper_wall_height:
-                if len(zone.upper_wall_height) > r:
-                    zone.upper_wall_height[r][c] = 0.0
+            self._clear_ceil_segments(r, c)
         self.dirty = True
         return True
 
@@ -263,6 +265,7 @@ class SculptMixin:
 
         When raising the floor on a cell with a ceiling, the ceiling
         is pushed up together to preserve the gap.
+        When lowering, floor step segments are trimmed/cleared.
         """
         zone = self.zone
         fh = zone.floor_heights[r][c]
@@ -282,11 +285,74 @@ class SculptMixin:
         # Push ceiling up with floor so the gap is preserved
         if not is_sky and delta > 0:
             zone.ceil_heights[r][c] = min(CEIL_MAX, ch + delta)
-        for fi in range(4):
-            segs = zone.floor_step_segments[r][c][fi]
-            if segs:
-                segs[-1][1] = max(0.0, new_fh)
+        # Sync or trim floor step segments
+        if direction > 0:
+            for fi in range(4):
+                segs = zone.floor_step_segments[r][c][fi]
+                if segs:
+                    segs[-1][1] = max(0.0, new_fh)
+        else:
+            self._trim_floor_segments(r, c, new_fh)
         self.dirty = True
+
+    # ── Floor segment cleanup ───────────────────────────────────────
+
+    def _trim_floor_segments(self, r: int, c: int, new_fh: float) -> None:
+        """Trim or clear floor step segments after lowering the floor.
+
+        When ``new_fh`` drops back to ground level (\u2248 0.0), all floor
+        step segments AND floor step textures are cleared entirely.
+        Otherwise, segments whose boundaries extend above the new
+        floor mass height are popped or clamped.
+        """
+        zone = self.zone
+        hi = max(0.0, new_fh)
+
+        # Floor at ground level \u2192 no step mass \u2192 no segments.
+        if hi < 0.02:
+            for fi in range(4):
+                if zone.floor_step_segments and len(zone.floor_step_segments) > r:
+                    zone.floor_step_segments[r][c][fi] = []
+                if zone.floor_step_textures and len(zone.floor_step_textures) > r:
+                    zone.floor_step_textures[r][c][fi] = ""
+            return
+
+        # Non-zero floor: trim segments from top that exceed new height.
+        for fi in range(4):
+            if not (zone.floor_step_segments and len(zone.floor_step_segments) > r):
+                continue
+            segs = zone.floor_step_segments[r][c][fi]
+            if not segs:
+                continue
+            # Pop segments whose bottom boundary exceeds new height
+            while len(segs) > 1 and segs[-1][1] > hi + 0.02:
+                segs.pop()
+            # Clamp the surviving top segment
+            if segs:
+                segs[-1][1] = hi
+            # If only one segment left, collapse to flat texture
+            if len(segs) <= 1:
+                if segs and zone.floor_step_textures and len(zone.floor_step_textures) > r:
+                    zone.floor_step_textures[r][c][fi] = segs[0][0]
+                zone.floor_step_segments[r][c][fi] = []
+
+    # ── Ceiling segment cleanup ───────────────────────────────────
+
+    def _clear_ceil_segments(self, r: int, c: int) -> None:
+        """Clear all ceiling step segments and textures for cell (r, c).
+
+        Called when the ceiling is removed (raised to sky) or when
+        converting a wall back to open space.
+        """
+        zone = self.zone
+        for fi in range(4):
+            if zone.ceil_step_segments and len(zone.ceil_step_segments) > r:
+                zone.ceil_step_segments[r][c][fi] = []
+            if zone.ceil_step_textures and len(zone.ceil_step_textures) > r:
+                zone.ceil_step_textures[r][c][fi] = ""
+        # Also clear upper_wall_height since there's no ceiling mass
+        if zone.upper_wall_height and len(zone.upper_wall_height) > r:
+            zone.upper_wall_height[r][c] = 0.0
 
     # ── Cell type conversion ──────────────────────────────────────
 

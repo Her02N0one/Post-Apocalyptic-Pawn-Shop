@@ -1,0 +1,14 @@
+# Stone Platform — Raised stone floor with concrete sides.
+# A sturdy elevated platform for displays or elevated areas.
+
+name = "Stone Platform"
+category = "Floors"
+color = [140, 140, 130]
+
+# apply_mode: "replace" | "stack_floor" | "stack_ceil" | "merge"
+apply_mode = "stack_floor"
+
+# floor_height: 0.0–10.0 (at 10.0 the cell becomes a solid column)
+floor_height = 0.25
+floor_texture = "stone_floor"
+floor_step_textures = ["concrete", "concrete", "concrete", "concrete"]

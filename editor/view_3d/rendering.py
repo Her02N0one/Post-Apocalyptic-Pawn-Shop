@@ -352,6 +352,17 @@ class RenderingMixin:
             lines.append((f"Mode: {mode}  (X to toggle)", COL_HUD_VAL))
         lines.append((f"Snap: {self.snap_y}", COL_HUD_VAL))
         lines.append((f"Tex: {self.current_texture}", COL_HUD_VAL))
+        if self.tool == "stamp":
+            preset = self._stamp_current()
+            pname = preset.name if preset else "(none)"
+            lines.append((f"Model: {pname}", (180, 140, 255)))
+            mode_str = getattr(self, '_stamp_current_mode', lambda: "replace")()
+            lines.append((f"Mode: {mode_str}  (M)", (160, 200, 255)))
+            if getattr(self, '_capture_pending', False):
+                cap_name = getattr(self, '_capture_name', '')
+                lines.append(("", COL_HUD_TEXT))
+                lines.append(("CAPTURE NAME:", (255, 220, 80)))
+                lines.append((f"> {cap_name}_", (255, 255, 200)))
 
         hit = self.aimed
         if hit:

@@ -1,0 +1,23 @@
+# Open Ground — Reset cell to flat, open ground.
+# Clears all textures, segments, and heights.  Useful as an eraser.
+
+name = "Open Ground"
+category = "General"
+color = [80, 130, 60]
+
+# apply_mode: "replace" | "stack_floor" | "stack_ceil" | "merge"
+apply_mode = "replace"
+
+# floor_height: 0.0–10.0 (at 10.0 the cell becomes a solid column)
+floor_height = 0.0
+ceil_height = 10.0
+floor_texture = ""
+ceil_texture = ""
+wall_texture = ""
+face_textures = ["", "", "", ""]
+floor_step_textures = ["", "", "", ""]
+ceil_step_textures = ["", "", "", ""]
+
+wall_segments = [[], [], [], []]
+floor_step_segments = [[], [], [], []]
+ceil_step_segments = [[], [], [], []]

@@ -84,6 +84,7 @@ from engine.textures import TextureAtlas
 from engine.ray_renderer import RayRenderer
 from editor.view_3d import Zone3DEditor, TOOLS, TOOL_LABELS, TOOL_COLORS, TOOL_HINTS, SNAP_Y_OPTIONS, _ensure_palette
 from editor.fly_camera import MOUSE_SENS, wasd_2d
+from core.presets import PRESET_REGISTRY
 
 # ═══════════════════════════════════════════════════════════════════
 #  Configuration
@@ -256,6 +257,17 @@ class ZoneEditorApp:
         self.show_save_as: bool = False
         self.save_as_name: str = ""
 
+        # Unsaved changes guard
+        self._show_unsaved_guard: bool = False
+        self._guard_action: str = ""        # "quit" | "switch" | "new"
+        self._guard_payload: str = ""       # zone name for "switch"
+        self._pending_quit: bool = False     # set True after guard resolves to quit
+
+        # Transient indicator (near-crosshair feedback)
+        self._transient_text: str = ""
+        self._transient_time: float = 0.0    # remaining display time (seconds)
+        self._transient_color: tuple = (0.95, 0.90, 0.75, 1.0)
+
         # Performance
         self.frame_ms: float = 0.0
         self.fps: float = 60.0
@@ -264,41 +276,61 @@ class ZoneEditorApp:
 
     def _setup_theme(self) -> None:
         style = imgui.get_style()
-        style.window_rounding = 4.0
-        style.frame_rounding = 2.0
-        style.scrollbar_rounding = 3.0
-        style.grab_rounding = 2.0
+        style.window_rounding = 6.0
+        style.frame_rounding = 4.0
+        style.scrollbar_rounding = 6.0
+        style.grab_rounding = 4.0
+        style.tab_rounding = 4.0
         style.window_border_size = 1.0
+        style.frame_border_size = 0.0
+        style.window_padding = (10, 8)
+        style.frame_padding = (6, 4)
+        style.item_spacing = (8, 5)
+        style.item_inner_spacing = (6, 4)
+        style.scrollbar_size = 12.0
         imgui.style_colors_dark(style)
         c = style.colors
-        c[imgui.COLOR_WINDOW_BACKGROUND]           = (0.07, 0.07, 0.09, 0.90)
-        c[imgui.COLOR_CHILD_BACKGROUND]            = (0.05, 0.05, 0.07, 1.00)
-        c[imgui.COLOR_BORDER]                      = (0.22, 0.22, 0.28, 0.50)
-        c[imgui.COLOR_FRAME_BACKGROUND]            = (0.13, 0.13, 0.17, 1.00)
-        c[imgui.COLOR_FRAME_BACKGROUND_HOVERED]    = (0.19, 0.19, 0.24, 1.00)
-        c[imgui.COLOR_FRAME_BACKGROUND_ACTIVE]     = (0.27, 0.27, 0.33, 1.00)
-        c[imgui.COLOR_TITLE_BACKGROUND]            = (0.07, 0.07, 0.09, 1.00)
-        c[imgui.COLOR_TITLE_BACKGROUND_ACTIVE]     = (0.11, 0.11, 0.15, 1.00)
-        c[imgui.COLOR_BUTTON]                      = (0.16, 0.16, 0.22, 1.00)
-        c[imgui.COLOR_BUTTON_HOVERED]              = (0.24, 0.24, 0.30, 1.00)
-        c[imgui.COLOR_BUTTON_ACTIVE]               = (0.32, 0.32, 0.40, 1.00)
-        c[imgui.COLOR_HEADER]                      = (0.16, 0.16, 0.22, 1.00)
-        c[imgui.COLOR_HEADER_HOVERED]              = (0.24, 0.24, 0.30, 1.00)
-        c[imgui.COLOR_HEADER_ACTIVE]               = (0.32, 0.32, 0.40, 1.00)
-        c[imgui.COLOR_SEPARATOR]                   = (0.22, 0.22, 0.30, 1.00)
+        # ── Panel backgrounds ──
+        c[imgui.COLOR_WINDOW_BACKGROUND]           = (0.08, 0.08, 0.10, 0.95)
+        c[imgui.COLOR_CHILD_BACKGROUND]            = (0.06, 0.06, 0.08, 1.00)
+        c[imgui.COLOR_BORDER]                      = (0.20, 0.22, 0.28, 0.45)
+        # ── Input frames ──
+        c[imgui.COLOR_FRAME_BACKGROUND]            = (0.12, 0.12, 0.16, 1.00)
+        c[imgui.COLOR_FRAME_BACKGROUND_HOVERED]    = (0.18, 0.18, 0.24, 1.00)
+        c[imgui.COLOR_FRAME_BACKGROUND_ACTIVE]     = (0.25, 0.25, 0.32, 1.00)
+        # ── Title bars ──
+        c[imgui.COLOR_TITLE_BACKGROUND]            = (0.08, 0.08, 0.10, 1.00)
+        c[imgui.COLOR_TITLE_BACKGROUND_ACTIVE]     = (0.12, 0.14, 0.18, 1.00)
+        # ── Buttons — warm accent ──
+        c[imgui.COLOR_BUTTON]                      = (0.18, 0.17, 0.22, 1.00)
+        c[imgui.COLOR_BUTTON_HOVERED]              = (0.28, 0.26, 0.34, 1.00)
+        c[imgui.COLOR_BUTTON_ACTIVE]               = (0.35, 0.32, 0.42, 1.00)
+        # ── Headers / collapsing sections — tinted blue ──
+        c[imgui.COLOR_HEADER]                      = (0.14, 0.16, 0.24, 1.00)
+        c[imgui.COLOR_HEADER_HOVERED]              = (0.20, 0.24, 0.36, 1.00)
+        c[imgui.COLOR_HEADER_ACTIVE]               = (0.26, 0.30, 0.44, 1.00)
+        # ── Separator ──
+        c[imgui.COLOR_SEPARATOR]                   = (0.24, 0.26, 0.34, 0.80)
+        # ── Scrollbar ──
         c[imgui.COLOR_SCROLLBAR_BACKGROUND]        = (0.05, 0.05, 0.07, 1.00)
-        c[imgui.COLOR_SCROLLBAR_GRAB]              = (0.22, 0.22, 0.30, 1.00)
-        c[imgui.COLOR_SCROLLBAR_GRAB_HOVERED]      = (0.30, 0.30, 0.38, 1.00)
-        c[imgui.COLOR_SCROLLBAR_GRAB_ACTIVE]       = (0.38, 0.38, 0.46, 1.00)
-        c[imgui.COLOR_TAB]                         = (0.12, 0.12, 0.16, 1.00)
-        c[imgui.COLOR_TAB_HOVERED]                 = (0.22, 0.22, 0.30, 1.00)
-        c[imgui.COLOR_CHECK_MARK]                  = (0.45, 0.72, 1.00, 1.00)
-        c[imgui.COLOR_SLIDER_GRAB]                 = (0.35, 0.55, 0.90, 1.00)
-        c[imgui.COLOR_SLIDER_GRAB_ACTIVE]          = (0.45, 0.65, 1.00, 1.00)
+        c[imgui.COLOR_SCROLLBAR_GRAB]              = (0.24, 0.24, 0.32, 1.00)
+        c[imgui.COLOR_SCROLLBAR_GRAB_HOVERED]      = (0.34, 0.34, 0.42, 1.00)
+        c[imgui.COLOR_SCROLLBAR_GRAB_ACTIVE]       = (0.42, 0.42, 0.52, 1.00)
+        # ── Tabs ──
+        c[imgui.COLOR_TAB]                         = (0.12, 0.14, 0.18, 1.00)
+        c[imgui.COLOR_TAB_HOVERED]                 = (0.22, 0.26, 0.36, 1.00)
+        # ── Widgets ──
+        c[imgui.COLOR_CHECK_MARK]                  = (0.40, 0.75, 1.00, 1.00)
+        c[imgui.COLOR_SLIDER_GRAB]                 = (0.40, 0.60, 0.95, 1.00)
+        c[imgui.COLOR_SLIDER_GRAB_ACTIVE]          = (0.50, 0.70, 1.00, 1.00)
+        # ── Menu bar ──
         c[imgui.COLOR_MENUBAR_BACKGROUND]          = (0.10, 0.10, 0.13, 1.00)
-        c[imgui.COLOR_POPUP_BACKGROUND]            = (0.08, 0.08, 0.11, 0.97)
-        c[imgui.COLOR_TEXT]                         = (0.93, 0.93, 0.95, 1.00)
-        c[imgui.COLOR_TEXT_DISABLED]                = (0.45, 0.45, 0.50, 1.00)
+        c[imgui.COLOR_POPUP_BACKGROUND]            = (0.09, 0.09, 0.12, 0.97)
+        # ── Text ──
+        c[imgui.COLOR_TEXT]                         = (0.92, 0.92, 0.94, 1.00)
+        c[imgui.COLOR_TEXT_DISABLED]                = (0.42, 0.42, 0.48, 1.00)
+        # ── Selection highlight ──
+        c[imgui.COLOR_HEADER]                      = (0.18, 0.22, 0.35, 0.70)
 
     # ── Zone loading / creation ───────────────────────────────────
 
@@ -410,6 +442,47 @@ class ZoneEditorApp:
         self.all_zones = list_zones()
         pygame.display.set_caption(f"{WINDOW_TITLE} \u2014 {name}")
 
+    # ── Unsaved changes guard ─────────────────────────────────────
+
+    def _request_guarded(self, action: str, payload: str = "") -> bool:
+        """Start an action that may discard unsaved changes.
+
+        If the zone is dirty, shows the Save/Discard/Cancel dialog and
+        returns False (caller should abort).  If not dirty, returns True
+        (caller can proceed immediately).
+        """
+        if self.dirty:
+            if self.mouse_captured:
+                self._release_mouse()
+            self._guard_action = action
+            self._guard_payload = payload
+            self._show_unsaved_guard = True
+            return False
+        return True
+
+    def _execute_guarded_action(self) -> None:
+        """Execute the action that was deferred by the guard dialog."""
+        action = self._guard_action
+        payload = self._guard_payload
+        self._guard_action = ""
+        self._guard_payload = ""
+        if action == "quit":
+            self._pending_quit = True
+        elif action == "switch":
+            self._load_zone(payload)
+        elif action == "new":
+            self._create_new_zone(self.new_zone_w, self.new_zone_h)
+            self.show_new_zone = False
+
+    # ── Transient indicator (near-crosshair flash) ────────────────
+
+    def _flash_transient(self, text: str, duration: float = 1.5,
+                         color: tuple = (0.95, 0.90, 0.75, 1.0)) -> None:
+        """Show a brief text indicator near the crosshair."""
+        self._transient_text = text
+        self._transient_time = duration
+        self._transient_color = color
+
     # ── Mouse capture ─────────────────────────────────────────────
 
     def _capture_mouse(self) -> None:
@@ -462,6 +535,14 @@ class ZoneEditorApp:
 
             running = self._process_events()
 
+            # Check if the guard dialog resolved to quit
+            if self._pending_quit:
+                running = False
+
+            # Tick transient indicator
+            if self._transient_time > 0:
+                self._transient_time -= dt
+
             # Update active viewport
             if self.mouse_captured:
                 # Captured: full camera + movement
@@ -485,12 +566,23 @@ class ZoneEditorApp:
 
     # ── Events ────────────────────────────────────────────────────
 
+    def _try_quit(self) -> bool:
+        """Attempt to quit — returns False to stop the main loop, or True
+        to keep running (when the unsaved guard dialog was shown instead)."""
+        if self.dirty:
+            if self._request_guarded("quit"):
+                return False          # not dirty (somehow), go ahead
+            return True               # guard dialog shown, keep looping
+        return False                  # clean, quit now
+
     def _process_events(self) -> bool:
         io = imgui.get_io()
 
         for event in pygame.event.get():
             if event.type == QUIT:
-                return False
+                if self._try_quit() is False:
+                    return False
+                continue
             if event.type == VIDEORESIZE:
                 old_w = self.win_size[0]
                 self.win_size = (event.w, event.h)
@@ -508,7 +600,9 @@ class ZoneEditorApp:
             if self.mouse_captured:
                 # ── CAPTURED: all input goes to the viewport ──
                 if event.type == KEYDOWN:
-                    # Escape: cancel selection first, then release mouse
+                    # Escape priority chain:
+                    #   1. Cancel active selection (stay captured)
+                    #   2. Release mouse (return to panel mode)
                     if event.key == pygame.K_ESCAPE:
                         if (self.view_mode == "3d" and self.editor_3d
                                 and self.editor_3d.tool == "select"
@@ -526,9 +620,21 @@ class ZoneEditorApp:
                     if event.key == pygame.K_s and (pygame.key.get_mods() & pygame.KMOD_CTRL):
                         self._save_zone()
                         continue
+
+                    # Track scroll-cycle events for transient indicator
+                    old_tex_idx = self.editor_3d.tex_idx if self.editor_3d else -1
+                    old_snap_idx = self.editor_3d.snap_idx if self.editor_3d else -1
+
                     # Forward to active view
                     if self.view_mode == "3d" and self.editor_3d:
                         self.editor_3d.handle_event(event)
+                        # Flash transient if snap changed via G key
+                        if self.editor_3d.snap_idx != old_snap_idx:
+                            snap_labels = ("1/16", "1/8", "1/4", "1/2", "1")
+                            idx = self.editor_3d.snap_idx
+                            self._flash_transient(
+                                f"Snap: {snap_labels[idx]}",
+                                1.2, (0.55, 0.75, 0.60, 1.0))
                     elif self.view_mode == "2d":
                         self._raycaster_key(event)
 
@@ -544,7 +650,32 @@ class ZoneEditorApp:
 
                 elif event.type == MOUSEWHEEL:
                     if self.view_mode == "3d" and self.editor_3d:
+                        old_tex = self.editor_3d.tex_idx
+                        old_snap = self.editor_3d.snap_idx
+                        old_stamp = getattr(self.editor_3d, '_stamp_idx', -1)
+
                         self.editor_3d.handle_event(event)
+
+                        # Flash transient when palette / snap / preset cycled
+                        if self.editor_3d.tex_idx != old_tex:
+                            palette = _ensure_palette()
+                            idx = self.editor_3d.tex_idx
+                            name = palette[idx] if idx < len(palette) else "?"
+                            self._flash_transient(
+                                f"{name}  ({idx + 1}/{len(palette)})",
+                                1.5, (0.75, 0.55, 0.85, 1.0))
+                        elif self.editor_3d.snap_idx != old_snap:
+                            snap_labels = ("1/16", "1/8", "1/4", "1/2", "1")
+                            idx = self.editor_3d.snap_idx
+                            self._flash_transient(
+                                f"Snap: {snap_labels[idx]}",
+                                1.2, (0.55, 0.75, 0.60, 1.0))
+                        elif getattr(self.editor_3d, '_stamp_idx', -1) != old_stamp:
+                            preset = self.editor_3d._stamp_current()
+                            pname = preset.name if preset else "?"
+                            self._flash_transient(
+                                f"Model: {pname}",
+                                1.5, (0.70, 0.55, 1.0, 1.0))
                 # Don't feed anything to imgui while captured
 
             else:
@@ -552,8 +683,20 @@ class ZoneEditorApp:
                 self.imgui_impl.process_event(event)
 
                 if event.type == KEYDOWN:
+                    # Escape priority chain (panel mode):
+                    #   1. If dirty → show unsaved guard
+                    #   2. If clean → quit (with simple confirm via guard)
                     if event.key == pygame.K_ESCAPE:
-                        return False
+                        if self._try_quit() is False:
+                            return False
+                        continue
+
+                    # Enter / F5 → enter edit mode (keyboard-only workflow)
+                    if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER,
+                                     pygame.K_F5) and self.zone:
+                        self._capture_mouse()
+                        continue
+
                     # Global shortcuts still work from panels
                     if event.key == pygame.K_TAB and self.zone:
                         if not (pygame.key.get_mods() & pygame.KMOD_SHIFT):
@@ -563,12 +706,32 @@ class ZoneEditorApp:
                         self._save_zone()
                         continue
 
-                # Click on viewport (not on a panel) → capture mouse
+                # Click on viewport (not on a panel) → capture + first-click tool action
                 elif event.type == MOUSEBUTTONDOWN and event.button == 1:
                     if not io.want_capture_mouse and self.zone:
-                        self._capture_mouse()
+                        self._capture_with_first_click(event)
 
         return True
+
+    def _capture_with_first_click(self, event: pygame.event.Event) -> None:
+        """Capture the mouse AND perform the first tool action at the click
+        position, so the click isn't wasted just entering edit mode.
+        """
+        # Before capturing, update the 3D editor's aim using the click
+        # position (currently the editor always aims from screen center,
+        # but the click may be off-center).  After capture the mouse jumps
+        # to center, so we pre-aim, capture, then fire.
+        if self.editor_3d and self.view_mode == "3d":
+            # Run one aim update so the editor knows what's under the crosshair
+            self.editor_3d._update_aim()
+
+        self._capture_mouse()
+
+        # Now fire the tool action as if the user clicked LMB while captured
+        if self.editor_3d and self.view_mode == "3d" and self.editor_3d.aimed:
+            fake_click = pygame.event.Event(
+                MOUSEBUTTONDOWN, button=1, pos=(0, 0))
+            self.editor_3d.handle_event(fake_click)
 
     # ── View mode toggle ──────────────────────────────────────────
 
@@ -767,8 +930,12 @@ class ZoneEditorApp:
             self._new_zone_dialog()
         if self.show_save_as:
             self._save_as_dialog()
+        if self._show_unsaved_guard:
+            self._unsaved_guard_dialog()
         if not self.mouse_captured:
             self._capture_hint()
+        if self.mouse_captured and self._transient_time > 0:
+            self._draw_transient_indicator()
 
     # ── Draggable panel splitters ──────────────────────────────
 
@@ -847,10 +1014,95 @@ class ZoneEditorApp:
                  | imgui.WINDOW_NO_INPUTS)
         imgui.push_style_color(imgui.COLOR_WINDOW_BACKGROUND, 0.0, 0.0, 0.0, 0.55)
         imgui.begin("##CaptureHint", flags=flags)
-        imgui.text_colored("   Click viewport to edit  |  Esc = quit",
+        imgui.text_colored("   Click viewport or Enter to edit  |  Esc = quit",
                            0.85, 0.85, 0.85, 1.0)
         imgui.end()
         imgui.pop_style_color()
+
+    # ── Transient indicator (near-crosshair scroll feedback) ──────
+
+    def _draw_transient_indicator(self) -> None:
+        """Draw a fading label near the viewport center showing scroll feedback."""
+        if self._transient_time <= 0 or not self._transient_text:
+            return
+        win_w, win_h = self.win_size
+        cx = (self.left_panel_w + win_w - self.right_panel_w) * 0.5
+        cy = win_h * 0.5 + 50  # below crosshair
+
+        # Fade alpha during last 0.4 seconds
+        alpha = min(1.0, self._transient_time / 0.4)
+        r, g, b, _ = self._transient_color
+
+        imgui.set_next_window_position(cx - 120, cy)
+        imgui.set_next_window_size(240, 0)
+        flags = (imgui.WINDOW_NO_TITLE_BAR | imgui.WINDOW_NO_RESIZE
+                 | imgui.WINDOW_NO_MOVE | imgui.WINDOW_ALWAYS_AUTO_RESIZE
+                 | imgui.WINDOW_NO_FOCUS_ON_APPEARING | imgui.WINDOW_NO_NAV
+                 | imgui.WINDOW_NO_INPUTS)
+        imgui.push_style_color(imgui.COLOR_WINDOW_BACKGROUND, 0.0, 0.0, 0.0, 0.65 * alpha)
+        imgui.push_style_color(imgui.COLOR_BORDER, 0.0, 0.0, 0.0, 0.0)
+        imgui.begin("##Transient", flags=flags)
+        imgui.text_colored(f"  {self._transient_text}", r, g, b, alpha)
+        imgui.end()
+        imgui.pop_style_color(2)
+
+    # ── Unsaved changes guard dialog ──────────────────────────────
+
+    def _unsaved_guard_dialog(self) -> None:
+        """Modal dialog: Save / Discard / Cancel when about to lose unsaved changes."""
+        imgui.open_popup("Unsaved Changes")
+
+        win_w, win_h = self.win_size
+        imgui.set_next_window_position(win_w / 2 - 190, win_h / 2 - 70)
+        imgui.set_next_window_size(380, 0)
+
+        if imgui.begin_popup_modal("Unsaved Changes",
+                                   flags=imgui.WINDOW_ALWAYS_AUTO_RESIZE)[0]:
+            imgui.text("You have unsaved changes to")
+            imgui.text_colored(f'"{self.zone_name}"', 1.0, 0.9, 0.5, 1.0)
+            imgui.text("What would you like to do?")
+            imgui.spacing()
+            imgui.separator()
+            imgui.spacing()
+
+            btn_w = 110
+
+            # Save
+            if imgui.button("Save", btn_w, 30):
+                self._save_zone()
+                # If save succeeded (not untitled → save-as dialog),
+                # proceed with the guarded action
+                if not self.dirty:
+                    self._show_unsaved_guard = False
+                    self._execute_guarded_action()
+                    imgui.close_current_popup()
+                # If still dirty, the save-as dialog is open; guard stays
+
+            imgui.same_line()
+
+            # Discard
+            imgui.push_style_color(imgui.COLOR_BUTTON, 0.55, 0.18, 0.18, 1.0)
+            imgui.push_style_color(imgui.COLOR_BUTTON_HOVERED, 0.70, 0.25, 0.25, 1.0)
+            imgui.push_style_color(imgui.COLOR_BUTTON_ACTIVE, 0.80, 0.30, 0.30, 1.0)
+            if imgui.button("Discard", btn_w, 30):
+                self.dirty = False  # pretend we saved
+                self._show_unsaved_guard = False
+                self._execute_guarded_action()
+                imgui.close_current_popup()
+            imgui.pop_style_color(3)
+
+            imgui.same_line()
+
+            # Cancel
+            if imgui.button("Cancel", btn_w, 30):
+                self._show_unsaved_guard = False
+                self._guard_action = ""
+                self._guard_payload = ""
+                imgui.close_current_popup()
+
+            imgui.end_popup()
+        else:
+            self._show_unsaved_guard = False
 
     # ── Menu bar ──────────────────────────────────────────────────
 
@@ -918,8 +1170,24 @@ class ZoneEditorApp:
 
     _SNAP_LABELS = ("1/16", "1/8", "1/4", "1/2", "1")
 
+    @staticmethod
+    def _section_header(label: str, r: float = 0.55, g: float = 0.65,
+                        b: float = 0.85, pad_top: bool = True) -> None:
+        """Draw a tinted section header with a subtle underline."""
+        if pad_top:
+            imgui.spacing()
+        imgui.text_colored(label, r, g, b, 1.0)
+        # Subtle separator line under the header
+        draw_list = imgui.get_window_draw_list()
+        x = imgui.get_cursor_screen_pos()[0]
+        y = imgui.get_cursor_screen_pos()[1] - 2
+        w = imgui.get_content_region_available()[0]
+        col32 = imgui.get_color_u32_rgba(r, g, b, 0.25)
+        draw_list.add_line(x, y, x + w, y, col32, 1.0)
+        imgui.spacing()
+
     def _left_panel(self) -> None:
-        """Unified left sidebar — tools, textures, hints, snap, display, zones."""
+        """Unified left sidebar — tools, snap, brush/palette, hints, display, zones."""
         win_w, win_h = self.win_size
         imgui.set_next_window_position(0, MENU_BAR_H)
         imgui.set_next_window_size(self.left_panel_w, win_h - MENU_BAR_H - STATUS_BAR_H)
@@ -936,7 +1204,8 @@ class ZoneEditorApp:
         ed = self.editor_3d
         spacing_x = imgui.get_style().item_spacing.x
 
-        # ── Tool buttons (3 per row, compact) ──────────────────
+        # ━━━ TOOLS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        self._section_header("\u2581 TOOLS", 0.65, 0.75, 0.95, pad_top=False)
         avail_w = imgui.get_content_region_available()[0]
         btn_w = (avail_w - 2 * spacing_x) / 3.0
         for i, tool_name in enumerate(TOOLS):
@@ -945,16 +1214,21 @@ class ZoneEditorApp:
             is_active = ed.tool == tool_name
             r, g, b = [c / 255.0 for c in TOOL_COLORS[tool_name]]
             if is_active:
-                imgui.push_style_color(imgui.COLOR_BUTTON, r, g, b, 0.6)
-                imgui.push_style_color(imgui.COLOR_BUTTON_HOVERED, r, g, b, 0.8)
-                imgui.push_style_color(imgui.COLOR_BUTTON_ACTIVE, r, g, b, 0.95)
-            if imgui.button(f"{i+1} {TOOL_LABELS[tool_name]}##{tool_name}", btn_w, 26):
+                imgui.push_style_color(imgui.COLOR_BUTTON, r, g, b, 0.55)
+                imgui.push_style_color(imgui.COLOR_BUTTON_HOVERED, r, g, b, 0.75)
+                imgui.push_style_color(imgui.COLOR_BUTTON_ACTIVE, r, g, b, 0.90)
+                imgui.push_style_color(imgui.COLOR_TEXT, 1.0, 1.0, 1.0, 1.0)
+            else:
+                imgui.push_style_color(imgui.COLOR_TEXT, 0.65, 0.65, 0.70, 1.0)
+            if imgui.button(f"{i+1} {TOOL_LABELS[tool_name]}##{tool_name}", btn_w, 28):
                 ed.tool = tool_name
             if is_active:
-                imgui.pop_style_color(3)
+                imgui.pop_style_color(4)
+            else:
+                imgui.pop_style_color(1)
 
-        # ── Snap selector (single row) ─────────────────────────
-        imgui.spacing()
+        # ━━━ SNAP HEIGHT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        self._section_header("\u2581 SNAP", 0.55, 0.75, 0.60)
         avail_w = imgui.get_content_region_available()[0]
         n_snap = len(SNAP_Y_OPTIONS)
         snap_btn_w = (avail_w - (n_snap - 1) * spacing_x) / n_snap
@@ -963,54 +1237,96 @@ class ZoneEditorApp:
                 imgui.same_line()
             is_sel = abs(ed.snap_y - snap) < 0.001
             if is_sel:
-                imgui.push_style_color(imgui.COLOR_BUTTON, 0.25, 0.55, 0.35, 1.0)
-            if imgui.button(f"{self._SNAP_LABELS[i]}##snap{i}", snap_btn_w, 20):
+                imgui.push_style_color(imgui.COLOR_BUTTON, 0.22, 0.55, 0.35, 1.0)
+                imgui.push_style_color(imgui.COLOR_BUTTON_HOVERED, 0.28, 0.65, 0.42, 1.0)
+                imgui.push_style_color(imgui.COLOR_TEXT, 1.0, 1.0, 1.0, 1.0)
+            if imgui.button(f"{self._SNAP_LABELS[i]}##snap{i}", snap_btn_w, 22):
                 ed.snap_y = snap
                 ed.snap_idx = i
             if is_sel:
-                imgui.pop_style_color()
+                imgui.pop_style_color(3)
 
-        imgui.separator()
-
-        # ── Texture palette (context-sensitive) ────────────────
+        # ━━━ BRUSH / PALETTE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         tool_name = ed.tool
-        if tool_name in ("paint", "segment", "fill", "select"):
-            if imgui.collapsing_header("Textures", imgui.TREE_NODE_DEFAULT_OPEN)[0]:
-                palette = _ensure_palette()
-                cur_tex = ed.current_texture
-                cur_idx = ed.tex_idx
+        uses_texture = tool_name in ("paint", "segment", "fill", "select")
+        uses_preset = tool_name == "stamp"
 
-                # Current texture swatch + name
-                tc = TILE_COLORS.get(cur_tex, (128, 128, 128))
-                r0, g0, b0 = tc[0] / 255.0, tc[1] / 255.0, tc[2] / 255.0
-                imgui.color_button("##curtex", r0, g0, b0, 1.0, 0, 14, 14)
-                imgui.same_line()
-                imgui.text(cur_tex)
-                imgui.same_line()
-                imgui.text_disabled(f"({cur_idx + 1}/{len(palette)})")
+        if uses_texture:
+            self._section_header("\u2581 BRUSH", 0.75, 0.55, 0.85)
+            palette = _ensure_palette()
+            cur_tex = ed.current_texture
+            cur_idx = ed.tex_idx
 
-                # Scrollable palette list (adaptive height)
+            # Large current texture display
+            tc = TILE_COLORS.get(cur_tex, (128, 128, 128))
+            r0, g0, b0 = tc[0] / 255.0, tc[1] / 255.0, tc[2] / 255.0
+            imgui.color_button("##curtex_big", r0, g0, b0, 1.0, 0, 20, 20)
+            imgui.same_line()
+            imgui.text_colored(cur_tex, 0.95, 0.90, 0.75, 1.0)
+            imgui.same_line()
+            imgui.text_disabled(f"({cur_idx + 1}/{len(palette)})")
+
+            # Scrollable palette list (always visible, adaptive height)
+            remaining = imgui.get_content_region_available()[1]
+            list_h = max(80, min(220, remaining - 200))
+            child_w = imgui.get_content_region_available()[0]
+            imgui.begin_child("##texlist", child_w, list_h, border=True)
+            for pi, pname in enumerate(palette):
+                tc2 = TILE_COLORS.get(pname, (128, 128, 128))
+                pr, pg, pb = tc2[0] / 255.0, tc2[1] / 255.0, tc2[2] / 255.0
+                imgui.color_button(f"##p{pi}", pr, pg, pb, 1.0, 0, 12, 12)
+                imgui.same_line()
+                is_sel = pi == cur_idx
+                clicked, _ = imgui.selectable(f"{pname}##pal{pi}", is_sel)
+                if clicked:
+                    ed.tex_idx = pi
+                    ed.current_texture = pname
+                # Auto-scroll to selected item (always during capture, on-appear otherwise)
+                if is_sel and (self.mouse_captured or imgui.is_window_appearing()):
+                    imgui.set_scroll_here_y(0.5)
+            imgui.end_child()
+
+        elif uses_preset:
+            self._section_header("\u2581 MODEL", 0.70, 0.55, 1.0)
+            pal = sorted(PRESET_REGISTRY.keys())
+            preset = ed._stamp_current()
+            pname = preset.name if preset else "(none)"
+            pidx = ed._stamp_idx if pal else 0
+
+            # Large current preset display
+            imgui.text_colored("\u25a0", 0.70, 0.55, 1.0, 1.0)
+            imgui.same_line()
+            imgui.text_colored(pname, 0.90, 0.80, 1.0, 1.0)
+            if pal:
+                imgui.same_line()
+                imgui.text_disabled(f"({pidx + 1}/{len(pal)})")
+            if preset and preset.category:
+                imgui.text_disabled(f"  Category: {preset.category}")
+
+            # Scrollable preset list (always visible)
+            if pal:
                 remaining = imgui.get_content_region_available()[1]
-                list_h = max(60, min(180, remaining - 160))
+                list_h = max(60, min(160, remaining - 200))
                 child_w = imgui.get_content_region_available()[0]
-                imgui.begin_child("##texlist", child_w, list_h,
-                                  border=True)
-                for pi, pname in enumerate(palette):
-                    tc2 = TILE_COLORS.get(pname, (128, 128, 128))
-                    pr, pg, pb = tc2[0] / 255.0, tc2[1] / 255.0, tc2[2] / 255.0
-                    imgui.color_button(f"##p{pi}", pr, pg, pb, 1.0, 0, 10, 10)
-                    imgui.same_line()
-                    is_sel = pi == cur_idx
-                    clicked, _ = imgui.selectable(f"{pname}##pal{pi}", is_sel)
+                imgui.begin_child("##presetlist", child_w, list_h, border=True)
+                for pi, pid in enumerate(pal):
+                    p = PRESET_REGISTRY.get(pid)
+                    label = p.name if p else pid
+                    is_sel = pi == pidx
+                    clicked, _ = imgui.selectable(f"{label}##preset{pi}", is_sel)
                     if clicked:
-                        ed.tex_idx = pi
-                        ed.current_texture = pname
+                        ed._stamp_idx = pi
+                        ed._stamp_preset_id = pid
+                    if is_sel and (self.mouse_captured or imgui.is_window_appearing()):
+                        imgui.set_scroll_here_y(0.5)
                 imgui.end_child()
+            else:
+                imgui.text_colored("No presets loaded", 0.5, 0.5, 0.5, 1.0)
 
-        # ── Context hints (compact key-aligned columns) ────────
+        # ━━━ CONTROLS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         hint = TOOL_HINTS.get(ed.tool, {})
         if hint:
-            imgui.separator()
+            self._section_header("\u2581 CONTROLS", 0.55, 0.60, 0.55)
             actions_dict = hint.get("actions", {})
 
             # Pick context key
@@ -1034,62 +1350,75 @@ class ZoneEditorApp:
 
             actions = actions_dict.get(ctx_key, actions_dict.get("any", {}))
             wrap_x = imgui.get_cursor_pos_x() + imgui.get_content_region_available()[0]
+
+            # Draw key-action pairs in a compact 2-column style
             for key, desc in actions.items():
-                imgui.text_disabled(key)
-                imgui.same_line(70)
+                imgui.push_style_color(imgui.COLOR_TEXT, 0.80, 0.75, 0.50, 1.0)
+                imgui.text(key)
+                imgui.pop_style_color()
+                imgui.same_line(72)
                 imgui.push_text_wrap_pos(wrap_x)
                 imgui.text(desc)
                 imgui.pop_text_wrap_pos()
 
             extra = hint.get("keys", "")
             if extra:
+                imgui.spacing()
                 imgui.push_text_wrap_pos(wrap_x)
-                imgui.text_colored(extra, 0.55, 0.55, 0.4, 1.0)
+                imgui.text_colored(extra, 0.55, 0.55, 0.40, 1.0)
                 imgui.pop_text_wrap_pos()
 
-        # ── Select tool state ──────────────────────────────────
+        # ━━━ SELECT TOOL STATE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         if ed.tool == "select":
+            imgui.spacing()
             ceil_mode = getattr(ed, '_sel_ceiling_mode', False)
-            mode_col = (0.55, 0.7, 0.9, 1.0) if ceil_mode else (0.7, 0.9, 0.55, 1.0)
-            imgui.text_colored("Ceiling" if ceil_mode else "Floor", *mode_col)
+            mode_label = "CEILING MODE" if ceil_mode else "FLOOR MODE"
+            mode_col = (0.55, 0.70, 0.90, 1.0) if ceil_mode else (0.70, 0.90, 0.55, 1.0)
+            imgui.text_colored(mode_label, *mode_col)
             imgui.same_line()
-            imgui.text_disabled("(X)")
+            imgui.text_disabled("(X to toggle)")
             if ed._sel_start is not None and ed._sel_end is not None:
                 bounds = ed._sel_bounds()
                 if bounds:
                     r1, c1, r2, c2 = bounds
                     area = (r2 - r1 + 1) * (c2 - c1 + 1)
-                    imgui.text_disabled(f"{area} cells selected")
+                    imgui.text_disabled(f"\u25a1 {area} cells selected")
 
-        # ── Display options (collapsed by default) ─────────────
-        imgui.separator()
-        if imgui.collapsing_header("Display")[0]:
-            _, ed.show_walls = imgui.checkbox("Walls (V)", ed.show_walls)
-            _, ed.show_ceiling_grid = imgui.checkbox(
-                "Ceiling Grid", ed.show_ceiling_grid)
-            _, ed.show_grid = imgui.checkbox("Floor Grid", ed.show_grid)
-            _, ed.show_axes = imgui.checkbox("Axes", ed.show_axes)
+        # ━━━ DISPLAY ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        self._section_header("\u2581 DISPLAY", 0.50, 0.60, 0.65)
+        # Compact 2-column checkboxes (no collapsing header)
+        half_w = imgui.get_content_region_available()[0] * 0.5
+        _, ed.show_walls = imgui.checkbox("Walls", ed.show_walls)
+        imgui.same_line(half_w)
+        _, ed.show_grid = imgui.checkbox("Floor Grid", ed.show_grid)
+        _, ed.show_ceiling_grid = imgui.checkbox("Ceil Grid", ed.show_ceiling_grid)
+        imgui.same_line(half_w)
+        _, ed.show_axes = imgui.checkbox("Axes", ed.show_axes)
 
-        # ── View mode toggle ───────────────────────────────────
+        # ━━━ VIEW MODE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        imgui.spacing()
         full_w = imgui.get_content_region_available()[0]
         mode_label = "Preview" if self.view_mode == "3d" else "Editor"
-        if imgui.button(f"Switch to {mode_label} (Tab)", full_w, 24):
+        mode_icon = "\u25b6" if self.view_mode == "3d" else "\u270e"
+        if imgui.button(f"{mode_icon} Switch to {mode_label} (Tab)", full_w, 26):
             self._toggle_view_mode()
 
-        # ── Zones list ─────────────────────────────────────────
-        imgui.separator()
-        if imgui.collapsing_header("Zones", imgui.TREE_NODE_DEFAULT_OPEN)[0]:
-            if imgui.button("+ New Zone", imgui.get_content_region_available()[0], 22):
+        # ━━━ ZONES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        self._section_header("\u2581 ZONES", 0.85, 0.75, 0.45)
+        if imgui.button("+ New Zone", imgui.get_content_region_available()[0], 24):
+            if self._request_guarded("new"):
                 self.show_new_zone = True
-            for name in self.all_zones:
-                is_loaded = (name == self.zone_name)
-                if is_loaded:
-                    imgui.push_style_color(imgui.COLOR_TEXT, 1.0, 0.82, 0.25, 1.0)
-                clicked, _ = imgui.selectable(name, is_loaded)
-                if clicked and name != self.zone_name:
+        for name in self.all_zones:
+            is_loaded = (name == self.zone_name)
+            if is_loaded:
+                imgui.push_style_color(imgui.COLOR_TEXT, 1.0, 0.82, 0.25, 1.0)
+            prefix = "\u25b8 " if is_loaded else "  "
+            clicked, _ = imgui.selectable(f"{prefix}{name}", is_loaded)
+            if clicked and name != self.zone_name:
+                if self._request_guarded("switch", name):
                     self._load_zone(name)
-                if is_loaded:
-                    imgui.pop_style_color()
+            if is_loaded:
+                imgui.pop_style_color()
 
         imgui.end()
 
@@ -1244,10 +1573,10 @@ class ZoneEditorApp:
         else:
             imgui.text_colored("Aim at a cell to inspect", 0.45, 0.45, 0.5, 1.0)
 
-        # ── Zone settings (always visible) ──
+        # ── Zone settings ──
         imgui.spacing()
-        imgui.separator()
-        if imgui.collapsing_header("Zone Settings")[0]:
+        self._section_header("\u2581 ZONE SETTINGS", 0.65, 0.60, 0.50)
+        if imgui.collapsing_header("Zone Settings", imgui.TREE_NODE_DEFAULT_OPEN)[0]:
             imgui.text_disabled("Size")
             imgui.same_line(55)
             imgui.text(f"{zone.width} x {zone.height}")
@@ -1273,9 +1602,9 @@ class ZoneEditorApp:
                 zone.first_person = new_fp
                 self.dirty = True
 
-        # ── Camera (always visible, collapsed by default) ──
+        # ── Camera ──
         if self.editor_3d:
-            if imgui.collapsing_header("Camera")[0]:
+            if imgui.collapsing_header("Camera", imgui.TREE_NODE_DEFAULT_OPEN)[0]:
                 ed = self.editor_3d
                 imgui.columns(2, "##cam_cols", False)
                 imgui.set_column_width(0, 45)
@@ -1331,39 +1660,70 @@ class ZoneEditorApp:
         flags = (imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_RESIZE
                  | imgui.WINDOW_NO_TITLE_BAR | imgui.WINDOW_NO_SCROLLBAR
                  | imgui.WINDOW_NO_SCROLL_WITH_MOUSE | imgui.WINDOW_NO_COLLAPSE)
+        imgui.push_style_color(imgui.COLOR_WINDOW_BACKGROUND, 0.06, 0.06, 0.08, 0.98)
         imgui.begin("##StatusBar", flags=flags)
 
         if self.zone:
-            dirty = " *" if self.dirty else ""
-            imgui.text(f"{self.zone_name}{dirty}")
+            # Zone name + dirty marker
+            dirty = " \u2022" if self.dirty else ""
+            imgui.text_colored(f"{self.zone_name}{dirty}", 0.90, 0.85, 0.65, 1.0)
 
-            imgui.same_line(150)
-            imgui.text_disabled(f"{self.zone.width} x {self.zone.height}")
+            # Zone dimensions
+            imgui.same_line()
+            imgui.text_disabled(f"  {self.zone.width}\u00d7{self.zone.height}")
 
-            imgui.same_line(230)
+            # View mode badge
+            imgui.same_line()
+            imgui.text("  ")
+            imgui.same_line()
             mode = "3D EDITOR" if self.view_mode == "3d" else "RAYCASTER"
-            imgui.text_colored(mode, 0.5, 0.8, 1.0, 1.0)
+            imgui.text_colored(mode, 0.45, 0.75, 1.0, 1.0)
 
             if self.editor_3d and self.view_mode == "3d":
-                imgui.same_line(350)
-                r, g, b = [c / 255.0 for c in TOOL_COLORS[self.editor_3d.tool]]
-                imgui.text_colored(TOOL_LABELS[self.editor_3d.tool], r, g, b, 1.0)
-                imgui.same_line(440)
-                imgui.text_disabled(f"Snap: {self.editor_3d.snap_y}")
+                ed = self.editor_3d
+                # Tool name in tool color
+                imgui.same_line()
+                imgui.text("  ")
+                imgui.same_line()
+                r, g, b = [c / 255.0 for c in TOOL_COLORS[ed.tool]]
+                imgui.text_colored(TOOL_LABELS[ed.tool], r, g, b, 1.0)
+
+                # Current texture/preset context
+                imgui.same_line()
+                imgui.text_disabled(f"  Snap:{ed.snap_y}")
+
+                if ed.tool in ("paint", "fill", "segment", "select"):
+                    imgui.same_line()
+                    imgui.text_disabled(f"  Tex:{ed.current_texture}")
+                elif ed.tool == "stamp":
+                    preset = ed._stamp_current()
+                    pname = preset.name if preset else "?"
+                    imgui.same_line()
+                    imgui.text_disabled(f"  Model:{pname}")
+
+                # Aimed cell
+                if ed.aimed:
+                    imgui.same_line()
+                    imgui.text_disabled(f"  Cell:({ed.aimed.col},{ed.aimed.row})")
+
             elif self.view_mode == "2d":
-                imgui.same_line(350)
-                imgui.text_disabled(f"({self.px:.1f}, {self.py:.1f})")
+                imgui.same_line()
+                imgui.text_disabled(f"  Pos:({self.px:.1f}, {self.py:.1f})")
                 if self.noclip:
                     imgui.same_line()
-                    imgui.text_colored("NOCLIP", 0.9, 0.4, 0.4, 1.0)
+                    imgui.text_colored(" NOCLIP", 0.9, 0.4, 0.4, 1.0)
 
+            # Right-aligned capture state
             if self.mouse_captured:
-                imgui.same_line(max(win_w - 90, 500))
-                imgui.text_colored("EDITING", 0.3, 1.0, 0.4, 1.0)
+                label = "\u25cf EDITING"
+                label_w = imgui.calc_text_size(label)[0] + 16
+                imgui.same_line(max(win_w - label_w, 500))
+                imgui.text_colored(label, 0.3, 1.0, 0.4, 1.0)
         else:
             imgui.text_disabled("Select or create a zone to begin")
 
         imgui.end()
+        imgui.pop_style_color()
 
     # ── New zone dialog ───────────────────────────────────────────
 

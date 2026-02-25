@@ -1,451 +1,441 @@
 # Post-Apocalyptic Pawn Shop
 
-**"Shopkeeper"** — A post-apocalyptic pawn shop management game built on a custom 2.5D raycasting engine in Python/C with Pygame.
+A 2.5D post-apocalyptic survival RPG built with Python and pygame, featuring a Doom-style raycasting engine, a full 3D zone editor, and an entity-component-system architecture.
+
+You play as a shopkeeper surviving in the wasteland — scavenging, trading, and managing your pawn shop while navigating a world filled with NPCs, beasts, and loot.
 
 ---
 
 ## Table of Contents
 
-- [Overview](#overview)
-- [How the 2.5D Rendering Works](#how-the-25d-rendering-works)
-  - [Architecture at a Glance](#architecture-at-a-glance)
-  - [Phase 0 — Background Fill](#phase-0--background-fill)
-  - [Phase 1 — Wall Raycasting (DDA)](#phase-1--wall-raycasting-dda)
-  - [Phase 2A — Floor Step Walls](#phase-2a--floor-step-walls)
-  - [Phase 2B — Floor Casting (Multi-Tier)](#phase-2b--floor-casting-multi-tier)
-  - [Phase 3A — Ceiling Step Walls](#phase-3a--ceiling-step-walls)
-  - [Phase 3B — Ceiling Casting (Multi-Tier)](#phase-3b--ceiling-casting-multi-tier)
-  - [Phase 4 — Deferred Walls (Short + Thin)](#phase-4--deferred-walls-short--thin)
-  - [Phase 5 — Entity Billboards](#phase-5--entity-billboards)
-  - [Lighting and Fog System](#lighting-and-fog-system)
-  - [Texture Pipeline](#texture-pipeline)
-  - [Vertical Look (Y-Shearing)](#vertical-look-y-shearing)
-- [Zone Data Model](#zone-data-model)
-- [The Zone Editor](#the-zone-editor)
-  - [3D Sculpting View](#3d-sculpting-view)
-  - [Raycaster Preview](#raycaster-preview)
-  - [Editor Tools](#editor-tools)
-- [Rendering Capabilities](#rendering-capabilities)
+- [Features](#features)
+- [Screenshots](#screenshots)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Running the Game](#running-the-game)
+- [Zone Editor](#zone-editor)
 - [Project Structure](#project-structure)
-- [Getting Started](#getting-started)
-- [Future Plans](#future-plans)
+- [Architecture](#architecture)
+  - [Rendering Engine](#rendering-engine)
+  - [Entity-Component-System](#entity-component-system)
+  - [Zone Data Model](#zone-data-model)
+  - [Game Systems](#game-systems)
+- [Controls](#controls)
+- [Building C Extensions](#building-c-extensions)
+- [Tests](#tests)
+- [License](#license)
 
 ---
 
-## Overview
+## Features
 
-The engine renders first-person environments using a Wolfenstein/Doom-style raycasting approach, extended well beyond the classic formula with:
-
-- **Per-cell floor and ceiling heights** (Doom-style sectors)
-- **Multi-tier floor/ceiling casting** for overlapping elevation tiers
-- **Short walls, thin walls, tall walls, and transparent walls**
-- **Overlay walls** (free-form non-grid-aligned geometry)
-- **Per-face directional textures** (different textures on N/S/E/W faces)
-- **Stacked texture segments** (multiple textures per wall face at different heights)
-- **Per-cell spatial lighting** (Doom-style sector lighting)
-- **Distance fog with exponential falloff** and day/night cycle
-- **Entity billboard rendering** with z-buffer clipping
-- **A full 3D sculpting editor** with ImGui panels and real-time raycaster preview
-
-The hot rendering path is written in C (`_ray_render.c`, 2270 lines) and compiled as a Python C extension, achieving real-time framerates at 640×360 internal resolution.
+- **Dual-view gameplay** — seamless top-down and first-person raycaster perspectives
+- **C-accelerated 2.5D renderer** — textured walls, floors, ceilings with per-cell heights, Doom-style sector lighting, fog, and entity billboards
+- **3D zone editor** — fly-camera wireframe sculpting with ImGui panels, real-time raycaster preview (Tab to toggle)
+- **6 editor tools** — Sculpt, Paint, Fill, Erase, Segment, Select with undo/redo
+- **Per-face texture stacking** — wall segments allow multiple textures per face (brick base, window, trim)
+- **Height-based geometry** — variable floor/ceiling heights, step walls, upper wall extensions, overlay walls
+- **ECS architecture** — typed entity-component-system with persistent save/load
+- **Procedural dialogue** — context-aware NPC dialogue based on health, time of day, zone, and world events
+- **Off-screen simulation** — combat and zone activity continue in unloaded zones
+- **Loot tables** — TOML-driven random item generation
+- **Modal UI framework** — inventory, trading, and dialogue modals using a command pattern
+- **TOML-driven tile registry** — add new tiles/textures without code changes
+- **Binary zone format** — chunked `.zone` files with msgpack entity data and numpy height arrays
+- **13 pre-built zones** — campsite, crossroads, pawn shop, outskirts, and more
 
 ---
 
-## How the 2.5D Rendering Works
+## Screenshots
 
-### Architecture at a Glance
+*Coming soon*
+
+---
+
+## Requirements
+
+- **Python** 3.11+
+- **C compiler** (optional, for native renderer acceleration)
+  - Windows: [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) (`cl.exe`)
+  - Linux/macOS: `gcc` or `clang`
+
+### Python Packages
 
 ```
-                     ┌──────────────────────────┐
-                     │   Zone JSON (tile grid,   │
-                     │  heights, textures, etc.)  │
-                     └────────────┬───────────────┘
-                                  │ load
-                                  ▼
-                     ┌──────────────────────────┐
-                     │    RayRenderer (Python)   │
-                     │  • Packs zone data into   │
-                     │    flat C-compatible bufs  │
-                     │  • Manages framebuffer    │
-                     │  • Calls C render_frame() │
-                     └────────────┬───────────────┘
-                                  │
-          ┌───────────────────────┼────────────────────────┐
-          ▼                       ▼                        ▼
-   _fast_cast.c            _ray_render.c            _fast_walls.c
-   (DDA wall cast,         (Full-frame renderer:     (Wall geometry
-    Python fallback)        walls, floors, ceilings,  pre-computation
-                            entities, lighting)        for Python path)
-          │                       │                        │
-          ▼                       ▼                        ▼
-   WallSlice tuples        RGB framebuffer (direct)  Geometry tuples
-   (for Python renderer)   + per-pixel depth buffer  (for Python renderer)
+pygame >= 2.0.0
+numpy
+msgpack >= 1.0.0
+tomli >= 2.0.0
+PyOpenGL >= 3.1.0
+PyOpenGL_accelerate >= 3.1.0
+imgui[pygame] >= 2.0.0
 ```
-
-There are **two rendering paths**:
-
-1. **C Renderer** (`_ray_render.c`) — The primary path. Renders directly into a pre-allocated RGB framebuffer in a single C call. Used by `RayRenderer`.
-2. **Python Renderer** (`raycaster.py` + `fp_walls.py` + `fp_surfaces.py`) — The original Python path with optional `_fast_cast.c` and `_fast_walls.c` acceleration. Used by the in-game first-person scene.
-
-Both follow the same fundamental algorithm: DDA raycasting for walls, row-sweep for floors/ceilings.
-
-### Phase 0 — Background Fill
-
-Before any geometry is drawn, the framebuffer is filled:
-
-- **Exterior zones**: A vertical gradient from deep blue (top) to light blue (bottom) simulates sky above the horizon line; dark brown-grey below for ground.
-- **Interior zones**: A dark gradient simulates an enclosed ceiling above; same ground below.
-- The **per-pixel depth buffer** is initialized to `MAX_DEPTH` (32 tiles).
-
-### Phase 1 — Wall Raycasting (DDA)
-
-For each screen column (640 columns at default resolution):
-
-1. **Ray setup**: A ray is cast from the camera position through the corresponding column of the virtual screen plane. The camera plane width is derived from the FOV (default 60°).
-
-2. **DDA stepping**: The Digital Differential Analyzer walks the ray through the tile grid cell-by-cell (up to 64 steps). At each cell boundary:
-
-   - **Occlusion tracking**: Projects the traversed cell's ceiling and floor heights to screen-Y coordinates. Maintains running `clip_top` / `clip_bot` limits — if intervening cells have ceilings or floors that occlude parts of the column, later geometry is clipped.
-
-   - **Step-wall collection**: When floor or ceiling height changes between adjacent cells, records a `StepWallHit` with perpendicular distance, texture U coordinate, and both cells' heights. These are rendered in Phase 2A/3A without redundant DDA re-traces.
-
-   - **Non-solid cells**: Checks for thin walls (mid-cell intersection), transparent walls, and short walls — all recorded as deferred hits for Phase 4.
-
-   - **Solid cells**: The DDA terminates. The wall column is rendered.
-
-3. **Overlay wall testing**: After the DDA walk, each screen column tests against free-form wall segments (line segments not bound to the grid) using 2D ray-segment intersection.
-
-4. **Wall column rendering**: The wall's screen extent is computed from the perpendicular distance and the cell's floor/ceiling heights. Two sub-paths:
-
-   - **Segmented**: If the face has stacked texture segments (e.g., brick on the bottom half, plaster on top), each segment is rendered independently with proper V-mapping.
-   - **Simple**: Standard single-texture column with optional `v_scale` stretching.
-
-   **Tall walls** extend upward above the ceiling using a repeating alt-texture. **AO shadows** darken pixels near wall bases within 6 tiles.
-
-### Phase 2A — Floor Step Walls
-
-Uses `StepWallHit` data collected during Phase 1 (zero redundant DDA work). When adjacent cells have different floor heights, the vertical face between them is rendered as a textured wall column. Supports segmented textures. Per-pixel depth testing prevents overwriting closer geometry.
-
-### Phase 2B — Floor Casting (Multi-Tier)
-
-A row-sweep algorithm renders textured floors:
-
-1. **Tier collection**: All unique floor heights below the camera are gathered and sorted highest-first (nearest drawn first for correct occlusion).
-
-2. **Scanline sweep**: For each pixel row below the horizon:
-   - Each pixel tests against floor tiers from nearest to farthest.
-   - The ray is projected onto the floor plane at the tier's height.
-   - The world-space intersection point determines the tile cell and texture UV.
-   - The floor texture is sampled and shaded with:
-     - **Checkerboard tint** (alternating tiles dimmed to ~82% for visual grid separation)
-     - **Height brightness boost** (elevated floors appear slightly brighter)
-     - **Per-cell spatial lighting**
-     - **Distance fog**
-
-### Phase 3A — Ceiling Step Walls
-
-Mirror of Phase 2A for ceiling-height transitions between adjacent cells. Also handles `upper_wall_height` extensions — wall-like surfaces above the normal ceiling height.
-
-### Phase 3B — Ceiling Casting (Multi-Tier)
-
-Mirror of Phase 2B, only active for **interior zones**. Sweeps from the horizon upward. Cells with ceiling height ≥ 10.0 are treated as **open sky** — the Phase 0 background shows through. Overhead floors (viewing an elevated floor from below) are rendered with extra dimming (59% vs ceiling's 70%).
-
-### Phase 4 — Deferred Walls (Short + Thin)
-
-All deferred hits from Phase 1 are sorted far-to-near and rendered:
-
-- **Short walls** (e.g., counters, railings): Rendered at reduced height anchored to floor level. If the camera is above a short wall, a **counter-top surface** is drawn (horizontal floor-cast technique constrained to the tile bounds).
-- **Thin walls**: Mid-cell intersections (fences, window frames).
-- **Transparent walls**: Pixels at magenta `(255, 0, 255)` are skipped for see-through fences and bars.
-- All per-pixel depth-tested against previously rendered geometry.
-
-### Phase 5 — Entity Billboards
-
-A separate C function (`render_entities`) renders entities as camera-facing billboards:
-
-- Entities are sorted far-to-near.
-- **Textured billboards**: Sampled from the tile atlas with fog tinting and entity color modulation. Near-black pixels are transparent.
-- **Untextured billboards**: Colored rectangles with head/body shading and edge darkening.
-- Per-pixel z-buffer clipping against the world depth buffer.
-
-### Lighting and Fog System
-
-Three independent lighting layers combine multiplicatively:
-
-| Layer | Source | Effect |
-|-------|--------|--------|
-| **Distance fog** | 256-entry LUT, exponential decay | Brightness drops off with `exp(-dist/16 × 1.8)`, clamped to a minimum of 20/255 |
-| **Directional shading** | Wall face orientation | EW faces receive a warm shadow tint `(175, 168, 155)/256` — gives depth perception |
-| **Spatial lighting** | Per-cell `light_levels` grid (0.0–1.0) | Doom-style sector lighting — dim rooms, bright exteriors |
-| **Day/night cycle** | `dn` factor (0.0 night – 1.0 day) | Modulates fog ambient: `ambient = 200 + 55 × dn`, brightness = `fog × (0.4 + 0.6 × dn)` |
-
-### Texture Pipeline
-
-All textures are **64×64 pixel PNG files** stored in `assets/textures/tiles/`. Currently 34 textures.
-
-At renderer init, `RayRenderer._build_atlas()` packs all tile textures into a single flat RGB buffer (`num_tiles × 64 × 64 × 3 bytes`), which the C code indexes by tile ID for zero-overhead sampling.
-
-Texture features per tile (via `TileDef`):
-- `texture_key` — primary texture
-- `tex_n`, `tex_s`, `tex_e`, `tex_w` — per-compass-face overrides
-- `texture_front` / `texture_back` — rotational overrides
-- `alt_texture` — tall wall extension repeat texture
-- `v_scale` — vertical texture scale (0.5 = texture covers 2 world-units)
-- `height_scale` — wall height multiplier (< 1.0 = counter/railing)
-
-### Vertical Look (Y-Shearing)
-
-The renderer implements vertical mouselook via **horizon-line shifting** — the classic 2.5D approach:
-
-```
-horizon_shift = tan(pitch) × screen_height
-```
-
-This shifts the horizon line up or down, causing walls to appear taller/shorter and floors/ceilings to slide. Combined with per-cell height variation, this gives a convincing sense of 3D without true perspective projection.
 
 ---
 
-## Zone Data Model
+## Installation
 
-Zones are JSON files in `zones/` loaded into a `Zone` dataclass. Each zone is a 2D grid of cells with rich per-cell data:
+```bash
+# Clone the repository
+git clone https://github.com/your-username/Post-Apocalyptic-Pawn-Shop.git
+cd Post-Apocalyptic-Pawn-Shop
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `tiles` | `str[][]` | Tile ID grid (e.g. `"grass"`, `"brick_wall"`) |
-| `rotations` | `int[][]` | Per-cell rotation (0–3, 90° increments) |
-| `floor_heights` | `float[][]` | Per-cell floor height (0.0 = ground level) |
-| `ceil_heights` | `float[][]` | Per-cell ceiling height (10.0 = open sky) |
-| `floor_textures` | `str[][]` | Per-cell floor texture override |
-| `ceil_textures` | `str[][]` | Per-cell ceiling texture override |
-| `wall_textures` | `str[][]` | Per-cell wall texture (all 4 faces) |
-| `face_textures` | `str[][][4]` | Per-cell per-face texture [N, S, E, W] |
-| `light_levels` | `float[][]` | Per-cell spatial lighting (0.0–1.0) |
-| `wall_segments` | `seg[][][4]` | Per-face stacked texture segments |
-| `floor_step_textures` | `str[][][4]` | Textures for floor-height transition faces |
-| `ceil_step_textures` | `str[][][4]` | Textures for ceiling-height transition faces |
-| `floor_step_segments` | `seg[][][4]` | Stacked segments on floor step walls |
-| `ceil_step_segments` | `seg[][][4]` | Stacked segments on ceiling step walls |
-| `upper_wall_height` | `float[][]` | Override wall height above ceiling |
-| `overlay_walls` | `OverlayWall[]` | Free-form wall segments (fences, diagonals) |
-| `portals` | `Portal[]` | Zone-to-zone transition links |
-| `entities` | `dict[]` | Spawned entity descriptors |
+# Create and activate a virtual environment
+python -m venv .venv
 
-A cell can simultaneously be:
-- A solid wall (floor at or above ceiling, or wall-type tile)
-- A walkable floor with custom elevation
-- An interior ceiling at any height (or open sky)
-- Textured differently on each of its 4 cardinal faces
-- Split into multiple vertical texture bands per face
+# Windows
+.venv\Scripts\activate
 
-This gives Doom-like sector geometry within a Wolfenstein-style grid.
+# Linux/macOS
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Build C extensions (optional but recommended — ~50x faster rendering)
+python build_ext.py build_ext --inplace
+```
 
 ---
 
-## The Zone Editor
+## Running the Game
 
-The standalone zone editor (`zone_editor.py`, 1466 lines) provides a full 3D editing environment with real-time preview.
+```bash
+python main.py
+```
 
-### 3D Sculpting View
-
-A software-rendered 3D wireframe/solid view using Pygame's polygon drawing, composited through OpenGL:
-
-- **Fly camera** (WASD + mouse) with sprint/slow modifiers
-- **Face-shaded filled boxes** with per-face brightness multipliers and back-face culling
-- **Ray-AABB picking** for precise cell/face targeting
-- **Depth-sorted rendering** (painter's algorithm, back-to-front)
-- **Visual overlays**: Grid, ceiling grid, axis indicators, segment boundary markers, selection highlights, tool previews
-
-### Raycaster Preview
-
-Press **Tab** to switch to the actual C raycaster rendering the zone in real time at full resolution — see exactly what the player will see while editing.
-
-### Editor Tools
-
-| # | Tool | Description |
-|---|------|-------------|
-| 1 | **Sculpt** | Raise/lower floor and ceiling heights. LMB raises, RMB lowers. Configurable snap grid (0.0625–1.0). Supports ceiling sculpting (dig down / fill up). |
-| 2 | **Paint** | Apply textures to wall faces, floors, ceilings. Hold for continuous drag-paint. Eyedropper (MMB). Scrollable texture palette. |
-| 3 | **Fill** | Flood-fill connected surfaces with a texture. Stops at height changes and segment boundaries. |
-| 4 | **Erase** | Reset cells to default state (flat ground, open sky). Can reset height only or textures only. |
-| 5 | **Detail** | Split wall faces into vertical texture segments. Merge segments. Paint individual segments. |
-| 6 | **Select** | Rectangular area selection. Batch fill, clear, or reset operations on the selection. |
-
-All tools support **undo/redo** (Ctrl+Z / Ctrl+Y) via snapshot-based history.
-
-The ImGui UI provides:
-- **Tool panel** with texture picker and context-sensitive hints
-- **Zone browser** to load any zone from `zones/`
-- **Properties panel** showing cell coordinates, heights, textures, segments, and face overrides
-- **Status bar** with zone name, dimensions, mode, active tool, and camera position
-- **New Zone / Save As dialogs** with validation
+The main menu offers **New Game**, **Continue** (if a save exists), **Settings**, and **Quit**.
 
 ---
 
-## Rendering Capabilities
+## Zone Editor
 
-### What the Engine Can Do Today
+The standalone zone editor provides a 3D wireframe sculpting environment with an ImGui panel UI and a live raycaster preview.
 
-- **Variable-height floors and ceilings** — stairs, pits, elevated platforms, sunken rooms
-- **Interior and exterior zones** — ceilings or open sky per-cell
-- **34 hand-painted 64×64 textures** — walls, floors, terrain, furniture
-- **Per-face texturing** — 4 independent compass-face textures per cell
-- **Stacked texture segments** — multiple textures per wall face at different heights (wainscoting, trim, brick-to-plaster transitions)
-- **Short walls** — counters, railings, half-walls (< 1.0 height scale) with see-through and counter-top surfaces
-- **Thin walls** — mid-cell geometry for fences and window frames
-- **Tall walls** — extend above ceiling with repeating alt-texture
-- **Transparent walls** — magenta-keyed see-through fences and bars
-- **Overlay walls** — free-form line-segment walls not bound to the grid (diagonal walls, partitions)
-- **Per-cell spatial lighting** — Doom-style sector brightness
-- **Day/night fog cycle** — exponential distance fog with ambient modulation
-- **Directional wall shading** — EW faces darker than NS for depth perception
-- **Checkerboard floor tint** — subtle grid visualization on floors
-- **AO shadows** — darkened pixels at wall bases
-- **Entity billboards** — textured or flat-colored sprites with z-buffer clipping
-- **Height-aware collision** — step-up/step-down limits, head clearance checks
-- **Portal system** — zone-to-zone transitions with 4-state fade
-- **Full 3D zone editor** with real-time raycaster preview
+```bash
+# Launch with a blank zone
+python zone_editor.py
 
-### Performance
+# Open an existing zone
+python zone_editor.py pawn_shop
+```
 
-The C renderer (`_ray_render.c`) renders directly into a pre-allocated framebuffer with zero Python object allocation in the hot loop. At 640×360:
+### Editor Features
 
-- **DDA wall casting**: Up to 64 steps per ray, 640 rays per frame
-- **Floor/ceiling casting**: Multi-tier row-sweep with per-pixel depth testing
-- **Entity billboards**: Sorted far-to-near with atlas texture sampling
-- **Fog/lighting**: Per-pixel multiplication using pre-computed 256-entry LUT
+| Feature | Description |
+|---------|-------------|
+| **Sculpt** | Raise/lower floors and ceilings, dig rooms, create terrain |
+| **Paint** | Apply textures to floors, ceilings, walls, and individual faces |
+| **Fill** | Flood-fill textures bounded by height/segment changes |
+| **Erase** | Reset cells, clear textures, flatten heights |
+| **Segment** | Split wall faces into stacked texture bands (trim, windows, etc.) |
+| **Select** | Rectangular area operations — batch raise/lower, texture, delete |
+| **Undo/Redo** | Snapshot-based history (Ctrl+Z / Ctrl+Y) |
+| **Raycaster Preview** | Tab toggles between editor and first-person preview |
 
-The C extension is compiled with `-O2 -ffast-math` for maximum throughput.
+### Editor Controls
+
+**3D Editor (mouse captured):**
+
+| Key | Action |
+|-----|--------|
+| W/S/A/D | Fly camera |
+| Mouse | Look around |
+| 1–6 | Select tool |
+| LMB | Primary tool action |
+| RMB | Secondary tool action |
+| MMB | Paint / eyedropper |
+| Scroll | Tool-specific (extend, cycle texture, adjust) |
+| G | Cycle snap height (1/16, 1/8, 1/4, 1/2, 1) |
+| V | Toggle wall rendering |
+| R | Reset aimed cell height |
+| Delete | Full cell reset |
+| Ctrl+S | Save zone |
+| Tab | Switch to raycaster preview |
+| Escape | Release mouse to UI panels |
+
+**Raycaster Preview (mouse captured):**
+
+| Key | Action |
+|-----|--------|
+| W/S/A/D | Walk around |
+| Mouse | Look |
+| Shift | Sprint |
+| Ctrl | Slow walk |
+| I | Toggle interior rendering |
+| Tab | Switch back to editor |
 
 ---
 
 ## Project Structure
 
 ```
-├── main.py                  # Entry point — launches App with MainMenu
-├── zone_editor.py           # Standalone 3D zone editor (ImGui + OpenGL)
-├── build_ext.py             # Builds C extensions
+Post-Apocalyptic-Pawn-Shop/
+├── main.py                  # Game entry point
+├── zone_editor.py           # Standalone 3D zone editor
+├── build_ext.py             # C extension build script
+├── requirements.txt         # Python dependencies
 │
-├── core/
-│   ├── app.py               # App class — scene stack, game loop
-│   ├── ecs.py               # Entity-Component-System (World, EventBus)
-│   ├── zones.py             # Zone dataclass, JSON load/save
-│   ├── tiles/               # Tile registry, TileDef, TOML bootstrap
-│   ├── session.py           # Game session (zone transitions, save/load)
-│   └── ...
+├── core/                    # Engine core
+│   ├── app.py               # Pygame application shell & scene stack
+│   ├── ecs.py               # Entity-Component-System
+│   ├── scene.py             # Base scene class
+│   ├── save.py              # JSON save/load system
+│   ├── events.py            # Event bus
+│   ├── session.py           # Game session state
+│   ├── constants.py         # Global constants
+│   ├── fonts.py             # Font loading
+│   ├── paths.py             # Project directory paths
+│   ├── transition.py        # Scene transition effects
+│   ├── world_ticker.py      # Background zone simulation ticker
+│   ├── types.py             # Enums (Direction, EntityKind, face constants)
+│   ├── tiles/               # TOML-driven tile registry
+│   │   ├── types.py         # TileDef dataclass, TileType, TF flags
+│   │   ├── registry.py      # TILE_REGISTRY, compact-int mapping, LUT builders
+│   │   ├── io.py            # TOML parsing
+│   │   └── crud.py          # Register/update/delete tiles at runtime
+│   └── zones/               # Zone data model & binary I/O
+│       ├── zone.py          # Zone dataclass, Portal, OverlayWall
+│       ├── io.py            # Binary .zone reader/writer (chunked format)
+│       ├── compiler.py      # Zone → flat numpy arrays
+│       ├── format.py        # Binary format constants
+│       └── game_registry.py # Persistent str↔uint16 asset ID mapping
 │
-├── systems/
-│   ├── _ray_render.c        # Full-frame C raycaster (2270 lines)
-│   ├── _fast_cast.c         # C-accelerated DDA wall casting (331 lines)
-│   ├── _fast_walls.c        # C wall geometry pre-computation (242 lines)
-│   ├── ray_renderer.py      # Python wrapper for _ray_render.c (853 lines)
-│   ├── raycaster.py         # Pure-Python DDA raycaster (573 lines)
-│   ├── textures.py          # TextureAtlas — PNG loading, 64×64 tiles
-│   └── ...
+├── engine/                  # Rendering engine
+│   ├── ray_renderer.py      # Python wrapper for C raycaster
+│   ├── raycaster.py         # Pure-Python DDA raycaster (fallback)
+│   ├── textures.py          # Texture atlas (PNG loading, 64×64 tiles)
+│   ├── _ray_render.c        # C raycaster — full-frame renderer (~2300 LOC)
+│   ├── _fast_cast.c         # C-accelerated DDA wall casting
+│   └── _fast_walls.c        # C-accelerated wall segment rendering
 │
-├── editor/
-│   └── view_3d/             # 3D editor modules (mixins)
-│       ├── editor.py         # Zone3DEditor assembler class
-│       ├── rendering.py      # Draw loop, HUD, face highlighting
-│       ├── primitives.py     # _line3d, _box, _filled_box
-│       ├── tools_sculpt.py   # Floor/ceiling height editing
-│       ├── tools_paint.py    # Texture painting
-│       ├── tools_fill.py     # Flood-fill
-│       ├── tools_segment.py  # Stacked texture segments
-│       └── ...
+├── editor/                  # Zone editor subsystem
+│   ├── fly_camera.py        # Shared camera math (WASD, mouse look)
+│   └── view_3d/             # 3D wireframe editor
+│       ├── editor.py        # Zone3DEditor (mixin composition)
+│       ├── rendering.py     # draw(), HUD, face highlights
+│       ├── primitives.py    # _line3d, _box, _filled_box
+│       ├── math3d.py        # 4×4 matrix math, projection, clipping
+│       ├── picking.py       # Ray-AABB intersection
+│       ├── geometry.py      # Cell box computation
+│       ├── constants.py     # Colours, tool definitions, height limits
+│       ├── tools_sculpt.py  # Floor/ceiling sculpting
+│       ├── tools_paint.py   # Texture painting
+│       ├── tools_fill.py    # Flood fill
+│       ├── tools_erase.py   # Cell/texture erasing
+│       ├── tools_select.py  # Rectangular selection
+│       ├── tools_segment.py # Wall segment split/merge
+│       ├── undo.py          # Snapshot undo/redo
+│       ├── save.py          # Zone serialisation
+│       └── cell_ops.py      # Cell-level operations
 │
-├── scenes/
-│   └── world/
-│       ├── firstperson.py    # In-game first-person scene
-│       ├── fp_walls.py       # Wall rendering (Python path)
-│       ├── fp_surfaces.py    # Floor/ceiling rendering
-│       ├── fp_entities.py    # Billboard entities
-│       ├── fp_lighting.py    # Day/night, fog LUT
-│       └── topdown.py        # Top-down view scene
+├── scenes/                  # Game scenes
+│   ├── main_menu.py         # Title screen
+│   ├── save_slots.py        # Save slot selection
+│   ├── settings_menu.py     # Settings
+│   ├── pause_menu.py        # In-game pause
+│   ├── debug_menu.py        # Developer tools
+│   ├── editor.py            # In-game tile editor
+│   └── world/               # Gameplay viewports
+│       ├── topdown.py       # Top-down tile view
+│       ├── firstperson.py   # First-person raycaster view
+│       ├── fp_renderer.py   # FP rendering pipeline
+│       ├── fp_walls.py      # Wall rendering
+│       ├── fp_surfaces.py   # Floor/ceiling surfaces
+│       ├── fp_entities.py   # Entity billboard rendering
+│       ├── fp_lighting.py   # Sector lighting & fog
+│       ├── fp_hud.py        # First-person HUD
+│       └── fp_interact.py   # FP interaction targeting
 │
-├── zones/                    # Zone JSON files (13 zones)
-├── assets/textures/tiles/    # 64×64 PNG textures (34 textures)
-├── data/                     # TOML data files (items, loot, recipes)
-└── tests/                    # Unit and benchmark tests
+├── systems/                 # Game systems
+│   ├── gameplay.py          # Interaction dispatch (TD + FP)
+│   ├── interaction.py       # Entity interaction (range, facing)
+│   ├── item_registry.py     # TOML item definitions
+│   ├── items.py             # Ground item pickup/spawn
+│   ├── loot.py              # Loot table rolling
+│   ├── containers.py        # Container/inventory interaction
+│   ├── combat_sim.py        # Off-screen coarse combat
+│   ├── dialogue_gen.py      # Procedural NPC dialogue
+│   ├── spawner.py           # Entity spawning
+│   ├── beast_spawner.py     # Hostile creature spawning
+│   ├── physics.py           # Movement & collision
+│   ├── pathfinding.py       # A* pathfinding
+│   ├── zone_sim.py          # Background zone simulation
+│   └── lod.py               # Level-of-detail management
+│
+├── ui/                      # UI framework
+│   ├── modal.py             # Modal stack base class
+│   ├── commands.py          # Command pattern (CloseModal, HealPlayer, etc.)
+│   ├── helpers.py           # UI drawing utilities
+│   ├── inventory_modal.py   # Player inventory screen
+│   ├── transfer_modal.py    # Container/trade screen
+│   └── dialogue_modal.py    # NPC dialogue screen
+│
+├── components/              # ECS component definitions
+├── data/                    # Game data (TOML)
+│   ├── items.toml           # Item definitions
+│   ├── loot_tables.toml     # Loot table definitions
+│   ├── custom_tiles.toml    # User-defined tiles
+│   └── custom_entities.toml # User-defined entities
+│
+├── assets/
+│   ├── textures/
+│   │   ├── tiles/           # 64×64 PNG tile textures (34 textures)
+│   │   └── icon/            # Application icons
+│   └── models/
+│       └── tiles/           # Tile definition TOML files
+│
+├── zones/                   # Zone files (.zone binary format)
+├── tests/                   # Test suite
+├── tools/                   # Migration & demo utilities
+└── docs/                    # Design documents & audits
 ```
 
 ---
 
-## Getting Started
+## Architecture
 
-### Requirements
+### Rendering Engine
 
-- Python 3.10+
-- GCC (for building C extensions)
-- System dependencies: SDL2 (for Pygame)
+The renderer is a **Wolfenstein/Doom-style 2.5D raycaster** with modern extensions:
 
-### Setup
+| Feature | Implementation |
+|---------|---------------|
+| Wall casting | DDA ray marching, one ray per screen column |
+| Floor/ceiling | Row-sweep textured casting with per-cell heights |
+| Height variation | Independent floor and ceiling heights per cell (Doom sectors) |
+| Wall segments | Stacked textures per face — allows brick + window + trim combos |
+| Step walls | Automatic side faces at height transitions between cells |
+| Upper walls | Configurable wall extensions above the ceiling |
+| Overlay walls | Free-form diagonal/partial walls not bound to the grid |
+| Entity rendering | Textured billboards with per-pixel depth testing |
+| Lighting | Per-cell spatial lighting + exponential distance fog |
+| Sky | Gradient sky (exterior) or textured ceiling (interior) |
+| Short/thin walls | Half-height counters, fence posts, mid-cell thin walls |
+
+**Performance path:** The engine has three tiers:
+1. **C extension** (`_ray_render.c`, ~2300 LOC) — full-frame rendering in native code, ~50× faster
+2. **C DDA** (`_fast_cast.c`) — accelerated wall casting used by the pure-Python renderer
+3. **Pure Python** (`raycaster.py`) — fallback requiring no compilation
+
+Data flows from `Zone` → `RayRenderer._build_buffers()` (marshals all zone data into flat C-compatible byte arrays) → `_c_render_frame()` (C function writes RGB directly into a pre-allocated framebuffer) → `pygame.Surface`.
+
+### Entity-Component-System
+
+The ECS (`core/ecs.py`) is a typed, Rust-inspired implementation:
+
+- **Entities** are integer IDs
+- **Components** subclass `Component` and carry a `_persist` flag for save/load
+- **Resources** are singleton objects stored separately from entities
+- **Queries** support 1–3 component types with full type narrowing
+- **Zone indexing** automatically tracks entity positions for spatial queries
+
+```python
+# Example: query all entities with Position and Health
+for eid, (pos, hp) in world.query(Position, Health):
+    if hp.current <= 0:
+        world.despawn(eid)
+```
+
+### Zone Data Model
+
+A `Zone` is a named tile grid with rich per-cell properties:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `tiles` | `str[H][W]` | Tile IDs from the TOML registry |
+| `floor_heights` | `float[H][W]` | Floor elevation per cell |
+| `ceil_heights` | `float[H][W]` | Ceiling elevation (≥10 = open sky) |
+| `floor_textures` | `str[H][W]` | Floor surface texture override |
+| `ceil_textures` | `str[H][W]` | Ceiling surface texture override |
+| `wall_textures` | `str[H][W]` | Wall texture override (all 4 faces) |
+| `face_textures` | `str[H][W][4]` | Per-face wall texture (N/S/E/W) |
+| `wall_segments` | `seg[H][W][4]` | Stacked texture bands per face |
+| `light_levels` | `float[H][W]` | Spatial lighting (0.0–1.0) |
+| `upper_wall_height` | `float[H][W]` | Wall extension above ceiling |
+| `overlay_walls` | `list` | Free-form diagonal wall segments |
+
+Zones are serialised to a **chunked binary format** (`.zone` files):
+- **NAVI** — uint16 navigation bitmasks
+- **ELEV** — float32 floor/ceiling height arrays
+- **RNDR** — uint16 texture indices + float32 lighting
+- **ENTY** — msgpack-encoded entities, portals, and metadata
+
+### Game Systems
+
+| System | Purpose |
+|--------|---------|
+| `gameplay` | Interaction dispatch for both top-down and first-person views |
+| `interaction` | Range + facing check to find interactable entities |
+| `item_registry` | TOML-driven item database with fast lookup |
+| `loot` | Weighted random loot table rolling |
+| `containers` | Container/inventory/trade modal opening |
+| `combat_sim` | Off-screen coarse combat between entities in unloaded zones |
+| `dialogue_gen` | Procedural NPC dialogue based on context (health, time, zone, events) |
+| `spawner` | Entity spawning from zone entity descriptors |
+| `beast_spawner` | Hostile creature spawning with zone population limits |
+| `physics` | Tile-based movement and collision |
+| `pathfinding` | A* grid pathfinding |
+| `zone_sim` | Background simulation for off-screen zones |
+| `lod` | Level-of-detail management for distant entities |
+
+---
+
+## Controls
+
+### In-Game
+
+| Key | Action |
+|-----|--------|
+| W/A/S/D or Arrow Keys | Move |
+| E or Enter | Interact |
+| I | Open inventory |
+| Escape | Pause menu |
+| Tab | Toggle top-down / first-person view |
+
+### First-Person View
+
+| Key | Action |
+|-----|--------|
+| Mouse | Look around |
+| W/S/A/D | Walk |
+| Shift | Sprint |
+| E | Interact with aimed entity |
+
+---
+
+## Building C Extensions
+
+The C extensions are optional but provide dramatically better rendering performance.
 
 ```bash
-# Create and activate virtual environment
-python -m venv .venv
-source .venv/bin/activate
-
-# Install Python dependencies
-pip install pygame numpy PyOpenGL "imgui[glfw]" tomli msgpack nbtlib
-
-# Build C extensions (required for the raycaster)
 python build_ext.py build_ext --inplace
-
-# Run the game
-python main.py
-
-# Run the zone editor
-python zone_editor.py
 ```
 
-### Editor Controls
+This compiles three extensions into the `engine/` directory:
+- `_ray_render` — full-frame raycasting renderer
+- `_fast_cast` — accelerated DDA wall casting
+- `_fast_walls` — accelerated wall segment rendering
 
-| Input | Action |
-|-------|--------|
-| **W/A/S/D** | Fly camera |
-| **Mouse** | Look (when captured) |
-| **Click viewport** | Capture mouse |
-| **Escape** | Release mouse |
-| **Tab** | Toggle 3D Editor / Raycaster Preview |
-| **1-6** | Select tool |
-| **LMB/RMB** | Primary/secondary tool action |
-| **MMB** | Eyedropper (Paint tool) |
-| **Scroll** | Tool-specific (height adjust, palette cycle) |
-| **Ctrl+S** | Save zone |
-| **Ctrl+Z/Y** | Undo / Redo |
+If compilation fails (no C compiler available), the engine falls back to the pure-Python renderer automatically.
 
 ---
 
-## Future Plans
+## Tests
 
-### Rendering Enhancements
-- **Dynamic point lights** — Torch flicker, lantern glow, muzzle flash with light falloff computed per-pixel during floor/ceiling casting
-- **Light propagation** — BFS/flood-based light spread from source tiles into neighbouring cells, replacing static `light_levels` grids
-- **Animated textures** — Frame-cycling for water, fire, blinking lights (atlas sub-frame indexing)
-- **Skybox rendering** — Replace flat sky gradient with a wraparound panoramic texture mapped to the camera angle
-- **Sprite rotation** — 8-way Doom-style billboard octants (data structures already defined in `BillboardSprite.octant`)
-- **Parallax floor/ceiling** — Offsetting texture samples by height delta for a subtle depth illusion on flat surfaces
-- **Multi-layer transparency** — Order-independent rendering of stacked transparent walls (currently limited to 4 per ray)
-- **Shadow mapping** — Projecting wall shadows onto floors using pre-computed shadow volumes per light source
+```bash
+# Run the full test suite
+python -m pytest tests/
 
-### Editor Improvements
-- **Lighting editor** — Per-cell light level painting with real-time preview in the raycaster view
-- **Overlay wall editor** — Visual placement of free-form wall segments (diagonal walls, fences)
-- **Entity placement** — Drag-and-drop entity spawning with prefab selection
-- **Copy/paste regions** — Clipboard operations for selected areas across zones
-- **Multi-zone portal editor** — Visual portal link creation between loaded zones
-- **Heightmap import** — Load elevation data from images for terrain generation
+# Run a specific test
+python -m pytest tests/test_raycaster.py -v
 
-### Gameplay Systems
-- **Combat system** — Real-time first-person melee/ranged combat with the existing weapon definitions
-- **NPC AI and dialogue** — Driven by the existing dialogue generation system and entity interaction framework
-- **Inventory and trade** — The pawn shop transaction loop using the item registry and loot tables
-- **Day/night cycle** — Dynamic `dn` factor affecting fog, lighting, NPC behaviour, and beast spawning
-- **Procedural zone generation** — Runtime generation of wasteland zones using the structure templates in `data/structures/`
-- **Save system completion** — Full game state serialization beyond the current zone-level saves
+# Run benchmarks
+python tests/bench_render.py
+```
 
-### Engine
-- **GPU-accelerated renderer** — Port the C raycaster to an OpenGL fragment shader for massively parallel per-pixel computation
-- **Texture resolution scaling** — Support 128×128 or 256×256 textures for close-up detail
-- **Audio system** — Positional audio using per-tile sound categories already defined in TileDef
-- **Modding support** — Hot-reload of TOML data files and texture PNGs, custom tile registration via `data/custom_tiles.toml`
+---
+
+## License
+
+*To be determined.*

@@ -751,4 +751,5 @@ check("Tall->low room: 16-angle sweep no magenta",
 print(f"\n{'=' * 60}")
 print(f"  RESULTS: {PASS} passed, {FAIL} failed")
 print(f"{'=' * 60}")
-sys.exit(1 if FAIL > 0 else 0)
+if FAIL > 0:
+    raise AssertionError(f"{FAIL} test(s) failed in render edge cases suite")

@@ -77,7 +77,7 @@ class TestToolSystem:
             assert ed.tool == tool, f"Key should select tool={tool}"
 
     def test_all_tools_present(self):
-        assert TOOLS == ("sculpt", "paint", "fill", "erase", "segment", "select")
+        assert TOOLS == ("sculpt", "paint", "fill", "erase", "segment", "select", "stamp")
 
     def test_display_toggle_keys_moved_to_f2_f3_f4(self):
         ed, z = _make_editor()

@@ -55,6 +55,7 @@ from editor.view_3d.constants import (  # noqa: F401
     COL_TOOL_WALL, COL_TOOL_FLOOR, COL_TOOL_CEILING,
     COL_TOOL_PAINT, COL_TOOL_SEGMENT,
     COL_TOOL_FILL, COL_TOOL_ERASE, COL_TOOL_SELECT,
+    COL_TOOL_STAMP,
     COL_FACE_HL,
     TOOLS, TOOL_LABELS, TOOL_COLORS, TOOL_KEYS, TOOL_HINTS,
     _FACE_DEFS,
@@ -75,6 +76,7 @@ from editor.view_3d.tools_fill import FillMixin
 from editor.view_3d.tools_erase import EraseMixin
 from editor.view_3d.tools_select import SelectMixin
 from editor.view_3d.tools_segment import SegmentMixin
+from editor.view_3d.tools_stamp import StampMixin
 from editor.view_3d.save import SaveMixin
 from editor.view_3d.primitives import DrawPrimitivesMixin
 from editor.view_3d.rendering import RenderingMixin
@@ -93,6 +95,7 @@ class Zone3DEditor(
     EraseMixin,
     SelectMixin,
     SegmentMixin,
+    StampMixin,
     GeometryMixin,
     UndoMixin,
     SaveMixin,
@@ -267,6 +270,10 @@ class Zone3DEditor(
         key = event.key
         mod = pygame.key.get_mods()
 
+        # Stamp capture naming mode intercepts all keys
+        if self.tool == "stamp" and getattr(self, '_capture_pending', False):
+            return self._stamp_capture_key(key, event.unicode)
+
         # Tool selection
         if key in TOOL_KEYS:
             new_tool = TOOL_KEYS[key]
@@ -348,6 +355,11 @@ class Zone3DEditor(
             self.show_walls = not self.show_walls
             return True
 
+        # Cycle stamp apply mode
+        if key == pygame.K_m and self.tool == "stamp":
+            self._stamp_cycle_mode()
+            return True
+
         return False
 
     def _on_click(self, event: pygame.event.Event) -> bool:
@@ -416,6 +428,13 @@ class Zone3DEditor(
                 self._seg_paint()
             return True
 
+        if tool == "stamp":
+            if btn == 1:
+                self._stamp_apply()
+            elif btn == 3:
+                self._stamp_capture_begin()
+            return True
+
         return False
 
     def _on_mouseup(self, event: pygame.event.Event) -> bool:
@@ -433,6 +452,10 @@ class Zone3DEditor(
                 return False
             self.tex_idx = (self.tex_idx + event.y) % len(palette)
             self.current_texture = palette[self.tex_idx]
+            return True
+
+        if tool == "stamp":
+            self._stamp_cycle(event.y)
             return True
 
         if tool == "select":

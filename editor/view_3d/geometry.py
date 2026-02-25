@@ -27,7 +27,11 @@ class GeometryMixin:
         S = self._SLAB
 
         if td and td.wall:
-            return [("wall", fh, max(ch, fh + 0.05))]
+            # Render a solid column from ground up to the max height.
+            # With floor_height-based walls (fh=10, ch=10) the old
+            # (fh → ch) range was a paper-thin invisible sliver;
+            # always anchoring at 0 keeps the wall visible.
+            return [("wall", min(0.0, fh), max(ch, fh + 0.05, 1.0))]
 
         # Geometry-solid: floor meets or exceeds ceiling
         if fh >= ch - 0.01:
