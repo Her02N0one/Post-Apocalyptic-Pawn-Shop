@@ -1,4 +1,4 @@
-"""systems/textures.py — Tile texture atlas, PNG-only loading.
+"""engine/textures.py — Tile texture atlas, PNG-only loading.
 
 Loads a 64×64 pixel texture Surface for each tile ID from individual
 PNG files in ``assets/textures/tiles/{texture_key}.png``.
@@ -8,7 +8,7 @@ If a PNG is missing, a flat solid-colour fallback is used.
 
 The atlas only lives in memory — no ``atlas.png`` is saved to disk.
 
-    from systems.textures import TextureAtlas
+    from engine.textures import TextureAtlas
     atlas = TextureAtlas()
     wall_surf = atlas.get("wall")  # 64×64 Surface
 """

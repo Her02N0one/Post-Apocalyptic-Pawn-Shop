@@ -16,26 +16,31 @@ Controls
     3D Editor (when captured)
         W/S/A/D         Fly camera
         Mouse           Look around
-        1-3             Select tool (sculpt/paint/segment)
+        1-6             Select tool (sculpt/paint/fill/erase/segment/select)
         LMB             Tool primary action
         RMB             Tool secondary action (inverse)
-        Shift+LMB       Stamp (sculpt)
-        MMB             Paint
-        T               Toggle sculpt target (floor ↔ ceiling)
+        MMB             Paint / eyedropper
+        Scroll          Tool-specific (extend, cycle texture, selection height)
 
         Floor target:
-          LMB=raise  RMB=lower  Scroll=extend  Shift+Scroll=stamp height
+          LMB=raise  RMB=lower  Scroll=extend  Shift+Scroll=snap grid
 
         Ceiling target (dig/fill model):
-          LMB=dig (floor drops, ceiling placed at old floor)
-          RMB=fill (floor rises, ceiling removed when met)
-          Scroll=upper wall height (0-10)  Shift+Scroll=stamp height
+          LMB=dig (lower ceiling)  RMB=fill (raise ceiling)
+          Scroll=upper wall height  Shift+Scroll=snap grid
+
+        Select tool:
+          LMB=set corners / fill texture
+          RMB=clear textures  Del=reset cells  Esc=cancel
+          Scroll=raise/lower selected heights
+          X=toggle floor/ceiling mode
 
         R               Reset height on aimed cell
         Delete          Full cell reset
         G               Cycle snap height
         Ctrl+S          Save zone
         Ctrl+Z / Y      Undo / redo
+        V               Toggle wall drawing
 
     Raycaster Preview (when captured)
         W/S/A/D         Walk around
@@ -51,7 +56,6 @@ Controls
 
 from __future__ import annotations
 
-import json
 import math
 import sys
 import time
@@ -75,8 +79,9 @@ if _root not in sys.path:
 from core.zones import load_zone, list_zones, Zone, find_spawn
 from core.tiles import TILE_REGISTRY, tile_def, TILE_COLORS
 from core.paths import ZONES_DIR
-from systems.textures import TextureAtlas
-from systems.ray_renderer import RayRenderer
+from core.zones import GameRegistry
+from engine.textures import TextureAtlas
+from engine.ray_renderer import RayRenderer
 from editor.view_3d import Zone3DEditor, TOOLS, TOOL_LABELS, TOOL_COLORS, TOOL_HINTS, SNAP_Y_OPTIONS, _ensure_palette
 from editor.fly_camera import MOUSE_SENS, wasd_2d
 
@@ -89,7 +94,7 @@ WINDOW_H      = 900
 WINDOW_TITLE  = "Zone Editor"
 
 # Panel widths
-LEFT_PANEL_W  = 220
+LEFT_PANEL_W  = 280
 RIGHT_PANEL_W = 250
 MENU_BAR_H    = 22
 STATUS_BAR_H  = 28
@@ -178,15 +183,29 @@ class ZoneEditorApp:
             (WINDOW_W, WINDOW_H), DOUBLEBUF | OPENGL | RESIZABLE,
         )
         pygame.display.set_caption(WINDOW_TITLE)
+        _icon_path = Path(__file__).resolve().parent / "assets" / "textures" / "icon" / "moonPAPS.png"
+        if _icon_path.exists():
+            pygame.display.set_icon(pygame.image.load(str(_icon_path)))
         self.clock = pygame.time.Clock()
 
         gl.glEnable(gl.GL_BLEND)
         gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
 
+        # Disable sRGB framebuffer — some drivers enable it by default,
+        # which double-gamma-corrects our already-sRGB pygame surfaces
+        # and makes the viewport appear very dim.
+        try:
+            gl.glDisable(0x8DB9)  # GL_FRAMEBUFFER_SRGB
+        except Exception:
+            pass
+
         # ImGui
         imgui.create_context()
         self.imgui_impl = ImGuiRenderer()
         self._setup_theme()
+
+        # Asset registry (for binary .zone saves)
+        self.registry = GameRegistry()
 
         # Zone data
         self.all_zones: list[str] = list_zones()
@@ -204,6 +223,10 @@ class ZoneEditorApp:
         self._vp_surface: pygame.Surface | None = None
         self._vp_size: tuple[int, int] = (800, 600)
         self.mouse_captured: bool = False  # click-to-capture, esc-to-release
+        self.win_size: tuple[int, int] = (WINDOW_W, WINDOW_H)
+        self.left_panel_w: int = LEFT_PANEL_W
+        self.right_panel_w: int = RIGHT_PANEL_W
+        self._dragging_splitter: str = ""  # "left" | "right" | ""
 
         # 3D editor + raycaster (initialized by _load_zone)
         self.editor_3d: Zone3DEditor | None = None
@@ -226,7 +249,6 @@ class ZoneEditorApp:
 
         # New-zone dialog state
         self.show_new_zone: bool = False
-        self.new_zone_name: str = ""
         self.new_zone_w: int = 20
         self.new_zone_h: int = 20
 
@@ -282,40 +304,7 @@ class ZoneEditorApp:
 
     def _create_default_zone(self) -> None:
         """Create a blank untitled zone in memory (not saved to disk)."""
-        w, h = 20, 20
-        self.zone = Zone(
-            name="untitled",
-            width=w,
-            height=h,
-            anchor=(h / 2.0, w / 2.0),
-            tiles=[["grass"] * w for _ in range(h)],
-            first_person=True,
-            floor_heights=[[0.0] * w for _ in range(h)],
-            ceil_heights=[[10.0] * w for _ in range(h)],
-            floor_textures=[[""] * w for _ in range(h)],
-            ceil_textures=[[""] * w for _ in range(h)],
-            wall_textures=[[""] * w for _ in range(h)],
-            face_textures=[[["" for _ in range(4)] for _ in range(w)] for _ in range(h)],
-            wall_segments=[[[[],[], [], []] for _ in range(w)] for _ in range(h)],
-            light_levels=[[1.0] * w for _ in range(h)],
-        )
-        self.zone_name = "untitled"
-        self.dirty = False
-
-        self.editor_3d = Zone3DEditor(self.zone)
-        self.renderer = RayRenderer(
-            self.zone, self.atlas, sw=RAY_RES_W, sh=RAY_RES_H,
-            fov=RAY_FOV, dn=self.dn,
-        )
-
-        self.px = w / 2.0
-        self.py = h / 2.0
-        self.angle = math.pi * 1.5
-        self.player_fh = 0.0
-        self.cam_h = EYE_HEIGHT
-        self.is_interior = True
-
-        pygame.display.set_caption(f"{WINDOW_TITLE} — untitled")
+        self._create_new_zone(20, 20)
 
     def _load_zone(self, name: str) -> None:
         self.zone = load_zone(name)
@@ -326,6 +315,7 @@ class ZoneEditorApp:
             self.editor_3d.set_zone(self.zone)
         else:
             self.editor_3d = Zone3DEditor(self.zone)
+            self.editor_3d.show_hud = False  # ImGui panels replace the pygame HUD
 
         if self.renderer:
             self.renderer.update_zone(self.zone, self.atlas, self.dn)
@@ -349,25 +339,60 @@ class ZoneEditorApp:
             return 5.0, 5.0
         return find_spawn(zone, self.renderer.is_solid)
 
-    def _create_new_zone(self, name: str, w: int, h: int) -> None:
-        tiles = [["grass"] * w for _ in range(h)]
-        data = {
-            "name": name, "width": w, "height": h,
-            "anchor": [h / 2.0, w / 2.0],
-            "first_person": True,
-            "tiles": tiles,
-            "floor_heights": [[0.0] * w for _ in range(h)],
-            "ceil_heights": [[10.0] * w for _ in range(h)],  # open sky
-        }
-        path = ZONES_DIR / f"{name}.json"
-        with open(path, "w") as f:
-            json.dump(data, f, indent=2)
-        self.all_zones = list_zones()
-        self._load_zone(name)
+    def _create_new_zone(self, w: int, h: int) -> None:
+        """Create a blank untitled zone in memory (not saved to disk)."""
+        self.zone = Zone(
+            name="untitled", width=w, height=h,
+            anchor=(h / 2.0, w / 2.0),
+            first_person=True,
+            tiles=[["grass"] * w for _ in range(h)],
+            floor_heights=[[0.0] * w for _ in range(h)],
+            ceil_heights=[[10.0] * w for _ in range(h)],
+            floor_textures=[[""] * w for _ in range(h)],
+            ceil_textures=[[""] * w for _ in range(h)],
+            wall_textures=[[""] * w for _ in range(h)],
+            face_textures=[[[""] * 4 for _ in range(w)] for _ in range(h)],
+            light_levels=[[1.0] * w for _ in range(h)],
+            rotations=[[0] * w for _ in range(h)],
+            wall_segments=[[[[], [], [], []] for _ in range(w)] for _ in range(h)],
+            floor_step_textures=[[[""] * 4 for _ in range(w)] for _ in range(h)],
+            ceil_step_textures=[[[""] * 4 for _ in range(w)] for _ in range(h)],
+            floor_step_segments=[[[[], [], [], []] for _ in range(w)] for _ in range(h)],
+            ceil_step_segments=[[[[], [], [], []] for _ in range(w)] for _ in range(h)],
+            upper_wall_height=[[0.0] * w for _ in range(h)],
+        )
+        self.zone_name = "untitled"
+        self.dirty = False
+
+        if self.editor_3d:
+            self.editor_3d.set_zone(self.zone)
+        else:
+            from editor.view_3d import Zone3DEditor
+            self.editor_3d = Zone3DEditor(self.zone)
+            self.editor_3d.show_hud = False  # ImGui panels replace the pygame HUD
+
+        if self.renderer:
+            self.renderer.update_zone(self.zone, self.atlas, self.dn)
+        else:
+            self.renderer = RayRenderer(
+                self.zone, self.atlas, sw=RAY_RES_W, sh=RAY_RES_H,
+                fov=RAY_FOV, dn=self.dn,
+            )
+
+        self.px = w / 2.0
+        self.py = h / 2.0
+        self.angle = math.pi * 1.5
+        self.player_fh = 0.0
+        self.cam_h = EYE_HEIGHT
+        self.is_interior = True
+
+        pygame.display.set_caption(f"{WINDOW_TITLE} \u2014 untitled")
 
     def _save_zone(self) -> None:
-        """Save current zone.  If untitled, prompt for a name."""
+        """Save current zone.  If untitled, release mouse and prompt for a name."""
         if self.zone_name == "untitled" or not self.zone_name:
+            if self.mouse_captured:
+                self._release_mouse()
             self.save_as_name = ""
             self.show_save_as = True
         else:
@@ -375,11 +400,12 @@ class ZoneEditorApp:
 
     def _do_save(self, name: str) -> None:
         """Actually write zone to disk under the given name."""
-        if not self.zone or not self.editor_3d:
+        if not self.zone:
             return
         self.zone.name = name
         self.zone_name = name
-        self.editor_3d._save()
+        path = ZONES_DIR / f"{name}.zone"
+        self.zone.save_to_file(path, self.registry)
         self.dirty = False
         self.all_zones = list_zones()
         pygame.display.set_caption(f"{WINDOW_TITLE} \u2014 {name}")
@@ -466,15 +492,31 @@ class ZoneEditorApp:
             if event.type == QUIT:
                 return False
             if event.type == VIDEORESIZE:
+                old_w = self.win_size[0]
+                self.win_size = (event.w, event.h)
+                # Scale panel widths proportionally with window
+                if old_w > 0:
+                    ratio = event.w / old_w
+                    self.left_panel_w = max(200, min(event.w // 2 - 50, int(self.left_panel_w * ratio)))
+                    self.right_panel_w = max(200, min(event.w // 2 - 50, int(self.right_panel_w * ratio)))
+                # Invalidate cached viewport surface so it gets recreated
+                self._vp_surface = None
+                self._vp_tex = 0
                 self.imgui_impl.process_event(event)
                 continue
 
             if self.mouse_captured:
                 # ── CAPTURED: all input goes to the viewport ──
                 if event.type == KEYDOWN:
-                    # Escape → release mouse back to UI
+                    # Escape: cancel selection first, then release mouse
                     if event.key == pygame.K_ESCAPE:
-                        self._release_mouse()
+                        if (self.view_mode == "3d" and self.editor_3d
+                                and self.editor_3d.tool == "select"
+                                and (self.editor_3d._sel_start is not None
+                                     or self.editor_3d._sel_end is not None)):
+                            self.editor_3d._sel_cancel()
+                        else:
+                            self._release_mouse()
                         continue
                     # Global shortcuts
                     if event.key == pygame.K_TAB and self.zone:
@@ -622,7 +664,7 @@ class ZoneEditorApp:
     # ── Rendering ─────────────────────────────────────────────────
 
     def _render_frame(self) -> None:
-        win_w, win_h = pygame.display.get_surface().get_size()
+        win_w, win_h = self.win_size
         gl.glViewport(0, 0, win_w, win_h)
         gl.glClearColor(0.06, 0.06, 0.08, 1.0)
         gl.glClear(int(gl.GL_COLOR_BUFFER_BIT))
@@ -667,6 +709,14 @@ class ZoneEditorApp:
 
     def _draw_fullscreen_quad(self) -> None:
         """Draw the viewport texture as a fullscreen GL quad (behind imgui)."""
+        # Reset shader program left active by the imgui renderer from the
+        # previous frame — without this the fixed-function pipeline is
+        # bypassed and the quad appears very dim.
+        try:
+            gl.glUseProgram(0)
+        except Exception:
+            pass
+
         gl.glMatrixMode(gl.GL_PROJECTION)
         gl.glPushMatrix()
         gl.glLoadIdentity()
@@ -675,21 +725,29 @@ class ZoneEditorApp:
         gl.glPushMatrix()
         gl.glLoadIdentity()
 
+        # Disable blending so the viewport quad is drawn opaque —
+        # on some platforms the non-SRCALPHA pygame surface produces
+        # alpha=0 in the RGBA conversion, which makes the blended
+        # result nearly invisible against the dark clear colour.
+        gl.glDisable(gl.GL_BLEND)
+
         gl.glEnable(gl.GL_TEXTURE_2D)
         gl.glBindTexture(gl.GL_TEXTURE_2D, self._vp_tex)
+        gl.glTexEnvi(gl.GL_TEXTURE_ENV, gl.GL_TEXTURE_ENV_MODE, gl.GL_REPLACE)
         gl.glColor4f(1.0, 1.0, 1.0, 1.0)
 
         gl.glBegin(gl.GL_QUADS)
-        # pygame.image.tostring(flipped=False): row 0 = pygame top → GL v=0
-        # Map GL v=0 (pygame top) to screen top, GL v=1 (pygame bottom) to
-        # screen bottom.
-        gl.glTexCoord2f(0, 1); gl.glVertex2f(-1, -1)  # bottom-left
-        gl.glTexCoord2f(1, 1); gl.glVertex2f( 1, -1)  # bottom-right
-        gl.glTexCoord2f(1, 0); gl.glVertex2f( 1,  1)  # top-right
-        gl.glTexCoord2f(0, 0); gl.glVertex2f(-1,  1)  # top-left
+        gl.glTexCoord2f(0, 1); gl.glVertex2f(-1, -1)
+        gl.glTexCoord2f(1, 1); gl.glVertex2f( 1, -1)
+        gl.glTexCoord2f(1, 0); gl.glVertex2f( 1,  1)
+        gl.glTexCoord2f(0, 0); gl.glVertex2f(-1,  1)
         gl.glEnd()
 
         gl.glDisable(gl.GL_TEXTURE_2D)
+        # Re-enable blending for the imgui overlay pass
+        gl.glEnable(gl.GL_BLEND)
+        gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+
         gl.glMatrixMode(gl.GL_PROJECTION)
         gl.glPopMatrix()
         gl.glMatrixMode(gl.GL_MODELVIEW)
@@ -701,25 +759,85 @@ class ZoneEditorApp:
 
     def _build_ui(self) -> None:
         self._menu_bar()
-        self._tool_panel()
-        self._zone_panel()
+        self._left_panel()
         self._properties_panel()
         self._status_bar()
+        self._draw_splitters()
         if self.show_new_zone:
             self._new_zone_dialog()
         if self.show_save_as:
             self._save_as_dialog()
         if not self.mouse_captured:
             self._capture_hint()
-        elif self.editor_3d and self.view_mode == "3d":
-            self._crosshair_label()
+
+    # ── Draggable panel splitters ──────────────────────────────
+
+    def _draw_splitters(self) -> None:
+        """Draw invisible drag handles on the inner edges of both panels."""
+        if self.mouse_captured:
+            return
+        win_w, win_h = self.win_size
+        panel_h = win_h - MENU_BAR_H - STATUS_BAR_H
+        GRIP = 8
+
+        splitter_flags = (
+            imgui.WINDOW_NO_TITLE_BAR | imgui.WINDOW_NO_RESIZE
+            | imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_SCROLLBAR
+            | imgui.WINDOW_NO_COLLAPSE | imgui.WINDOW_NO_SAVED_SETTINGS
+            | imgui.WINDOW_NO_FOCUS_ON_APPEARING | imgui.WINDOW_NO_NAV
+        )
+
+        min_pw = 200
+        max_pw = win_w // 2 - 50
+
+        # ── Left splitter ──
+        lx = self.left_panel_w - GRIP // 2
+        imgui.set_next_window_position(lx, MENU_BAR_H)
+        imgui.set_next_window_size(GRIP, panel_h)
+        imgui.push_style_color(imgui.COLOR_WINDOW_BACKGROUND, 0, 0, 0, 0)
+        imgui.push_style_color(imgui.COLOR_BORDER, 0, 0, 0, 0)
+        imgui.push_style_var(imgui.STYLE_WINDOW_PADDING, (0, 0))
+        imgui.begin("##LeftSplitter", flags=splitter_flags)
+        imgui.invisible_button("##lsplit", GRIP, panel_h - 4)
+        if imgui.is_item_active():
+            mx = pygame.mouse.get_pos()[0]
+            self.left_panel_w = max(min_pw, min(max_pw, mx))
+            self._dragging_splitter = "left"
+        elif self._dragging_splitter == "left":
+            self._dragging_splitter = ""
+        if imgui.is_item_hovered() or imgui.is_item_active():
+            imgui.set_mouse_cursor(imgui.MOUSE_CURSOR_RESIZE_EW)
+        imgui.end()
+        imgui.pop_style_var()
+        imgui.pop_style_color(2)
+
+        # ── Right splitter ──
+        rx = win_w - self.right_panel_w - GRIP // 2
+        imgui.set_next_window_position(rx, MENU_BAR_H)
+        imgui.set_next_window_size(GRIP, panel_h)
+        imgui.push_style_color(imgui.COLOR_WINDOW_BACKGROUND, 0, 0, 0, 0)
+        imgui.push_style_color(imgui.COLOR_BORDER, 0, 0, 0, 0)
+        imgui.push_style_var(imgui.STYLE_WINDOW_PADDING, (0, 0))
+        imgui.begin("##RightSplitter", flags=splitter_flags)
+        imgui.invisible_button("##rsplit", GRIP, panel_h - 4)
+        if imgui.is_item_active():
+            mx = pygame.mouse.get_pos()[0]
+            self.right_panel_w = max(min_pw, min(max_pw, win_w - mx))
+            self._dragging_splitter = "right"
+        elif self._dragging_splitter == "right":
+            self._dragging_splitter = ""
+        if imgui.is_item_hovered() or imgui.is_item_active():
+            imgui.set_mouse_cursor(imgui.MOUSE_CURSOR_RESIZE_EW)
+        imgui.end()
+        imgui.pop_style_var()
+        imgui.pop_style_color(2)
 
     def _capture_hint(self) -> None:
         """Show 'Click to edit' overlay when mouse is not captured."""
         if not self.zone:
             return
-        win_w, win_h = pygame.display.get_surface().get_size()
-        cx = (LEFT_PANEL_W + win_w - RIGHT_PANEL_W) * 0.5
+        win_w, win_h = self.win_size
+        cx = (self.left_panel_w + win_w - self.right_panel_w) * 0.5
         cy = win_h * 0.5
         imgui.set_next_window_position(cx - 160, cy - 20)
         imgui.set_next_window_size(320, 0)
@@ -731,78 +849,6 @@ class ZoneEditorApp:
         imgui.begin("##CaptureHint", flags=flags)
         imgui.text_colored("   Click viewport to edit  |  Esc = quit",
                            0.85, 0.85, 0.85, 1.0)
-        imgui.end()
-        imgui.pop_style_color()
-
-    def _crosshair_label(self) -> None:
-        """Show a floating label near the crosshair with the aimed target info."""
-        ed = self.editor_3d
-        if not ed:
-            return
-
-        tool = ed.tool
-        hit = ed.aimed
-        zone = self.zone
-        if not zone:
-            return
-
-        # Select tool shows selection state even without aim
-        if tool == "select":
-            if ed._sel_start is not None and ed._sel_end is None:
-                label = "Click second corner"
-            elif ed._sel_start is not None and ed._sel_end is not None:
-                label = "LMB=Fill  RMB=Clear  Del=Reset  Esc=Cancel"
-            else:
-                label = "Click to start selection"
-        elif not hit or hit.face == "ground":
-            return
-        else:
-            td = tile_def(zone.tiles[hit.row][hit.col])
-            is_wall = td and td.wall
-            target = _paint_target_label(hit.part, hit.face, is_wall)
-            if not target:
-                return
-
-            # Tool-specific prefix
-            if tool == "paint":
-                tex_name = ed.current_texture or zone.tiles[hit.row][hit.col]
-                label = f"Paint: {target}  [{tex_name}]"
-            elif tool == "fill":
-                tex_name = ed.current_texture or "(default)"
-                label = f"Fill: {target}  [{tex_name}]"
-            elif tool == "erase":
-                label = f"Erase: {target}"
-            elif tool == "sculpt":
-                label = f"Sculpt: {target}"
-            elif tool == "segment":
-                label = f"Segment: {target}"
-            else:
-                label = f"Target: {target}"
-
-        # Position below crosshair
-        win_w, win_h = pygame.display.get_surface().get_size()
-        cx = win_w * 0.5
-        cy = win_h * 0.5 + 24
-        imgui.set_next_window_position(cx - 140, cy)
-        imgui.set_next_window_size(0, 0)
-        flags = (imgui.WINDOW_NO_TITLE_BAR | imgui.WINDOW_NO_RESIZE
-                 | imgui.WINDOW_NO_MOVE | imgui.WINDOW_ALWAYS_AUTO_RESIZE
-                 | imgui.WINDOW_NO_FOCUS_ON_APPEARING | imgui.WINDOW_NO_NAV
-                 | imgui.WINDOW_NO_INPUTS)
-        imgui.push_style_color(imgui.COLOR_WINDOW_BACKGROUND, 0.0, 0.0, 0.0, 0.60)
-        imgui.begin("##CrosshairLabel", flags=flags)
-
-        # Color based on tool / part
-        r_c, g_c, b_c = [v / 255.0 for v in TOOL_COLORS.get(tool, (180, 180, 180))]
-        if hit and hit.part == "floor":
-            imgui.text_colored(label, 0.7, 0.9, 0.55, 1.0)
-        elif hit and hit.part == "ceiling":
-            imgui.text_colored(label, 0.55, 0.7, 0.9, 1.0)
-        elif hit and hit.part == "wall":
-            imgui.text_colored(label, 0.95, 0.75, 0.35, 1.0)
-        else:
-            imgui.text_colored(label, r_c, g_c, b_c, 1.0)
-
         imgui.end()
         imgui.pop_style_color()
 
@@ -868,395 +914,392 @@ class ZoneEditorApp:
 
             imgui.end_main_menu_bar()
 
-    # ── Left panel: tools ─────────────────────────────────────────
+    # ── Left panel: toolbox ───────────────────────────────────────
 
-    def _tool_panel(self) -> None:
-        win_w, win_h = pygame.display.get_surface().get_size()
+    _SNAP_LABELS = ("1/16", "1/8", "1/4", "1/2", "1")
+
+    def _left_panel(self) -> None:
+        """Unified left sidebar — tools, textures, hints, snap, display, zones."""
+        win_w, win_h = self.win_size
         imgui.set_next_window_position(0, MENU_BAR_H)
-        imgui.set_next_window_size(LEFT_PANEL_W, (win_h - MENU_BAR_H - STATUS_BAR_H) * 0.55)
+        imgui.set_next_window_size(self.left_panel_w, win_h - MENU_BAR_H - STATUS_BAR_H)
         flags = (imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_RESIZE
-                 | imgui.WINDOW_NO_COLLAPSE)
-        imgui.begin("Tools", flags=flags)
+                 | imgui.WINDOW_NO_COLLAPSE | imgui.WINDOW_NO_SAVED_SETTINGS
+                 | imgui.WINDOW_ALWAYS_VERTICAL_SCROLLBAR)
+        imgui.begin("Toolbox", flags=flags)
 
-        if self.editor_3d:
-            for i, tool_name in enumerate(TOOLS):
-                label = TOOL_LABELS[tool_name]
-                is_active = self.editor_3d.tool == tool_name
-                r, g, b = [c / 255.0 for c in TOOL_COLORS[tool_name]]
+        if not self.editor_3d:
+            imgui.text_colored("No zone loaded", 0.5, 0.5, 0.5, 1.0)
+            imgui.end()
+            return
 
-                if is_active:
-                    imgui.push_style_color(imgui.COLOR_BUTTON, r, g, b, 0.55)
-                    imgui.push_style_color(imgui.COLOR_BUTTON_HOVERED, r, g, b, 0.75)
-                    imgui.push_style_color(imgui.COLOR_BUTTON_ACTIVE, r, g, b, 0.90)
-                    imgui.push_style_color(imgui.COLOR_TEXT, 1.0, 1.0, 1.0, 1.0)
+        ed = self.editor_3d
+        spacing_x = imgui.get_style().item_spacing.x
 
-                btn_label = f"[{i+1}]  {label}"
-                if imgui.button(btn_label, LEFT_PANEL_W - 16, 28):
-                    self.editor_3d.tool = tool_name
+        # ── Tool buttons (3 per row, compact) ──────────────────
+        avail_w = imgui.get_content_region_available()[0]
+        btn_w = (avail_w - 2 * spacing_x) / 3.0
+        for i, tool_name in enumerate(TOOLS):
+            if i % 3 != 0:
+                imgui.same_line()
+            is_active = ed.tool == tool_name
+            r, g, b = [c / 255.0 for c in TOOL_COLORS[tool_name]]
+            if is_active:
+                imgui.push_style_color(imgui.COLOR_BUTTON, r, g, b, 0.6)
+                imgui.push_style_color(imgui.COLOR_BUTTON_HOVERED, r, g, b, 0.8)
+                imgui.push_style_color(imgui.COLOR_BUTTON_ACTIVE, r, g, b, 0.95)
+            if imgui.button(f"{i+1} {TOOL_LABELS[tool_name]}##{tool_name}", btn_w, 26):
+                ed.tool = tool_name
+            if is_active:
+                imgui.pop_style_color(3)
 
-                if is_active:
-                    imgui.pop_style_color(4)
+        # ── Snap selector (single row) ─────────────────────────
+        imgui.spacing()
+        avail_w = imgui.get_content_region_available()[0]
+        n_snap = len(SNAP_Y_OPTIONS)
+        snap_btn_w = (avail_w - (n_snap - 1) * spacing_x) / n_snap
+        for i, snap in enumerate(SNAP_Y_OPTIONS):
+            if i > 0:
+                imgui.same_line()
+            is_sel = abs(ed.snap_y - snap) < 0.001
+            if is_sel:
+                imgui.push_style_color(imgui.COLOR_BUTTON, 0.25, 0.55, 0.35, 1.0)
+            if imgui.button(f"{self._SNAP_LABELS[i]}##snap{i}", snap_btn_w, 20):
+                ed.snap_y = snap
+                ed.snap_idx = i
+            if is_sel:
+                imgui.pop_style_color()
 
-            # ── Texture picker (paint / fill / segment / select tools) ──
-            tool_name = self.editor_3d.tool
-            if tool_name in ("paint", "segment", "fill", "select"):
-                imgui.spacing()
-                imgui.separator()
-                imgui.text("Texture  (Scroll to cycle)")
-                imgui.spacing()
+        imgui.separator()
 
+        # ── Texture palette (context-sensitive) ────────────────
+        tool_name = ed.tool
+        if tool_name in ("paint", "segment", "fill", "select"):
+            if imgui.collapsing_header("Textures", imgui.TREE_NODE_DEFAULT_OPEN)[0]:
                 palette = _ensure_palette()
-                cur_tex = self.editor_3d.current_texture
-                cur_idx = self.editor_3d.tex_idx
+                cur_tex = ed.current_texture
+                cur_idx = ed.tex_idx
 
                 # Current texture swatch + name
                 tc = TILE_COLORS.get(cur_tex, (128, 128, 128))
                 r0, g0, b0 = tc[0] / 255.0, tc[1] / 255.0, tc[2] / 255.0
-                imgui.color_button("##curtex", r0, g0, b0, 1.0, 0, 18, 18)
+                imgui.color_button("##curtex", r0, g0, b0, 1.0, 0, 14, 14)
                 imgui.same_line()
                 imgui.text(cur_tex)
-
-                # Quick scroll buttons
-                col_w = (LEFT_PANEL_W - 24) / 3
-                if imgui.button("<< Prev##tex", col_w, 22):
-                    new_i = (cur_idx - 1) % len(palette)
-                    self.editor_3d.tex_idx = new_i
-                    self.editor_3d.current_texture = palette[new_i]
                 imgui.same_line()
-                imgui.text(f" {cur_idx+1}/{len(palette)} ")
-                imgui.same_line()
-                if imgui.button("Next >>##tex", col_w, 22):
-                    new_i = (cur_idx + 1) % len(palette)
-                    self.editor_3d.tex_idx = new_i
-                    self.editor_3d.current_texture = palette[new_i]
+                imgui.text_disabled(f"({cur_idx + 1}/{len(palette)})")
 
-                # Scrollable palette list
-                avail_h = min(150, len(palette) * 20)
-                imgui.begin_child("##texlist", LEFT_PANEL_W - 16, avail_h,
+                # Scrollable palette list (adaptive height)
+                remaining = imgui.get_content_region_available()[1]
+                list_h = max(60, min(180, remaining - 160))
+                child_w = imgui.get_content_region_available()[0]
+                imgui.begin_child("##texlist", child_w, list_h,
                                   border=True)
                 for pi, pname in enumerate(palette):
                     tc2 = TILE_COLORS.get(pname, (128, 128, 128))
                     pr, pg, pb = tc2[0] / 255.0, tc2[1] / 255.0, tc2[2] / 255.0
-                    imgui.color_button(f"##p{pi}", pr, pg, pb, 1.0, 0, 12, 12)
+                    imgui.color_button(f"##p{pi}", pr, pg, pb, 1.0, 0, 10, 10)
                     imgui.same_line()
                     is_sel = pi == cur_idx
                     clicked, _ = imgui.selectable(f"{pname}##pal{pi}", is_sel)
                     if clicked:
-                        self.editor_3d.tex_idx = pi
-                        self.editor_3d.current_texture = pname
+                        ed.tex_idx = pi
+                        ed.current_texture = pname
                 imgui.end_child()
 
-            # ── Tool hints (dynamically from TOOL_HINTS) ──
-            hint = TOOL_HINTS.get(self.editor_3d.tool, {})
-            if hint:
-                imgui.spacing()
-                imgui.separator()
+        # ── Context hints (compact key-aligned columns) ────────
+        hint = TOOL_HINTS.get(ed.tool, {})
+        if hint:
+            imgui.separator()
+            actions_dict = hint.get("actions", {})
 
-                # Title
-                title = hint.get("title", "")
-                if title:
-                    r_t, g_t, b_t = [c / 255.0 for c in TOOL_COLORS.get(self.editor_3d.tool, (180, 180, 180))]
-                    imgui.text_colored(title, r_t, g_t, b_t, 1.0)
-                    imgui.spacing()
-
-                # Context-sensitive actions
-                actions_dict = hint.get("actions", {})
-                # Pick context
-                ed = self.editor_3d
-                if ed.tool == "select":
-                    if ed._sel_start is not None and ed._sel_end is not None:
-                        ctx_key = "active"
-                    elif ed._sel_start is not None:
-                        ctx_key = "started"
-                    else:
-                        ctx_key = "none"
-                elif ed.tool == "sculpt":
-                    part = ed.aimed.part if ed.aimed else None
-                    if part == "ceiling":
-                        ctx_key = "ceiling"
-                    elif part in ("floor", "wall", "ground"):
-                        ctx_key = "floor"
-                    else:
-                        ctx_key = "none"
-                else:
-                    ctx_key = "any"
-
-                actions = actions_dict.get(ctx_key, actions_dict.get("any", {}))
-                for key, desc in actions.items():
-                    imgui.text_colored(f"  {key}: {desc}", 0.75, 0.75, 0.75, 1.0)
-
-                # Extra keys line
-                extra_keys = hint.get("keys", "")
-                if extra_keys:
-                    imgui.spacing()
-                    imgui.text_colored(extra_keys, 0.6, 0.6, 0.4, 1.0)
-
-            # Sculpt-specific: no longer has stamp height
-            # Select tool: show selection state
-            if self.editor_3d.tool == "select":
-                imgui.spacing()
-                ed = self.editor_3d
+            # Pick context key
+            if ed.tool == "select":
                 if ed._sel_start is not None and ed._sel_end is not None:
-                    bounds = ed._sel_bounds()
-                    if bounds:
-                        r1, c1, r2, c2 = bounds
-                        area = (r2 - r1 + 1) * (c2 - c1 + 1)
-                        imgui.text_colored(f"Selection: ({c1},{r1}) to ({c2},{r2})", 1.0, 0.9, 0.4, 1.0)
-                        imgui.text_colored(f"Area: {area} cells", 0.8, 0.8, 0.8, 1.0)
+                    ctx_key = "active"
                 elif ed._sel_start is not None:
-                    r, c = ed._sel_start
-                    imgui.text_colored(f"Start: ({c},{r}) — click 2nd corner", 1.0, 0.9, 0.4, 1.0)
+                    ctx_key = "started"
                 else:
-                    imgui.text_colored("Click a cell to start selection", 0.6, 0.6, 0.6, 1.0)
+                    ctx_key = "none"
+            elif ed.tool == "sculpt":
+                part = ed.aimed.part if ed.aimed else None
+                if part == "ceiling":
+                    ctx_key = "ceiling"
+                elif part in ("floor", "wall", "ground"):
+                    ctx_key = "floor"
+                else:
+                    ctx_key = "none"
+            else:
+                ctx_key = "any"
 
-            imgui.spacing()
-            imgui.separator()
-            imgui.text("Snap Height")
-            imgui.spacing()
+            actions = actions_dict.get(ctx_key, actions_dict.get("any", {}))
+            wrap_x = imgui.get_cursor_pos_x() + imgui.get_content_region_available()[0]
+            for key, desc in actions.items():
+                imgui.text_disabled(key)
+                imgui.same_line(70)
+                imgui.push_text_wrap_pos(wrap_x)
+                imgui.text(desc)
+                imgui.pop_text_wrap_pos()
 
-            for i, snap in enumerate(SNAP_Y_OPTIONS):
-                is_sel = abs(self.editor_3d.snap_y - snap) < 0.001
-                if is_sel:
-                    imgui.push_style_color(imgui.COLOR_BUTTON, 0.25, 0.55, 0.35, 1.0)
-                col_w = (LEFT_PANEL_W - 24) / 2
-                if imgui.button(f"{snap:.3f}##snap{i}", col_w, 24):
-                    self.editor_3d.snap_y = snap
-                    self.editor_3d.snap_idx = i
-                if is_sel:
-                    imgui.pop_style_color()
-                if i % 2 == 0:
-                    imgui.same_line()
+            extra = hint.get("keys", "")
+            if extra:
+                imgui.push_text_wrap_pos(wrap_x)
+                imgui.text_colored(extra, 0.55, 0.55, 0.4, 1.0)
+                imgui.pop_text_wrap_pos()
 
-            imgui.spacing()
-            imgui.spacing()
-            imgui.separator()
+        # ── Select tool state ──────────────────────────────────
+        if ed.tool == "select":
+            ceil_mode = getattr(ed, '_sel_ceiling_mode', False)
+            mode_col = (0.55, 0.7, 0.9, 1.0) if ceil_mode else (0.7, 0.9, 0.55, 1.0)
+            imgui.text_colored("Ceiling" if ceil_mode else "Floor", *mode_col)
+            imgui.same_line()
+            imgui.text_disabled("(X)")
+            if ed._sel_start is not None and ed._sel_end is not None:
+                bounds = ed._sel_bounds()
+                if bounds:
+                    r1, c1, r2, c2 = bounds
+                    area = (r2 - r1 + 1) * (c2 - c1 + 1)
+                    imgui.text_disabled(f"{area} cells selected")
 
-            # View mode switch button
-            mode_label = "Raycaster Preview" if self.view_mode == "3d" else "3D Editor"
-            if imgui.button(f"Tab: {mode_label}", LEFT_PANEL_W - 16, 28):
-                self._toggle_view_mode()
-
-            imgui.spacing()
-
-            # Visibility toggles
-            if imgui.collapsing_header("Display Options")[0]:
-                if self.editor_3d:
-                    _, self.editor_3d.show_walls = imgui.checkbox(
-                        "Walls", self.editor_3d.show_walls)
-                    _, self.editor_3d.show_ceiling_grid = imgui.checkbox(
-                        "Ceiling Grid", self.editor_3d.show_ceiling_grid)
-                    _, self.editor_3d.show_axes = imgui.checkbox(
-                        "Axes", self.editor_3d.show_axes)
-                    _, self.editor_3d.show_grid = imgui.checkbox(
-                        "Floor Grid", self.editor_3d.show_grid)
-        else:
-            imgui.text_colored("No zone loaded", 0.5, 0.5, 0.5, 1.0)
-
-        imgui.end()
-
-    # ── Left panel: zone list ─────────────────────────────────────
-
-    def _zone_panel(self) -> None:
-        win_w, win_h = pygame.display.get_surface().get_size()
-        top_h = (win_h - MENU_BAR_H - STATUS_BAR_H) * 0.55
-        panel_y = MENU_BAR_H + top_h
-        panel_h = win_h - panel_y - STATUS_BAR_H
-        imgui.set_next_window_position(0, panel_y)
-        imgui.set_next_window_size(LEFT_PANEL_W, panel_h)
-        flags = (imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_RESIZE
-                 | imgui.WINDOW_NO_COLLAPSE)
-        imgui.begin("Zones", flags=flags)
-
-        if imgui.button("+ New Zone", LEFT_PANEL_W - 16, 25):
-            self.show_new_zone = True
-
+        # ── Display options (collapsed by default) ─────────────
         imgui.separator()
+        if imgui.collapsing_header("Display")[0]:
+            _, ed.show_walls = imgui.checkbox("Walls (V)", ed.show_walls)
+            _, ed.show_ceiling_grid = imgui.checkbox(
+                "Ceiling Grid", ed.show_ceiling_grid)
+            _, ed.show_grid = imgui.checkbox("Floor Grid", ed.show_grid)
+            _, ed.show_axes = imgui.checkbox("Axes", ed.show_axes)
 
-        for name in self.all_zones:
-            is_loaded = (name == self.zone_name)
-            if is_loaded:
-                imgui.push_style_color(imgui.COLOR_TEXT, 1.0, 0.82, 0.25, 1.0)
+        # ── View mode toggle ───────────────────────────────────
+        full_w = imgui.get_content_region_available()[0]
+        mode_label = "Preview" if self.view_mode == "3d" else "Editor"
+        if imgui.button(f"Switch to {mode_label} (Tab)", full_w, 24):
+            self._toggle_view_mode()
 
-            clicked, _ = imgui.selectable(name, is_loaded)
-            if clicked and name != self.zone_name:
-                self._load_zone(name)
-
-            if is_loaded:
-                imgui.pop_style_color()
+        # ── Zones list ─────────────────────────────────────────
+        imgui.separator()
+        if imgui.collapsing_header("Zones", imgui.TREE_NODE_DEFAULT_OPEN)[0]:
+            if imgui.button("+ New Zone", imgui.get_content_region_available()[0], 22):
+                self.show_new_zone = True
+            for name in self.all_zones:
+                is_loaded = (name == self.zone_name)
+                if is_loaded:
+                    imgui.push_style_color(imgui.COLOR_TEXT, 1.0, 0.82, 0.25, 1.0)
+                clicked, _ = imgui.selectable(name, is_loaded)
+                if clicked and name != self.zone_name:
+                    self._load_zone(name)
+                if is_loaded:
+                    imgui.pop_style_color()
 
         imgui.end()
 
     # ── Right panel: properties ───────────────────────────────────
 
     def _properties_panel(self) -> None:
-        win_w, win_h = pygame.display.get_surface().get_size()
-        imgui.set_next_window_position(win_w - RIGHT_PANEL_W, MENU_BAR_H)
-        imgui.set_next_window_size(RIGHT_PANEL_W, win_h - MENU_BAR_H - STATUS_BAR_H)
+        win_w, win_h = self.win_size
+        imgui.set_next_window_position(win_w - self.right_panel_w, MENU_BAR_H)
+        imgui.set_next_window_size(self.right_panel_w, win_h - MENU_BAR_H - STATUS_BAR_H)
         flags = (imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_RESIZE
-                 | imgui.WINDOW_NO_COLLAPSE)
-        imgui.begin("Properties", flags=flags)
+                 | imgui.WINDOW_NO_COLLAPSE | imgui.WINDOW_NO_SAVED_SETTINGS)
+        imgui.begin("Inspector", flags=flags)
 
-        if self.editor_3d and self.editor_3d.aimed and self.zone:
+        if not self.zone:
+            imgui.text_colored("No zone loaded", 0.5, 0.5, 0.5, 1.0)
+            imgui.end()
+            return
+
+        zone = self.zone
+
+        # ── Zone header (always visible) ──
+        dirty_mark = " *" if self.dirty else ""
+        imgui.text_colored(f"{self.zone_name}{dirty_mark}", 1.0, 0.9, 0.5, 1.0)
+        imgui.same_line()
+        imgui.text_disabled(f"{zone.width} x {zone.height}")
+        imgui.separator()
+
+        # ── Cell inspector ──
+        if self.editor_3d and self.editor_3d.aimed:
             hit = self.editor_3d.aimed
-            zone = self.zone
             r, c = hit.row, hit.col
 
-            # ── Cell info ──
-            imgui.text_colored(f"Cell ({r}, {c})", 1.0, 0.85, 0.35, 1.0)
-            imgui.separator()
+            if imgui.collapsing_header(f"Cell ({r}, {c})##cell",
+                                       imgui.TREE_NODE_DEFAULT_OPEN)[0]:
+                td = tile_def(zone.tiles[r][c])
+                tile_name = zone.tiles[r][c]
+                is_wall = td and td.wall
 
-            td = tile_def(zone.tiles[r][c])
-            tile_name = zone.tiles[r][c]
-            is_wall = td and td.wall
-
-            imgui.text(f"Tile: {tile_name}")
-            if is_wall:
+                # Tile type badge
+                imgui.text(tile_name)
                 imgui.same_line()
-                imgui.text_colored("[WALL]", 0.9, 0.4, 0.3, 1.0)
-            else:
-                imgui.same_line()
-                imgui.text_colored("[OPEN]", 0.4, 0.8, 0.4, 1.0)
+                if is_wall:
+                    imgui.text_colored("WALL", 0.9, 0.4, 0.3, 1.0)
+                else:
+                    imgui.text_colored("OPEN", 0.4, 0.8, 0.4, 1.0)
 
-            # ── Heights ──
-            imgui.spacing()
-            if imgui.collapsing_header("Heights", imgui.TREE_NODE_DEFAULT_OPEN)[0]:
+                # Heights (compact 2-column)
                 fh = zone.floor_heights[r][c]
                 ch = zone.ceil_heights[r][c]
                 is_sky = ch >= 10.0 - 0.01
+                gap = ch - fh
 
-                imgui.columns(2, "##heights_cols", False)
-                imgui.set_column_width(0, 80)
+                imgui.columns(2, "##hcols", False)
+                imgui.set_column_width(0, 55)
 
-                imgui.text("Floor:")
+                imgui.text_disabled("Floor")
                 imgui.next_column()
                 if abs(fh) < 0.001:
-                    imgui.text_colored("0.00  (ground)", 0.6, 0.8, 0.6, 1.0)
+                    imgui.text_colored("0.00", 0.6, 0.8, 0.6, 1.0)
                 elif fh < 0:
-                    imgui.text_colored(f"{fh:.2f}  (pit)", 0.5, 0.6, 0.9, 1.0)
+                    imgui.text_colored(f"{fh:.2f}", 0.5, 0.6, 0.9, 1.0)
                 else:
                     imgui.text(f"{fh:.2f}")
                 imgui.next_column()
 
-                imgui.text("Ceiling:")
+                imgui.text_disabled("Ceil")
                 imgui.next_column()
                 if is_sky:
-                    imgui.text_colored("SKY  (open)", 0.4, 0.7, 1.0, 1.0)
+                    imgui.text_colored("SKY", 0.4, 0.7, 1.0, 1.0)
                 else:
                     imgui.text(f"{ch:.2f}")
                 imgui.next_column()
 
-                imgui.text("Gap:")
+                imgui.text_disabled("Gap")
                 imgui.next_column()
-                gap = ch - fh
                 if gap < 0.5:
                     imgui.text_colored(f"{gap:.2f}", 0.9, 0.3, 0.3, 1.0)
                 else:
                     imgui.text(f"{gap:.2f}")
-
                 imgui.columns(1)
 
-                # Upper wall height
+                # Upper wall height (only if nonzero)
                 if zone.upper_wall_height and len(zone.upper_wall_height) > r:
                     uwh = zone.upper_wall_height[r][c]
                     if uwh > 0.01:
-                        imgui.text(f"Upper wall: {uwh:.2f}")
+                        imgui.text_disabled("Upper wall")
+                        imgui.same_line(80)
+                        imgui.text(f"{uwh:.2f}")
 
-            # ── Textures ──
-            imgui.spacing()
-            if imgui.collapsing_header("Textures", imgui.TREE_NODE_DEFAULT_OPEN)[0]:
-                def _tex_line(label: str, tex: str) -> None:
-                    imgui.columns(2, f"##{label}_col", False)
-                    imgui.set_column_width(0, 60)
-                    imgui.text(f"{label}:")
-                    imgui.next_column()
-                    if tex:
-                        imgui.text(tex)
-                    else:
-                        imgui.text_colored("(default)", 0.45, 0.45, 0.50, 1.0)
-                    imgui.columns(1)
-
+                # Textures (compact label : value rows)
+                imgui.spacing()
                 wt = zone.wall_textures[r][c] if zone.wall_textures else ""
                 ft = zone.floor_textures[r][c] if zone.floor_textures else ""
                 ct = zone.ceil_textures[r][c] if zone.ceil_textures else ""
-                _tex_line("Wall", wt)
-                _tex_line("Floor", ft)
-                _tex_line("Ceil", ct)
 
-                # Face textures
+                for lbl, tex in (("Wall", wt), ("Floor", ft), ("Ceil", ct)):
+                    imgui.text_disabled(lbl)
+                    imgui.same_line(55)
+                    if tex:
+                        imgui.text(tex)
+                    else:
+                        imgui.text_colored("\u2014", 0.4, 0.4, 0.45, 1.0)
+
+                # Face overrides (inline)
                 if zone.face_textures:
                     faces = zone.face_textures[r][c]
-                    if any(f for f in faces):
-                        imgui.spacing()
-                        imgui.text("Face overrides:")
-                        for i, direction in enumerate(["N", "S", "E", "W"]):
-                            if faces[i]:
-                                imgui.text(f"  {direction}: {faces[i]}")
+                    for i, d in enumerate("NSEW"):
+                        if faces[i]:
+                            imgui.text_disabled(f"  {d}")
+                            imgui.same_line(55)
+                            imgui.text(faces[i])
 
-            # ── Wall Segments ──
-            if zone.wall_segments:
-                segs = zone.wall_segments[r][c]
-                has_segs = any(face_segs for face_segs in segs)
-                if has_segs:
-                    imgui.spacing()
-                    if imgui.collapsing_header("Wall Segments")[0]:
-                        face_names = ["N", "S", "E", "W"]
+                # Wall segments (tree node, collapsed)
+                if zone.wall_segments:
+                    segs = zone.wall_segments[r][c]
+                    has_segs = any(face_segs for face_segs in segs)
+                    if has_segs and imgui.tree_node("Segments"):
                         for fi, face_segs in enumerate(segs):
                             if face_segs:
-                                imgui.text(f"  {face_names[fi]}:")
+                                fn = "NSEW"[fi]
                                 for seg in face_segs:
-                                    imgui.text(f"    {seg[0]} @ {seg[1]:.2f}")
+                                    imgui.text_disabled(f"  {fn}")
+                                    imgui.same_line(40)
+                                    imgui.text(f"{seg[0]} @ {seg[1]:.2f}")
+                        imgui.tree_pop()
 
-            # ── Aimed part ──
-            imgui.spacing()
-            imgui.separator()
-            if hit.part:
-                td_a = tile_def(zone.tiles[r][c])
-                is_wall_a = td_a and td_a.wall
-                face_label = _paint_target_label(hit.part, hit.face, is_wall_a)
-
-                # Color by part type
-                if hit.part == "floor":
-                    pc = (0.7, 0.9, 0.55, 1.0)
-                elif hit.part == "ceiling":
-                    pc = (0.55, 0.7, 0.9, 1.0)
-                else:
-                    pc = (0.95, 0.75, 0.35, 1.0)
-
-                imgui.text_colored(f"Target: {face_label}", *pc)
-
-                # Paint mode: show what texture will be applied
-                if self.editor_3d and self.editor_3d.tool == "paint":
-                    tex = self.editor_3d.current_texture or zone.tiles[r][c]
-                    imgui.text(f"  Brush: {tex}")
-                    # Show current texture on this face
-                    cur = self._get_face_texture(zone, r, c, hit.part, hit.face)
-                    if cur:
-                        imgui.text(f"  Current: {cur}")
+                # Aimed target
+                if hit.part:
+                    imgui.spacing()
+                    td_a = tile_def(zone.tiles[r][c])
+                    is_wall_a = td_a and td_a.wall
+                    face_label = _paint_target_label(hit.part, hit.face, is_wall_a)
+                    if hit.part == "floor":
+                        pc = (0.7, 0.9, 0.55, 1.0)
+                    elif hit.part == "ceiling":
+                        pc = (0.55, 0.7, 0.9, 1.0)
                     else:
-                        imgui.text_colored("  Current: (default)", 0.45, 0.45, 0.5, 1.0)
+                        pc = (0.95, 0.75, 0.35, 1.0)
+                    imgui.text_colored(f"> {face_label}", *pc)
 
-        elif self.zone:
-            imgui.text_colored("Aim crosshair at a cell", 0.5, 0.5, 0.5, 1.0)
-            imgui.spacing()
-            imgui.separator()
-            imgui.spacing()
-            imgui.text("Camera")
-            if self.editor_3d:
-                imgui.text(f"  X: {self.editor_3d.cam_x:.2f}")
-                imgui.text(f"  Y: {self.editor_3d.cam_y:.2f}")
-                imgui.text(f"  Z: {self.editor_3d.cam_z:.2f}")
-                imgui.text(f"  Yaw: {math.degrees(self.editor_3d.yaw):.0f}")
-                imgui.text(f"  Pitch: {math.degrees(self.editor_3d.pitch):.0f}")
+                    # Paint tool: brush + current
+                    if self.editor_3d.tool == "paint":
+                        tex = self.editor_3d.current_texture or zone.tiles[r][c]
+                        cur = self._get_face_texture(zone, r, c, hit.part, hit.face)
+                        imgui.text_disabled("Brush")
+                        imgui.same_line(55)
+                        imgui.text(tex)
+                        imgui.text_disabled("Current")
+                        imgui.same_line(55)
+                        imgui.text(cur if cur else "\u2014")
+
         else:
-            imgui.text_colored("No zone loaded", 0.5, 0.5, 0.5, 1.0)
+            imgui.text_colored("Aim at a cell to inspect", 0.45, 0.45, 0.5, 1.0)
+
+        # ── Zone settings (always visible) ──
+        imgui.spacing()
+        imgui.separator()
+        if imgui.collapsing_header("Zone Settings")[0]:
+            imgui.text_disabled("Size")
+            imgui.same_line(55)
+            imgui.text(f"{zone.width} x {zone.height}")
+            imgui.spacing()
+
+            # Spawn anchor
+            ar, ac = zone.anchor if zone.anchor else (0.0, 0.0)
+            imgui.text_disabled("Anchor")
+            imgui.push_item_width(self.right_panel_w - 80)
+            changed_r, new_ar = imgui.input_float("Row##anchor_r", ar, 0.5, 1.0)
+            changed_c, new_ac = imgui.input_float("Col##anchor_c", ac, 0.5, 1.0)
+            imgui.pop_item_width()
+            if changed_r or changed_c:
+                zone.anchor = (new_ar, new_ac)
+                self.dirty = True
+            if self.editor_3d and imgui.button("Set to Camera##anchor_cam"):
+                zone.anchor = (self.editor_3d.cam_z, self.editor_3d.cam_x)
+                self.dirty = True
+
+            imgui.spacing()
+            changed_fp, new_fp = imgui.checkbox("First Person", zone.first_person)
+            if changed_fp:
+                zone.first_person = new_fp
+                self.dirty = True
+
+        # ── Camera (always visible, collapsed by default) ──
+        if self.editor_3d:
+            if imgui.collapsing_header("Camera")[0]:
+                ed = self.editor_3d
+                imgui.columns(2, "##cam_cols", False)
+                imgui.set_column_width(0, 45)
+                for lbl, val in (("X", ed.cam_x), ("Y", ed.cam_y), ("Z", ed.cam_z)):
+                    imgui.text_disabled(lbl)
+                    imgui.next_column()
+                    imgui.text(f"{val:.2f}")
+                    imgui.next_column()
+                imgui.text_disabled("Yaw")
+                imgui.next_column()
+                imgui.text(f"{math.degrees(ed.yaw):.0f}\u00b0")
+                imgui.next_column()
+                imgui.text_disabled("Pitch")
+                imgui.next_column()
+                imgui.text(f"{math.degrees(ed.pitch):.0f}\u00b0")
+                imgui.columns(1)
 
         imgui.end()
 
     def _get_face_texture(self, zone, r: int, c: int, part: str, face: str) -> str:
         """Return the currently applied texture string for a given face."""
-        _FACE_IDX = {"north": 0, "south": 1, "east": 2, "west": 3}
-        if face in _FACE_IDX:
-            fi = _FACE_IDX[face]
+        from editor.view_3d.constants import FACE_IDX
+        if face in FACE_IDX:
+            fi = FACE_IDX[face]
             td = tile_def(zone.tiles[r][c])
             if td and td.wall:
                 if zone.face_textures:
@@ -1282,7 +1325,7 @@ class ZoneEditorApp:
     # ── Status bar ────────────────────────────────────────────────
 
     def _status_bar(self) -> None:
-        win_w, win_h = pygame.display.get_surface().get_size()
+        win_w, win_h = self.win_size
         imgui.set_next_window_position(0, win_h - STATUS_BAR_H)
         imgui.set_next_window_size(win_w, STATUS_BAR_H)
         flags = (imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_RESIZE
@@ -1291,33 +1334,34 @@ class ZoneEditorApp:
         imgui.begin("##StatusBar", flags=flags)
 
         if self.zone:
-            dirty_mark = " *" if self.dirty else ""
-            mode = "3D EDITOR" if self.view_mode == "3d" else "RAYCASTER"
-            imgui.text(f"{self.zone_name}{dirty_mark}")
+            dirty = " *" if self.dirty else ""
+            imgui.text(f"{self.zone_name}{dirty}")
+
             imgui.same_line(150)
-            imgui.text(f"{self.zone.width} x {self.zone.height}")
-            imgui.same_line(240)
+            imgui.text_disabled(f"{self.zone.width} x {self.zone.height}")
+
+            imgui.same_line(230)
+            mode = "3D EDITOR" if self.view_mode == "3d" else "RAYCASTER"
             imgui.text_colored(mode, 0.5, 0.8, 1.0, 1.0)
 
-            if self.mouse_captured:
-                imgui.same_line(350)
-                imgui.text_colored("EDITING", 0.3, 1.0, 0.4, 1.0)
-
             if self.editor_3d and self.view_mode == "3d":
-                imgui.same_line(440)
-                tool_label = TOOL_LABELS.get(self.editor_3d.tool, self.editor_3d.tool.upper())
+                imgui.same_line(350)
                 r, g, b = [c / 255.0 for c in TOOL_COLORS[self.editor_3d.tool]]
-                imgui.text_colored(f"Tool: {tool_label}", r, g, b, 1.0)
-                imgui.same_line(600)
-                imgui.text(f"Snap: {self.editor_3d.snap_y:.3f}")
-            elif self.view_mode == "2d":
+                imgui.text_colored(TOOL_LABELS[self.editor_3d.tool], r, g, b, 1.0)
                 imgui.same_line(440)
-                imgui.text(f"Pos: ({self.px:.1f}, {self.py:.1f})")
-                imgui.same_line(580)
+                imgui.text_disabled(f"Snap: {self.editor_3d.snap_y}")
+            elif self.view_mode == "2d":
+                imgui.same_line(350)
+                imgui.text_disabled(f"({self.px:.1f}, {self.py:.1f})")
                 if self.noclip:
+                    imgui.same_line()
                     imgui.text_colored("NOCLIP", 0.9, 0.4, 0.4, 1.0)
+
+            if self.mouse_captured:
+                imgui.same_line(max(win_w - 90, 500))
+                imgui.text_colored("EDITING", 0.3, 1.0, 0.4, 1.0)
         else:
-            imgui.text("Ready — select or create a zone")
+            imgui.text_disabled("Select or create a zone to begin")
 
         imgui.end()
 
@@ -1326,51 +1370,34 @@ class ZoneEditorApp:
     def _new_zone_dialog(self) -> None:
         imgui.open_popup("New Zone")
 
-        win_w, win_h = pygame.display.get_surface().get_size()
+        win_w, win_h = self.win_size
         imgui.set_next_window_position(win_w / 2 - 175, win_h / 2 - 100)
         imgui.set_next_window_size(350, 0)
 
         if imgui.begin_popup_modal("New Zone", flags=imgui.WINDOW_ALWAYS_AUTO_RESIZE)[0]:
             imgui.text("Create a new blank zone:")
+            imgui.text_colored("You can name it when you save.",
+                               0.5, 0.5, 0.55, 1.0)
             imgui.spacing()
 
-            _, self.new_zone_name = imgui.input_text(
-                "Name", self.new_zone_name, 64)
             _, self.new_zone_w = imgui.input_int("Width", self.new_zone_w)
             _, self.new_zone_h = imgui.input_int("Height", self.new_zone_h)
 
             self.new_zone_w = max(5, min(100, self.new_zone_w))
             self.new_zone_h = max(5, min(100, self.new_zone_h))
 
-            name_clean = self.new_zone_name.strip()
-            name_ok = bool(name_clean) and name_clean not in self.all_zones
-            name_err = ""
-            if name_clean and not name_ok:
-                name_err = "Zone already exists!"
-            elif not name_clean and self.new_zone_name:
-                name_err = "Name cannot be blank"
-
-            if name_err:
-                imgui.text_colored(name_err, 0.9, 0.35, 0.35, 1.0)
-
             imgui.spacing()
             imgui.separator()
             imgui.spacing()
 
-            if not name_ok:
-                imgui.push_style_var(imgui.STYLE_ALPHA, 0.4)
-            if imgui.button("Create", 150, 30) and name_ok:
-                self._create_new_zone(name_clean, self.new_zone_w, self.new_zone_h)
+            if imgui.button("Create", 150, 30):
+                self._create_new_zone(self.new_zone_w, self.new_zone_h)
                 self.show_new_zone = False
-                self.new_zone_name = ""
                 imgui.close_current_popup()
-            if not name_ok:
-                imgui.pop_style_var()
 
             imgui.same_line()
             if imgui.button("Cancel", 150, 30):
                 self.show_new_zone = False
-                self.new_zone_name = ""
                 imgui.close_current_popup()
 
             imgui.end_popup()
@@ -1380,7 +1407,7 @@ class ZoneEditorApp:
     def _save_as_dialog(self) -> None:
         imgui.open_popup("Save As")
 
-        win_w, win_h = pygame.display.get_surface().get_size()
+        win_w, win_h = self.win_size
         imgui.set_next_window_position(win_w / 2 - 175, win_h / 2 - 60)
         imgui.set_next_window_size(350, 0)
 

@@ -18,7 +18,7 @@ from core.types import Direction
 from components import (
     Position, Sprite, Player, Facing, Identity, Health, WallSprite,
 )
-from systems.raycaster import project_entities
+from engine.raycaster import project_entities
 from scenes.world.fp_lighting import build_fog_lut
 
 if TYPE_CHECKING:

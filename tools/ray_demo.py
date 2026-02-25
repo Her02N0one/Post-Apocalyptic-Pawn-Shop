@@ -57,8 +57,8 @@ import pygame
 
 # ── Project imports ───────────────────────────────────────────────
 from core.zones import load_zone, list_zones
-from systems.textures import TextureAtlas
-from systems.ray_renderer import RayRenderer
+from engine.textures import TextureAtlas
+from engine.ray_renderer import RayRenderer
 from editor.view_3d import Zone3DEditor
 
 # ═══════════════════════════════════════════════════════════════════
@@ -544,7 +544,7 @@ def main() -> None:
 
         # ── Depth buffer debug overlay ────────────────────────────
         if show_depth:
-            from systems._ray_render import depth_to_grayscale
+            from engine._ray_render import depth_to_grayscale
             depth_to_grayscale(renderer._fb, renderer._depth_px,
                                renderer.sw, renderer.sh, 24.0)
 

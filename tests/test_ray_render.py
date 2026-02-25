@@ -36,8 +36,8 @@ pygame.display.set_mode((100, 100))
 
 from core.tiles import TILE_REGISTRY, TileType, tile_str_to_int
 from core.zones import Zone, OverlayWall, load_zone
-from systems.ray_renderer import RayRenderer
-from systems.textures import TextureAtlas
+from engine.ray_renderer import RayRenderer
+from engine.textures import TextureAtlas
 
 # ═══════════════════════════════════════════════════════════════════
 #  Fixtures

@@ -4,7 +4,7 @@ Usage
 -----
     python build_ext.py build_ext --inplace
 
-This compiles ``systems/_fast_cast.c`` and ``systems/_fast_walls.c``
+This compiles ``engine/_fast_cast.c`` and ``engine/_fast_walls.c``
 into ``.pyd`` (Windows) or ``.so`` (Linux/macOS) modules that the
 renderer imports at runtime.  If compilation fails (no C compiler),
 the pure-Python fallback is used automatically.
@@ -25,22 +25,22 @@ if platform.system() != "Windows":
     _extra_compile = ["-O2", "-ffast-math"]
 
 ext_cast = Extension(
-    "systems._fast_cast",
-    sources=["systems/_fast_cast.c"],
+    "engine._fast_cast",
+    sources=["engine/_fast_cast.c"],
     language="c",
     extra_compile_args=_extra_compile,
 )
 
 ext_walls = Extension(
-    "systems._fast_walls",
-    sources=["systems/_fast_walls.c"],
+    "engine._fast_walls",
+    sources=["engine/_fast_walls.c"],
     language="c",
     extra_compile_args=_extra_compile,
 )
 
 ext_ray_render = Extension(
-    "systems._ray_render",
-    sources=["systems/_ray_render.c"],
+    "engine._ray_render",
+    sources=["engine/_ray_render.c"],
     language="c",
     extra_compile_args=_extra_compile,
 )

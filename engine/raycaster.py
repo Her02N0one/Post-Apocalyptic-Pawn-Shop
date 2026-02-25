@@ -1,4 +1,4 @@
-"""systems/raycaster.py — Wolfenstein-style DDA raycaster.
+"""engine/raycaster.py — Wolfenstein-style DDA raycaster.
 
 Pure functions that read the tile grid and produce rendering data.
 No pygame dependency — only math.
@@ -33,7 +33,7 @@ from core.types import (
 
 # ── Try to load C-accelerated raycaster ──────────────────────────
 try:
-    from systems._fast_cast import cast_walls as _c_cast_walls
+    from engine._fast_cast import cast_walls as _c_cast_walls
     _USE_C_CAST = True
 except ImportError:
     _c_cast_walls = None  # type: ignore[assignment]

@@ -705,7 +705,7 @@ class FirstPerson(Scene):
         _plog.record('n_deferred_halves', len(deferred_halves))
         _plog.record('n_entities_visible', getattr(renderer, '_last_n_ents', 0))
         _plog.record('n_entity_billboards', getattr(renderer, '_last_n_bbs', 0))
-        from systems.raycaster import _USE_C_CAST
+        from engine.raycaster import _USE_C_CAST
         _plog.record('c_extension_active', _USE_C_CAST)
 
     # ── Profiler helpers ──────────────────────────────────────────

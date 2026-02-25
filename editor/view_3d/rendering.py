@@ -23,6 +23,7 @@ from editor.view_3d.constants import (
     COL_WALL_DEF, COL_FLOOR_DEF, COL_CEIL_DEF,
     TOOL_LABELS, TOOL_COLORS, TOOL_HINTS,
     COL_TOOL_SELECT,
+    COL_TOOL_CEILING,
 )
 
 
@@ -228,6 +229,8 @@ class RenderingMixin:
 
     def _draw_action_context(self, surface: pygame.Surface, sw: int, sh: int) -> None:
         """Show LMB/RMB/Scroll actions near the crosshair based on tool + aimed part."""
+        if not self.show_hud:
+            return
         hint = TOOL_HINTS.get(self.tool)
         if hint is None:
             return
@@ -295,6 +298,9 @@ class RenderingMixin:
         bounds = getattr(self, '_sel_bounds', None)
         if bounds is None:
             return
+        ceiling_mode = getattr(self, '_sel_ceiling_mode', False)
+        col = COL_TOOL_CEILING if ceiling_mode else COL_TOOL_SELECT
+
         result = bounds()
         if result is None:
             # Partial selection: just highlight start corner
@@ -302,25 +308,35 @@ class RenderingMixin:
             if start is None:
                 return
             r, c = start
-            fh = zone.floor_heights[r][c]
+            if ceiling_mode:
+                ch = zone.ceil_heights[r][c]
+                h = ch - 0.05
+            else:
+                h = zone.floor_heights[r][c]
             self._filled_box(surface, vp, hw, hh,
-                             float(c), fh, float(r),
-                             c + 1.0, fh + 0.05, r + 1.0,
-                             COL_TOOL_SELECT, COL_TOOL_SELECT, 2, alpha=100)
+                             float(c), h, float(r),
+                             c + 1.0, h + 0.05, r + 1.0,
+                             col, col, 2, alpha=100)
             return
 
         r_min, c_min, r_max, c_max = result
         for r in range(r_min, r_max + 1):
             for c in range(c_min, c_max + 1):
-                fh = zone.floor_heights[r][c]
+                if ceiling_mode:
+                    ch = zone.ceil_heights[r][c]
+                    h = ch - 0.05
+                else:
+                    h = zone.floor_heights[r][c]
                 self._filled_box(surface, vp, hw, hh,
-                                 float(c), fh, float(r),
-                                 c + 1.0, fh + 0.05, r + 1.0,
-                                 COL_TOOL_SELECT, COL_TOOL_SELECT, 1, alpha=60)
+                                 float(c), h, float(r),
+                                 c + 1.0, h + 0.05, r + 1.0,
+                                 col, col, 1, alpha=60)
 
     # ── HUD ───────────────────────────────────────────────────────
 
     def _draw_hud(self, surface: pygame.Surface, sw: int, sh: int) -> None:
+        if not self.show_hud:
+            return
         font = _get_font(14)
         lh = font.get_linesize()
         pad = 6
@@ -331,6 +347,9 @@ class RenderingMixin:
         tool_label = TOOL_LABELS.get(self.tool, self.tool.upper())
         tool_col = TOOL_COLORS.get(self.tool, COL_HUD_TEXT)
         lines.append((f"Tool: {tool_label}", tool_col))
+        if self.tool == "select":
+            mode = "Ceiling" if getattr(self, '_sel_ceiling_mode', False) else "Floor"
+            lines.append((f"Mode: {mode}  (X to toggle)", COL_HUD_VAL))
         lines.append((f"Snap: {self.snap_y}", COL_HUD_VAL))
         lines.append((f"Tex: {self.current_texture}", COL_HUD_VAL))
 

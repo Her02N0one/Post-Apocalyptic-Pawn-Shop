@@ -134,6 +134,7 @@ class Zone3DEditor(
         # Selection state (for select tool)
         self._sel_start: tuple[int, int] | None = None
         self._sel_end: tuple[int, int] | None = None
+        self._sel_ceiling_mode: bool = False
 
         # Aimed cell
         self.aimed: _CellHit | None = None
@@ -146,6 +147,7 @@ class Zone3DEditor(
         self.show_grid  = True
         self.show_ceiling_grid = True
         self.show_axes  = True
+        self.show_hud   = True   # pygame HUD overlay (disable when ImGui panels provide the info)
 
         self.dirty = False
 
@@ -300,8 +302,10 @@ class Zone3DEditor(
                 return self._toggle_ceiling()
             return False
 
-        # Delete cell
+        # Delete / Backspace — select-tool batch delete takes priority
         if key in (pygame.K_DELETE, pygame.K_BACKSPACE):
+            if self.tool == "select" and self._sel_start is not None and self._sel_end is not None:
+                return self._sel_delete()
             return self._clear_cell()
 
         # Cycle snap grid
@@ -323,11 +327,10 @@ class Zone3DEditor(
             self.aimed = None
             return True
 
-        # Delete in select tool → reset selection cells
-        if key in (pygame.K_DELETE, pygame.K_BACKSPACE) and self.tool == "select":
-            if self._sel_start is not None and self._sel_end is not None:
-                return self._sel_delete()
-            return False
+        # Toggle ceiling mode in select tool
+        if key == pygame.K_x and self.tool == "select":
+            self._sel_toggle_ceiling_mode()
+            return True
 
         # Undo / redo
         if key == pygame.K_z and (mod & pygame.KMOD_CTRL):
@@ -424,7 +427,19 @@ class Zone3DEditor(
     def _on_scroll(self, event: pygame.event.Event) -> bool:
         tool = self.tool
 
-        if tool in ("paint", "segment", "fill", "select"):
+        if tool in ("paint", "segment", "fill"):
+            palette = _ensure_palette()
+            if not palette:
+                return False
+            self.tex_idx = (self.tex_idx + event.y) % len(palette)
+            self.current_texture = palette[self.tex_idx]
+            return True
+
+        if tool == "select":
+            # When selection is active, scroll raises/lowers floors (or ceilings)
+            if self._sel_start is not None and self._sel_end is not None:
+                return self._sel_scroll(event.y)
+            # No active selection — cycle texture palette
             palette = _ensure_palette()
             if not palette:
                 return False
@@ -522,8 +537,10 @@ class Zone3DEditor(
         self._update_aim()
 
         # Continuous paint: if LMB held + paint tool, paint every frame
+        # Skip undo push — a single undo entry was pushed on the initial
+        # MOUSEBUTTONDOWN so the entire stroke is one undo operation.
         if self._lmb_held and self.tool == "paint" and self.aimed:
-            self._paint()
+            self._paint_continuous()
 
     def _collides_xz(self, x: float, z: float, y: float, radius: float) -> bool:
         """True if a camera circle at *(x, z)* overlaps any solid cell at height *y*.
@@ -674,7 +691,8 @@ class Zone3DEditor(
                 self.preview_line = (c, r, target_up, COL_TOOL_FLOOR)
                 if ch >= SKY_HEIGHT:
                     S = self._SLAB
-                    self.preview_box = (c, r, DEFAULT_CEIL - S, DEFAULT_CEIL + S,
+                    ghost_ch = fh + DEFAULT_CEIL
+                    self.preview_box = (c, r, ghost_ch - S, ghost_ch + S,
                                         COL_TOOL_CEILING)
             elif part == "ceiling":
                 min_ch = max(CEIL_MIN, fh + 0.05)

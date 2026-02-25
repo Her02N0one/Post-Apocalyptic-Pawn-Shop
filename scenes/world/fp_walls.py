@@ -16,8 +16,8 @@ from typing import TYPE_CHECKING
 
 import pygame
 
-from systems.raycaster import cast_walls
-from systems.textures import TEX_SIZE
+from engine.raycaster import cast_walls
+from engine.textures import TEX_SIZE
 from core.tiles import tile_def as _tile_def, tile_str_to_int, tile_int_to_str
 from core.types import FACE_NAMES
 
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 # ── Try to import C-accelerated geometry ─────────────────────────
 try:
-    from systems._fast_walls import compute_wall_geometry as _c_geom
+    from engine._fast_walls import compute_wall_geometry as _c_geom
     _USE_C_WALLS = True
 except ImportError:
     _USE_C_WALLS = False

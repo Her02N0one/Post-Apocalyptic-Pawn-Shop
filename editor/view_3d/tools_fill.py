@@ -15,12 +15,13 @@ from __future__ import annotations
 from collections import deque
 
 from core.tiles import tile_def
+from editor.view_3d.constants import FACE_IDX
 
 
 class FillMixin:
     """Flood-fill tool — paint connected same-height surfaces."""
 
-    _FACE_IDX_FILL = {"north": 0, "south": 1, "east": 2, "west": 3}
+    _FACE_IDX_FILL = FACE_IDX
 
     def _fill(self) -> bool:
         """LMB: flood-fill current texture across connected faces."""

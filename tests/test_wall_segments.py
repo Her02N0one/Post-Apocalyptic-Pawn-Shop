@@ -10,7 +10,6 @@ Covers:
 
 from __future__ import annotations
 
-import json
 import math
 import os
 import sys
@@ -266,9 +265,10 @@ class TestSegmentEditing:
 class TestSegmentSaveLoad:
 
     def test_save_load_with_segments(self, tmp_path):
-        """wall_segments should survive a JSON save/load cycle."""
+        """wall_segments should survive a binary save/load cycle."""
         import core.paths as paths
-        import core.zones as zones_mod
+        import core.zones.zone as zone_mod
+        from core.zones import GameRegistry
 
         # Load zone from real path first
         z = load_zone("showcase")
@@ -282,70 +282,47 @@ class TestSegmentSaveLoad:
         z.wall_segments[r][c][0] = [["brick_wall", 0.5], ["concrete", ch]]
         z.wall_segments[r][c][2] = [["carpet", 0.3], ["brick_wall", 0.6], ["concrete", ch]]
 
-        # Redirect save to tmp_path
-        orig_cp = paths.ZONES_DIR
-        import editor.view_3d.editor as ed_mod
-        orig_ep = ed_mod._core_paths.ZONES_DIR
-        paths.ZONES_DIR = tmp_path
-        ed_mod._core_paths.ZONES_DIR = tmp_path
+        # Save to binary .zone in tmp_path
+        registry = GameRegistry()
+        path = tmp_path / f"{z.name}.zone"
+        z.save_to_file(path, registry)
+        assert path.exists()
 
+        # Redirect load_zone to tmp_path
+        orig_zd = zone_mod.ZONES_DIR
+        zone_mod.ZONES_DIR = tmp_path
         try:
-            ed._save_zone_json()
-
-            # Verify the JSON file exists and has wall_segments
-            path = tmp_path / f"{z.name}.json"
-            assert path.exists()
-
-            with open(path) as f:
-                data = json.load(f)
-            assert "wall_segments" in data
-
-            # Redirect load_zone to tmp_path
-            orig_zd = zones_mod.ZONES_DIR
-            zones_mod.ZONES_DIR = tmp_path
-            try:
-                z2 = load_zone(z.name)
-            finally:
-                zones_mod.ZONES_DIR = orig_zd
-
-            assert len(z2.wall_segments) == z.height
-            segs_n = z2.wall_segments[r][c][0]
-            assert len(segs_n) == 2
-            assert segs_n[0] == ["brick_wall", 0.5]
-            assert segs_n[1] == ["concrete", ch]
-
-            segs_e = z2.wall_segments[r][c][2]
-            assert len(segs_e) == 3
+            z2 = load_zone(z.name)
         finally:
-            paths.ZONES_DIR = orig_cp
-            ed_mod._core_paths.ZONES_DIR = orig_ep
+            zone_mod.ZONES_DIR = orig_zd
+
+        assert len(z2.wall_segments) == z.height
+        segs_n = z2.wall_segments[r][c][0]
+        assert len(segs_n) == 2
+        assert segs_n[0] == ["brick_wall", 0.5]
+        assert segs_n[1] == ["concrete", ch]
+
+        segs_e = z2.wall_segments[r][c][2]
+        assert len(segs_e) == 3
 
     def test_save_omits_empty_segments(self, tmp_path):
-        """When no cell has segments, wall_segments is omitted from JSON."""
-        import core.paths as paths
-        import editor.view_3d.editor as ed_mod
+        """Binary zone save round-trips correctly with empty segments."""
+        from core.zones import GameRegistry
 
         z = load_zone("showcase")
-        from editor.view_3d import Zone3DEditor
-        ed = Zone3DEditor(z)
 
-        # Redirect save to tmp_path
-        orig_cp = paths.ZONES_DIR
-        orig_ep = ed_mod._core_paths.ZONES_DIR
-        paths.ZONES_DIR = tmp_path
-        ed_mod._core_paths.ZONES_DIR = tmp_path
+        # Save to binary .zone in tmp_path
+        registry = GameRegistry()
+        path = tmp_path / f"{z.name}.zone"
+        z.save_to_file(path, registry)
 
-        try:
-            ed._save_zone_json()
-
-            path = tmp_path / f"{z.name}.json"
-            with open(path) as f:
-                data = json.load(f)
-            assert "wall_segments" not in data, \
-                "Empty segments should not be persisted"
-        finally:
-            paths.ZONES_DIR = orig_cp
-            ed_mod._core_paths.ZONES_DIR = orig_ep
+        z2 = Zone.load_from_file(path)
+        # All segment faces should be empty lists
+        for r in range(z2.height):
+            for c in range(z2.width):
+                for fi in range(4):
+                    assert z2.wall_segments[r][c][fi] == [], \
+                        f"({r},{c}) face {fi} should be empty"
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -356,8 +333,8 @@ class TestSegmentRenderer:
 
     def _render_zone(self, zone, angle=0.0):
         """Render a zone at a given angle and return pixel bytes."""
-        from systems.textures import TextureAtlas
-        from systems.ray_renderer import RayRenderer
+        from engine.textures import TextureAtlas
+        from engine.ray_renderer import RayRenderer
 
         atlas = TextureAtlas()
         ren = RayRenderer(zone, atlas, sw=160, sh=120)

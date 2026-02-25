@@ -84,92 +84,98 @@ TOOL_KEYS = {  # key → tool name
 }
 TOOL_HINTS = {
     "sculpt": {
-        "title": "Sculpt — shape floors & ceilings",
+        "title": "Sculpt",
         "actions": {
             "floor": {
-                "LMB": "Raise floor (+snap)",
-                "RMB": "Lower floor (-snap)",
-                "Scroll": "Extend floor (smooth)",
-                "Shift+Scroll": "Cycle snap grid",
+                "LMB": "Raise floor",
+                "RMB": "Lower floor",
+                "Scroll": "Extend",
+                "Sh+Scrl": "Snap grid",
             },
             "ceiling": {
-                "LMB": "Lower ceiling (add material)",
-                "RMB": "Raise ceiling (remove material)",
-                "Scroll": "Adjust upper wall height",
-                "Shift+Scroll": "Cycle snap grid",
+                "LMB": "Lower ceiling",
+                "RMB": "Raise ceiling",
+                "Scroll": "Upper wall",
+                "Sh+Scrl": "Snap grid",
             },
             "none": {
-                "LMB": "Aim at a surface to sculpt",
+                "LMB": "Aim at surface",
             },
         },
-        "keys": "T=toggle ceiling  R=reset  Del=clear  G=snap grid",
+        "keys": "T=ceil  R=reset  Del=clear  G=snap",
     },
     "paint": {
-        "title": "Paint — apply textures (hold for continuous)",
+        "title": "Paint",
         "actions": {
             "any": {
-                "LMB": "Paint texture (hold to drag-paint)",
-                "RMB": "Erase texture (reset to default)",
-                "MMB": "Eyedropper (pick texture)",
-                "Scroll": "Cycle texture palette",
+                "LMB": "Paint (hold=drag)",
+                "RMB": "Erase texture",
+                "MMB": "Eyedropper",
+                "Scroll": "Cycle palette",
             },
         },
         "keys": "",
     },
     "fill": {
-        "title": "Fill — flood-fill connected surfaces",
+        "title": "Fill",
         "actions": {
             "any": {
-                "LMB": "Flood-fill with current texture",
-                "RMB": "Flood-clear (reset to default)",
-                "Scroll": "Cycle texture palette",
+                "LMB": "Flood fill",
+                "RMB": "Flood clear",
+                "Scroll": "Cycle palette",
             },
         },
-        "keys": "Stops at height changes & segments",
+        "keys": "Stops at height/segments",
     },
     "erase": {
-        "title": "Eraser — reset cells to default",
+        "title": "Eraser",
         "actions": {
             "any": {
-                "LMB": "Reset cell (flat ground, open sky)",
-                "RMB": "Reset height only (keep tile/textures)",
-                "Shift+LMB": "Reset all textures on cell",
+                "LMB": "Reset cell",
+                "RMB": "Reset height only",
+                "Sh+LMB": "Reset textures",
             },
         },
         "keys": "",
     },
     "segment": {
-        "title": "Detail — split faces into segments",
+        "title": "Detail",
         "actions": {
             "any": {
-                "LMB": "Split face at crosshair height",
-                "RMB": "Merge aimed segment with neighbor",
-                "MMB": "Paint aimed segment",
-                "Scroll": "Cycle texture palette",
+                "LMB": "Split face",
+                "RMB": "Merge segment",
+                "MMB": "Paint segment",
+                "Scroll": "Cycle palette",
             },
         },
-        "keys": "Segments allow per-band texturing",
+        "keys": "Per-band texturing",
     },
     "select": {
-        "title": "Select — rectangular area operations",
+        "title": "Select",
         "actions": {
             "none": {
-                "LMB": "Click first corner to start selection",
+                "LMB": "First corner",
+                "Scroll": "Cycle palette",
             },
             "started": {
-                "LMB": "Click second corner to complete",
-                "Escape": "Cancel selection",
+                "LMB": "Second corner",
+                "Scroll": "Cycle palette",
+                "Esc": "Cancel",
             },
             "active": {
-                "LMB": "Fill selection with texture",
-                "RMB": "Clear selection textures",
-                "Delete": "Reset all cells in selection",
-                "Escape": "Clear selection",
+                "LMB": "Fill texture",
+                "RMB": "Clear textures",
+                "Scroll": "Adjust height",
+                "Del": "Reset cells",
+                "Esc": "Deselect",
             },
         },
-        "keys": "",
+        "keys": "X=floor/ceiling mode",
     },
 }
+
+# ─── Face index mapping (N/S/E/W → 0/1/2/3) ─────────────────────
+FACE_IDX = {"north": 0, "south": 1, "east": 2, "west": 3}
 
 # ─── Face definitions for filled-box rendering ────────────────────
 # (corner_indices, outward_normal, brightness_multiplier)

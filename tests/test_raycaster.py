@@ -2,7 +2,7 @@
 
 import math
 import pytest
-from systems.raycaster import (
+from engine.raycaster import (
     cast_walls, project_entities, build_zbuffer,
     WallSlice, BillboardSprite,
 )

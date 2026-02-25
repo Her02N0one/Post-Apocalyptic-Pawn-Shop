@@ -12,6 +12,7 @@ from core.tiles import tile_def
 from editor.view_3d.constants import (
     DEFAULT_FLOOR, SKY_HEIGHT,
 )
+from editor.view_3d.cell_ops import reset_cell
 
 
 class EraseMixin:
@@ -22,38 +23,17 @@ class EraseMixin:
         hit = self.aimed
         if not hit:
             return False
-        zone = self.zone
-        r, c = hit.row, hit.col
-
         self._push_undo()
-
-        # Reset tile to open type
-        td = tile_def(zone.tiles[r][c])
-        if td and td.wall:
-            zone.tiles[r][c] = self._open_tile
-
-        # Reset geometry
-        zone.floor_heights[r][c] = DEFAULT_FLOOR
-        zone.ceil_heights[r][c] = SKY_HEIGHT
-        if zone.upper_wall_height and len(zone.upper_wall_height) > r:
-            zone.upper_wall_height[r][c] = 0.0
-
-        # Clear all textures
-        self._erase_cell_textures(r, c)
-
-        # Clear segments
-        if zone.wall_segments and len(zone.wall_segments) > r:
-            zone.wall_segments[r][c] = [[], [], [], []]
-        if zone.floor_step_segments and len(zone.floor_step_segments) > r:
-            zone.floor_step_segments[r][c] = [[], [], [], []]
-        if zone.ceil_step_segments and len(zone.ceil_step_segments) > r:
-            zone.ceil_step_segments[r][c] = [[], [], [], []]
-
+        reset_cell(self.zone, hit.row, hit.col, self._open_tile)
         self.dirty = True
         return True
 
     def _erase_height(self) -> bool:
-        """RMB on eraser: reset height only (keep tile/textures)."""
+        """RMB on eraser: reset height only (keep tile/textures).
+
+        Also clears orphaned step segments whose heights no longer
+        match the reset surface.
+        """
         hit = self.aimed
         if not hit:
             return False
@@ -66,8 +46,14 @@ class EraseMixin:
             zone.ceil_heights[r][c] = SKY_HEIGHT
             if zone.upper_wall_height and len(zone.upper_wall_height) > r:
                 zone.upper_wall_height[r][c] = 0.0
+            # Clear orphaned ceiling step segments
+            if zone.ceil_step_segments and len(zone.ceil_step_segments) > r:
+                zone.ceil_step_segments[r][c] = [[], [], [], []]
         else:
             zone.floor_heights[r][c] = DEFAULT_FLOOR
+            # Clear orphaned floor step segments
+            if zone.floor_step_segments and len(zone.floor_step_segments) > r:
+                zone.floor_step_segments[r][c] = [[], [], [], []]
 
         self.dirty = True
         return True

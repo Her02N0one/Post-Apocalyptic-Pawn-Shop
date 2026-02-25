@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 from core.tiles import tile_def
-from editor.view_3d.constants import _ensure_palette
+from editor.view_3d.constants import _ensure_palette, FACE_IDX
 
 
 class PaintMixin:
     """Texture painting, erasing, and eyedropper."""
 
-    _FACE_IDX = {"north": 0, "south": 1, "east": 2, "west": 3}
+    _FACE_IDX = FACE_IDX
 
-    def _paint(self) -> None:
+    def _paint(self, push_undo: bool = True) -> None:
         """Paint the aimed face with the current texture.
 
         When the aimed face has segments, paint only the aimed segment.
+        If *push_undo* is False the caller is responsible for having
+        pushed an undo snapshot already (used by continuous drag-paint).
         """
         hit = self.aimed
         if not hit or hit.face == "ground":
@@ -34,6 +36,10 @@ class PaintMixin:
 
         self._ensure_face_textures()
 
+        def _maybe_undo() -> None:
+            if push_undo:
+                self._push_undo()
+
         changed = False
         if hit.face in self._FACE_IDX:
             fi = self._FACE_IDX[hit.face]
@@ -41,26 +47,26 @@ class PaintMixin:
             if td and td.wall:
                 old = zone.face_textures[r][c][fi]
                 if old != tex:
-                    self._push_undo()
+                    _maybe_undo()
                     zone.face_textures[r][c][fi] = tex
                     zone.wall_textures[r][c] = tex
                     changed = True
             elif hit.part == "floor":
                 old = zone.floor_step_textures[r][c][fi]
                 if old != tex:
-                    self._push_undo()
+                    _maybe_undo()
                     zone.floor_step_textures[r][c][fi] = tex
                     changed = True
             elif hit.part == "ceiling":
                 old = zone.ceil_step_textures[r][c][fi]
                 if old != tex:
-                    self._push_undo()
+                    _maybe_undo()
                     zone.ceil_step_textures[r][c][fi] = tex
                     changed = True
             else:
                 old = zone.face_textures[r][c][fi]
                 if old != tex:
-                    self._push_undo()
+                    _maybe_undo()
                     zone.face_textures[r][c][fi] = tex
                     zone.wall_textures[r][c] = tex
                     changed = True
@@ -68,31 +74,39 @@ class PaintMixin:
             if hit.part == "floor" and zone.floor_textures:
                 old = zone.floor_textures[r][c]
                 if old != tex:
-                    self._push_undo()
+                    _maybe_undo()
                     zone.floor_textures[r][c] = tex
                     changed = True
             elif hit.part in ("wall", "ceiling") and zone.ceil_textures:
                 old = zone.ceil_textures[r][c]
                 if old != tex:
-                    self._push_undo()
+                    _maybe_undo()
                     zone.ceil_textures[r][c] = tex
                     changed = True
         elif hit.face == "bot":
             if hit.part == "ceiling" and zone.ceil_textures:
                 old = zone.ceil_textures[r][c]
                 if old != tex:
-                    self._push_undo()
+                    _maybe_undo()
                     zone.ceil_textures[r][c] = tex
                     changed = True
             elif hit.part in ("wall", "floor") and zone.floor_textures:
                 old = zone.floor_textures[r][c]
                 if old != tex:
-                    self._push_undo()
+                    _maybe_undo()
                     zone.floor_textures[r][c] = tex
                     changed = True
 
         if changed:
             self.dirty = True
+
+    def _paint_continuous(self) -> None:
+        """Continuous drag-paint: apply texture without pushing undo.
+
+        The initial MOUSEBUTTONDOWN already pushed an undo snapshot,
+        so the entire drag stroke is a single undo operation.
+        """
+        self._paint(push_undo=False)
 
     def _erase_texture(self) -> None:
         """RMB: erase texture override (reset to default)."""

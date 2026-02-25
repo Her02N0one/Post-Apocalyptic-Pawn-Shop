@@ -20,7 +20,7 @@ import pygame
 import numpy as np
 
 from core.fonts import get_font
-from systems.textures import TextureAtlas
+from engine.textures import TextureAtlas
 
 # ── Re-exports (public API consumed by firstperson.py, fp_hud.py) ─
 from scenes.world.fp_lighting import (          # noqa: F401
@@ -118,7 +118,7 @@ class Renderer:
         Call after *any* tile placement, erase, or fill so that walls
         render correctly on the very next frame.
         """
-        from systems.raycaster import invalidate_caches as _inv_ray
+        from engine.raycaster import invalidate_caches as _inv_ray
         from scenes.world.fp_walls import invalidate_face_cache as _inv_face
         _inv_ray()
         _inv_face()

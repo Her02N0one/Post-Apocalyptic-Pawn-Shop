@@ -42,8 +42,8 @@ from editor.view_3d import (
     Zone3DEditor, _build_view_matrix, _perspective, _mat4_mul, _project,
     _CellHit, CAM_H, COL_BG,
 )
-from systems.textures import TextureAtlas
-from systems.ray_renderer import RayRenderer
+from engine.textures import TextureAtlas
+from engine.ray_renderer import RayRenderer
 
 # ── Helpers ───────────────────────────────────────────────────────
 PASS = 0

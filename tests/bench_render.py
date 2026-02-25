@@ -29,8 +29,8 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 
 import numpy as np
-from systems.raycaster import cast_walls, project_entities, WallSlice
-from systems.textures import TextureAtlas, TEX_SIZE
+from engine.raycaster import cast_walls, project_entities, WallSlice
+from engine.textures import TextureAtlas, TEX_SIZE
 from scenes.world.fp_renderer import Renderer, FOV, compute_fog_params
 from scenes.world.fp_walls import RAY_STEP
 from scenes.world.fp_lighting import build_fog_lut

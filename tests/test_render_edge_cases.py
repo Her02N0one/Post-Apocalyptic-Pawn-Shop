@@ -38,8 +38,8 @@ from core.tiles import (
     tile_str_to_int, tile_def, wall_lut,
     rebuild_derived,
 )
-from systems.textures import TextureAtlas
-from systems.ray_renderer import RayRenderer
+from engine.textures import TextureAtlas
+from engine.ray_renderer import RayRenderer
 
 
 # ── Harness ───────────────────────────────────────────────────────

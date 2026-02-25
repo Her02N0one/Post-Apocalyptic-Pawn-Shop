@@ -1,4 +1,4 @@
-"""systems/ray_renderer.py — Python wrapper for the C raycasting renderer.
+"""engine/ray_renderer.py — Python wrapper for the C raycasting renderer.
 
 Manages buffer construction and provides a clean Python API around the
 ``_ray_render`` C extension.  Designed for both the standalone demo and
@@ -6,7 +6,7 @@ future integration with the editor/game renderer.
 
 Usage
 -----
-    from systems.ray_renderer import RayRenderer
+    from engine.ray_renderer import RayRenderer
 
     renderer = RayRenderer(zone, atlas, sw=640, sh=360)
     surface = renderer.render(px, py, angle)
@@ -22,6 +22,12 @@ from typing import TYPE_CHECKING
 
 import pygame
 
+try:
+    import numpy as np
+    _HAS_NUMPY = True
+except ImportError:
+    _HAS_NUMPY = False
+
 from core.tiles import (
     TILE_REGISTRY,
     tile_str_to_int,
@@ -33,16 +39,17 @@ from core.tiles import (
     hs_lut,
 )
 from core.types import FACE_NAMES
-from systems.textures import TEX_SIZE
+from core.zones.format import NAV_SOLID
+from engine.textures import TEX_SIZE
 
 if TYPE_CHECKING:
     from core.zones import Zone
-    from systems.textures import TextureAtlas
+    from engine.textures import TextureAtlas
 
 try:
-    from systems._ray_render import render_frame as _c_render_frame
+    from engine._ray_render import render_frame as _c_render_frame
     try:
-        from systems._ray_render import render_entities as _c_render_entities
+        from engine._ray_render import render_entities as _c_render_entities
     except ImportError:
         _c_render_entities = None
     _HAS_C = True
@@ -163,6 +170,11 @@ class RayRenderer:
         #
         # Short walls (counters, railings) are NOT solid — they are
         # geometry features rendered by floor/ceiling step walls.
+        #
+        # NOTE: navi_grid NAV_SOLID is for pathfinding, not raycasting.
+        # Counter-tops and low-gap cells are pathfinding-solid but ray-
+        # transparent, so we always use the renderer-specific logic here.
+        compiled = getattr(zone, "compiled", None)
         self._cell_solid = self._build_cell_solid(zone)
         self._wall_buf = bytes(self._cell_solid)
 
@@ -178,12 +190,16 @@ class RayRenderer:
         self._fog_buf = build_fog_lut(ambient, dn)
 
         # ── Floor / ceiling heights (flat float64) ──
-        self._fh_buf = array.array(
-            "d", [h for row in zone.floor_heights for h in row]
-        ).tobytes()
-        self._ch_buf = array.array(
-            "d", [h for row in zone.ceil_heights for h in row]
-        ).tobytes()
+        if compiled and _HAS_NUMPY and "floor_z" in compiled:
+            self._fh_buf = compiled["floor_z"].astype(np.float64).tobytes()
+            self._ch_buf = compiled["ceil_z"].astype(np.float64).tobytes()
+        else:
+            self._fh_buf = array.array(
+                "d", [h for row in zone.floor_heights for h in row]
+            ).tobytes()
+            self._ch_buf = array.array(
+                "d", [h for row in zone.ceil_heights for h in row]
+            ).tobytes()
 
         # ── Floor / ceiling texture overrides (flat int32, -1 = use tile) ──
         self._ft_buf = self._build_tex_override(zone.floor_textures)
@@ -216,12 +232,17 @@ class RayRenderer:
         self._alt_tex_buf = array.array("i", at_list[:num_tiles]).tobytes()
 
         # ── Per-cell spatial lighting (float64 flat grid) ──
-        ll = zone.light_levels
-        if not ll or len(ll) != zone.height:
-            ll = [[1.0] * zone.width for _ in range(zone.height)]
-        self._light_buf = array.array(
-            "d", [v for row in ll for v in row]
-        ).tobytes()
+        if (compiled and _HAS_NUMPY
+                and "light_levels" in compiled):
+            self._light_buf = compiled["light_levels"].astype(
+                np.float64).tobytes()
+        else:
+            ll = zone.light_levels
+            if not ll or len(ll) != zone.height:
+                ll = [[1.0] * zone.width for _ in range(zone.height)]
+            self._light_buf = array.array(
+                "d", [v for row in ll for v in row]
+            ).tobytes()
 
         # ── Transparent wall LUT (for see-through tile walls) ──
         trans_ba = transparent_lut()

@@ -9,6 +9,7 @@ from editor.view_3d.constants import (
     FLOOR_MIN, FLOOR_MAX, CEIL_MIN, CEIL_MAX,
     SKY_HEIGHT, DEFAULT_FLOOR, DEFAULT_CEIL,
 )
+from editor.view_3d.cell_ops import reset_cell
 
 
 class SculptMixin:
@@ -17,7 +18,13 @@ class SculptMixin:
     # ── Floor raise / lower ───────────────────────────────────────
 
     def _tool_floor_raise(self) -> None:
-        """Raise floor height (pure shape change, no segmenting)."""
+        """Raise floor height (pure shape change, no segmenting).
+
+        When the cell has a ceiling (below SKY_HEIGHT), the floor is
+        clamped so that a 0.05 gap remains.  When the cell has no
+        ceiling (sky), the ceiling is pushed up together with the
+        floor so they stay the same distance apart.
+        """
         hit = self.aimed
         if not hit:
             return
@@ -25,13 +32,18 @@ class SculptMixin:
         r, c = hit.row, hit.col
         fh = zone.floor_heights[r][c]
         ch = zone.ceil_heights[r][c]
-        max_fh = min(FLOOR_MAX, ch - 0.05) if ch < SKY_HEIGHT else FLOOR_MAX
+        is_sky = ch >= SKY_HEIGHT
+        max_fh = FLOOR_MAX if is_sky else min(FLOOR_MAX, ch - 0.05)
         new_fh = min(fh + self.snap_y, max_fh)
         if abs(new_fh - fh) < 0.001:
             return
         self._push_undo()
         self._ensure_face_textures()
+        delta = new_fh - fh
         zone.floor_heights[r][c] = new_fh
+        # Push ceiling up with floor so the gap is preserved
+        if not is_sky:
+            zone.ceil_heights[r][c] = min(CEIL_MAX, ch + delta)
         # Keep existing segment top-edges in sync with new height
         for fi in range(4):
             segs = zone.floor_step_segments[r][c][fi]
@@ -72,7 +84,7 @@ class SculptMixin:
         ch = zone.ceil_heights[r][c]
         fh = zone.floor_heights[r][c]
         if ch >= SKY_HEIGHT:
-            new_ch = DEFAULT_CEIL
+            new_ch = fh + DEFAULT_CEIL
         else:
             min_ch = max(CEIL_MIN, fh + 0.05)
             new_ch = max(ch - self.snap_y, min_ch)
@@ -124,9 +136,10 @@ class SculptMixin:
         zone = self.zone
         r, c = hit.row, hit.col
         ch = zone.ceil_heights[r][c]
+        fh = zone.floor_heights[r][c]
         self._push_undo()
         if ch >= SKY_HEIGHT - 0.01:
-            zone.ceil_heights[r][c] = DEFAULT_CEIL
+            zone.ceil_heights[r][c] = fh + DEFAULT_CEIL
         else:
             zone.ceil_heights[r][c] = SKY_HEIGHT
             if hasattr(zone, 'upper_wall_height') and zone.upper_wall_height:
@@ -171,30 +184,8 @@ class SculptMixin:
         hit = self.aimed
         if not hit:
             return False
-        zone = self.zone
-        r, c = hit.row, hit.col
         self._push_undo()
-        td = tile_def(zone.tiles[r][c])
-        if td and td.wall:
-            zone.tiles[r][c] = self._open_tile
-        zone.floor_heights[r][c] = DEFAULT_FLOOR
-        zone.ceil_heights[r][c] = SKY_HEIGHT
-        if zone.upper_wall_height and len(zone.upper_wall_height) > r:
-            zone.upper_wall_height[r][c] = 0.0
-        if zone.face_textures and len(zone.face_textures) > r:
-            zone.face_textures[r][c] = ["", "", "", ""]
-        if zone.wall_textures and len(zone.wall_textures) > r:
-            zone.wall_textures[r][c] = ""
-        if zone.wall_segments and len(zone.wall_segments) > r:
-            zone.wall_segments[r][c] = [[], [], [], []]
-        if zone.floor_textures and len(zone.floor_textures) > r:
-            zone.floor_textures[r][c] = ""
-        if zone.ceil_textures and len(zone.ceil_textures) > r:
-            zone.ceil_textures[r][c] = ""
-        if zone.floor_step_textures and len(zone.floor_step_textures) > r:
-            zone.floor_step_textures[r][c] = ["", "", "", ""]
-        if zone.ceil_step_textures and len(zone.ceil_step_textures) > r:
-            zone.ceil_step_textures[r][c] = ["", "", "", ""]
+        reset_cell(self.zone, hit.row, hit.col, self._open_tile)
         self.dirty = True
         return True
 
@@ -268,12 +259,17 @@ class SculptMixin:
     # ── Scroll-extend floor ───────────────────────────────────────
 
     def _extend_floor(self, r: int, c: int, direction: int) -> None:
-        """Scroll-extend: raise/lower floor WITHOUT auto-segmenting."""
+        """Scroll-extend: raise/lower floor WITHOUT auto-segmenting.
+
+        When raising the floor on a cell with a ceiling, the ceiling
+        is pushed up together to preserve the gap.
+        """
         zone = self.zone
         fh = zone.floor_heights[r][c]
         ch = zone.ceil_heights[r][c]
+        is_sky = ch >= SKY_HEIGHT
         if direction > 0:
-            max_fh = min(FLOOR_MAX, ch - 0.05) if ch < SKY_HEIGHT else FLOOR_MAX
+            max_fh = FLOOR_MAX if is_sky else min(FLOOR_MAX, ch - 0.05)
             new_fh = min(fh + self.snap_y, max_fh)
         else:
             new_fh = max(FLOOR_MIN, fh - self.snap_y)
@@ -281,7 +277,11 @@ class SculptMixin:
             return
         self._push_undo()
         self._ensure_face_textures()
+        delta = new_fh - fh
         zone.floor_heights[r][c] = new_fh
+        # Push ceiling up with floor so the gap is preserved
+        if not is_sky and delta > 0:
+            zone.ceil_heights[r][c] = min(CEIL_MAX, ch + delta)
         for fi in range(4):
             segs = zone.floor_step_segments[r][c][fi]
             if segs:

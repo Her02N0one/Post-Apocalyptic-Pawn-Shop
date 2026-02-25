@@ -1437,6 +1437,21 @@ class TestToggleCeiling:
         assert ed.preview_box is not None, "Sky cell should show ghost ceiling box"
         assert ed.preview_box[4] == COL_TOOL_CEILING
 
+    def test_ghost_preview_tracks_floor_height(self):
+        """Ghost ceiling preview on sky cell positions relative to floor."""
+        ed, z = _make_editor()
+        r, c = 2, 2
+        _open_cell(z, r, c, fh=3.0, ch=0.95)
+        z.ceil_heights[r][c] = SKY_HEIGHT
+        ed.tool = "sculpt"
+        ed.aimed = _CellHit(1.0, c, r, "floor", "top", 3.04)
+        ed._compute_preview()
+        assert ed.preview_box is not None
+        # Ghost should be at fh + DEFAULT_CEIL = 3.0 + 1.0 = 4.0
+        ghost_mid = (ed.preview_box[2] + ed.preview_box[3]) / 2
+        assert ghost_mid == pytest.approx(4.0, abs=0.05), \
+            f"Ghost ceiling at {ghost_mid}, expected ~4.0 (fh=3.0 + ceil=1.0)"
+
     def test_no_ghost_preview_when_ceiling_exists(self):
         """Floor aim on cell with ceiling shows no ghost box."""
         ed, z = _make_editor()
@@ -1487,3 +1502,122 @@ class TestToggleCeiling:
         ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=-1)
         ed.handle_event(ev)
         assert z.upper_wall_height[r][c] == 0.0
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Select tool — height adjustment & ceiling mode
+# ═════════════════════════════════════════════════════════════════════
+
+class TestSelectToolHeight:
+    """Tests for scroll-to-raise/lower selected floors & ceilings."""
+
+    def _select_region(self, ed, z, r1, c1, r2, c2):
+        """Helper: set selection corners so the rectangle is active."""
+        ed.tool = "select"
+        ed._sel_start = (r1, c1)
+        ed._sel_end = (r2, c2)
+
+    def test_scroll_raises_selected_floors(self):
+        """Scrolling up with active selection raises all selected floors."""
+        ed, z = _make_editor()
+        r, c = 2, 2
+        _open_cell(z, r, c, fh=0.0, ch=SKY_HEIGHT)
+        _open_cell(z, 2, 3, fh=0.0, ch=SKY_HEIGHT)
+        ed.snap_y = 0.25
+        self._select_region(ed, z, 2, 2, 2, 3)
+        ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=1)
+        ed.handle_event(ev)
+        assert z.floor_heights[2][2] == pytest.approx(0.25)
+        assert z.floor_heights[2][3] == pytest.approx(0.25)
+
+    def test_scroll_lowers_selected_floors(self):
+        """Scrolling down with active selection lowers all selected floors."""
+        ed, z = _make_editor()
+        r, c = 2, 2
+        _open_cell(z, r, c, fh=0.5, ch=SKY_HEIGHT)
+        ed.snap_y = 0.25
+        self._select_region(ed, z, 2, 2, 2, 2)
+        ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=-1)
+        ed.handle_event(ev)
+        assert z.floor_heights[2][2] == pytest.approx(0.25)
+
+    def test_scroll_floor_pushes_ceiling(self):
+        """Raising floor into a ceiling pushes the ceiling up."""
+        ed, z = _make_editor()
+        _open_cell(z, 2, 2, fh=0.5, ch=0.7)
+        ed.snap_y = 0.25
+        self._select_region(ed, z, 2, 2, 2, 2)
+        ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=1)
+        ed.handle_event(ev)
+        # Floor should clamp at ch - 0.05 = 0.65
+        assert z.floor_heights[2][2] == pytest.approx(0.65)
+        # Ceiling should be pushed up by the delta
+        assert z.ceil_heights[2][2] == pytest.approx(0.85)
+
+    def test_ceiling_mode_toggle(self):
+        """X key toggles ceiling mode on the select tool."""
+        ed, z = _make_editor()
+        ed.tool = "select"
+        assert ed._sel_ceiling_mode is False
+        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_x)
+        ed.handle_event(ev)
+        assert ed._sel_ceiling_mode is True
+        ed.handle_event(ev)
+        assert ed._sel_ceiling_mode is False
+
+    def test_ceiling_mode_scroll_lowers_ceiling(self):
+        """Scrolling down in ceiling mode lowers ceilings."""
+        ed, z = _make_editor()
+        _open_cell(z, 2, 2, fh=0.0, ch=0.8)
+        ed.snap_y = 0.25
+        ed._sel_ceiling_mode = True
+        self._select_region(ed, z, 2, 2, 2, 2)
+        ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=-1)
+        ed.handle_event(ev)
+        assert z.ceil_heights[2][2] == pytest.approx(0.55)
+
+    def test_ceiling_mode_scroll_raises_ceiling(self):
+        """Scrolling up in ceiling mode raises ceilings."""
+        ed, z = _make_editor()
+        _open_cell(z, 2, 2, fh=0.0, ch=0.6)
+        ed.snap_y = 0.25
+        ed._sel_ceiling_mode = True
+        self._select_region(ed, z, 2, 2, 2, 2)
+        ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=1)
+        ed.handle_event(ev)
+        assert z.ceil_heights[2][2] == pytest.approx(0.85)
+
+    def test_ceiling_mode_scroll_brings_in_sky(self):
+        """Scrolling down in ceiling mode on a sky cell brings in default ceiling."""
+        ed, z = _make_editor()
+        _open_cell(z, 2, 2, fh=0.0, ch=SKY_HEIGHT)
+        ed.snap_y = 0.25
+        ed._sel_ceiling_mode = True
+        self._select_region(ed, z, 2, 2, 2, 2)
+        ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=-1)
+        ed.handle_event(ev)
+        # Should bring in default ceiling (fh + DEFAULT_CEIL)
+        assert z.ceil_heights[2][2] < SKY_HEIGHT
+        assert z.ceil_heights[2][2] == pytest.approx(DEFAULT_CEIL)
+
+    def test_no_selection_scroll_cycles_palette(self):
+        """Without active selection, scroll still cycles texture palette."""
+        ed, z = _make_editor()
+        ed.tool = "select"
+        ed._sel_start = None
+        ed._sel_end = None
+        old_idx = ed.tex_idx
+        ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=1)
+        ed.handle_event(ev)
+        assert ed.tex_idx != old_idx
+
+    def test_partial_selection_scroll_cycles_palette(self):
+        """With only one corner set, scroll still cycles texture palette."""
+        ed, z = _make_editor()
+        ed.tool = "select"
+        ed._sel_start = (2, 2)
+        ed._sel_end = None
+        old_idx = ed.tex_idx
+        ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=1)
+        ed.handle_event(ev)
+        assert ed.tex_idx != old_idx

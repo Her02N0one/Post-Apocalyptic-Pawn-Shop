@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from core.tiles import tile_def
+from editor.view_3d.constants import FACE_IDX
 
 
 class SegmentMixin:
     """Segment splitting, merging, painting, and auto-segmentation."""
 
-    _FACE_IDX_MAP = {"north": 0, "south": 1, "east": 2, "west": 3}
+    _FACE_IDX_MAP = FACE_IDX
 
     # ── Segment query helpers ─────────────────────────────────────
 
