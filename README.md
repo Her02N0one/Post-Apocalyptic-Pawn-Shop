@@ -12,7 +12,6 @@ You play as a shopkeeper surviving in the wasteland — scavenging, trading, and
 - [Screenshots](#screenshots)
 - [Requirements](#requirements)
 - [Installation](#installation)
-- [Running the Game](#running-the-game)
 - [Zone Editor](#zone-editor)
 - [Project Structure](#project-structure)
 - [Architecture](#architecture)
@@ -21,7 +20,6 @@ You play as a shopkeeper surviving in the wasteland — scavenging, trading, and
   - [Zone Data Model](#zone-data-model)
   - [Game Systems](#game-systems)
 - [Controls](#controls)
-- [Building C Extensions](#building-c-extensions)
 - [Tests](#tests)
 - [License](#license)
 
@@ -32,7 +30,8 @@ You play as a shopkeeper surviving in the wasteland — scavenging, trading, and
 - **Dual-view gameplay** — seamless top-down and first-person raycaster perspectives
 - **C-accelerated 2.5D renderer** — textured walls, floors, ceilings with per-cell heights, Doom-style sector lighting, fog, and entity billboards
 - **3D zone editor** — fly-camera wireframe sculpting with ImGui panels, real-time raycaster preview (Tab to toggle)
-- **6 editor tools** — Sculpt, Paint, Fill, Erase, Segment, Select with undo/redo
+- **7 editor tools** — Sculpt, Paint, Fill, Erase, Segment, Select, Stamp (Model) with undo/redo
+- **Cell preset system** — TOML-driven presets with 4 apply modes (replace, stack floor, stack ceiling, merge) and in-editor capture-with-naming
 - **Per-face texture stacking** — wall segments allow multiple textures per face (brick base, window, trim)
 - **Height-based geometry** — variable floor/ceiling heights, step walls, upper wall extensions, overlay walls
 - **ECS architecture** — typed entity-component-system with persistent save/load
@@ -54,57 +53,181 @@ You play as a shopkeeper surviving in the wasteland — scavenging, trading, and
 
 ## Requirements
 
-- **Python** 3.11+
-- **C compiler** (optional, for native renderer acceleration)
-  - Windows: [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) (`cl.exe`)
-  - Linux/macOS: `gcc` or `clang`
+| Requirement | Purpose | Required? |
+|-------------|---------|-----------|
+| **Python 3.11.9** | Runtime — this specific version is tested and required | Yes |
+| **pip** | Package installer (bundled with Python) | Yes |
+| **C compiler** | Compile the native rendering extensions (~50× faster) | Strongly recommended |
+| **Git** | Clone the repository | Yes (or download ZIP) |
 
 ### Python Packages
 
+All packages are listed in `requirements.txt` and installed automatically by pip:
+
+| Package | Version | What it does |
+|---------|---------|-------------|
+| `pygame` | ≥ 2.0.0 | Windowing, input, 2D drawing, audio |
+| `numpy` | any | Height-map arrays, fast zone data marshalling |
+| `msgpack` | ≥ 1.0.0 | Binary serialisation for zone entity/portal data |
+| `tomli` | ≥ 2.0.0 | TOML parsing for tile definitions, presets, items, loot tables |
+| `PyOpenGL` | ≥ 3.1.0 | OpenGL bindings (used by the ImGui renderer in the zone editor) |
+| `PyOpenGL_accelerate` | ≥ 3.1.0 | Native acceleration for PyOpenGL |
+| `imgui[pygame]` | ≥ 2.0.0 | Immediate-mode GUI panels in the zone editor |
+
+### C Compiler (for the native renderer)
+
+The raycasting engine has three C source files that compile into Python extensions for dramatically faster rendering. **Without them the game still works** — it falls back to a pure-Python renderer — but frame rates will be much lower.
+
+<details>
+<summary><strong>Windows</strong></summary>
+
+Install the **Microsoft C++ Build Tools** (free):
+
+1. Go to https://visualstudio.microsoft.com/visual-cpp-build-tools/
+2. Download and run the **Build Tools for Visual Studio** installer.
+3. In the installer, select **"Desktop development with C++"**.
+   - The only component you strictly need is **"MSVC v14x — C++ build tools"** and the **Windows SDK**. The installer will select these by default.
+4. Click Install. (~2–6 GB download depending on components.)
+5. After installation, open a **new** terminal so `cl.exe` is on your PATH.
+
+You can verify the compiler is available:
+
+```powershell
+cl
+# Should print "Microsoft (R) C/C++ Optimizing Compiler ..."
 ```
-pygame >= 2.0.0
-numpy
-msgpack >= 1.0.0
-tomli >= 2.0.0
-PyOpenGL >= 3.1.0
-PyOpenGL_accelerate >= 3.1.0
-imgui[pygame] >= 2.0.0
+
+> **Tip:** If `cl` isn't found, open the "Developer Command Prompt for VS" or "x64 Native Tools Command Prompt" from the Start menu — these set up the correct PATH automatically. You can also run `python build_ext.py` from that prompt.
+
+</details>
+
+<details>
+<summary><strong>Linux</strong></summary>
+
+Most distributions ship GCC. If not:
+
+```bash
+# Debian / Ubuntu
+sudo apt update && sudo apt install build-essential python3-dev
+
+# Fedora
+sudo dnf install gcc python3-devel
+
+# Arch
+sudo pacman -S gcc
 ```
+
+Verify:
+```bash
+gcc --version
+```
+
+</details>
+
+<details>
+<summary><strong>macOS</strong></summary>
+
+Install the Xcode command-line tools (includes `clang`):
+
+```bash
+xcode-select --install
+```
+
+Verify:
+```bash
+clang --version
+```
+
+</details>
 
 ---
 
 ## Installation
 
+### Step 1 — Clone the repository
+
 ```bash
-# Clone the repository
 git clone https://github.com/your-username/Post-Apocalyptic-Pawn-Shop.git
 cd Post-Apocalyptic-Pawn-Shop
+```
 
-# Create and activate a virtual environment
+### Step 2 — Create a virtual environment
+
+A virtual environment keeps the project's packages isolated from your system Python.
+
+**Windows (PowerShell):**
+```powershell
 python -m venv .venv
+.venv\Scripts\Activate.ps1
+```
 
-# Windows
-.venv\Scripts\activate
+> If you get an "execution policy" error, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` first, then try again.
 
-# Linux/macOS
+**Windows (Command Prompt):**
+```cmd
+python -m venv .venv
+.venv\Scripts\activate.bat
+```
+
+**Linux / macOS:**
+```bash
+python3 -m venv .venv
 source .venv/bin/activate
+```
 
-# Install dependencies
+You should see `(.venv)` at the start of your terminal prompt.
+
+### Step 3 — Install Python dependencies
+
+```bash
 pip install -r requirements.txt
+```
 
-# Build C extensions (optional but recommended — ~50x faster rendering)
+This installs pygame, numpy, msgpack, tomli, PyOpenGL, and imgui. Takes about a minute on a typical connection.
+
+### Step 4 — Compile C extensions (optional but recommended)
+
+```bash
 python build_ext.py build_ext --inplace
 ```
 
----
+This compiles three native extensions into the `engine/` directory:
 
-## Running the Game
+| Extension | Source | What it accelerates |
+|-----------|--------|-------------------|
+| `_ray_render` | `engine/_ray_render.c` (~2300 LOC) | Full-frame raycasting: walls, floors, ceilings, sprites — the entire render pass |
+| `_fast_cast` | `engine/_fast_cast.c` | DDA wall casting (used by the pure-Python renderer if `_ray_render` isn't available) |
+| `_fast_walls` | `engine/_fast_walls.c` | Wall segment rendering (texture-banded walls) |
 
-```bash
-python main.py
+On **Windows** the output files are `.pyd`; on **Linux/macOS** they are `.so`.
+
+**If compilation fails** (no C compiler, wrong SDK, etc.) the game will still run — the engine detects missing extensions at import time and falls back to `engine/raycaster.py` (pure Python). You'll see a message like:
+
+```
+[engine] C extension not available, using pure-Python renderer
 ```
 
-The main menu offers **New Game**, **Continue** (if a save exists), **Settings**, and **Quit**.
+**Common issues:**
+
+| Problem | Fix |
+|---------|-----|
+| `cl` not found (Windows) | Open a "Developer Command Prompt for VS" or add MSVC to PATH |
+| `gcc` not found (Linux) | `sudo apt install build-essential python3-dev` |
+| `Python.h` not found | Install `python3-dev` (Linux) or confirm your venv uses the correct Python |
+| Build succeeds but import fails | Make sure you ran with `--inplace` so the `.pyd`/`.so` lands in `engine/` |
+
+### Step 5 — Run
+
+```bash
+# Launch the game
+python main.py
+
+# Launch the zone editor
+python zone_editor.py
+
+# Launch the zone editor with an existing zone
+python zone_editor.py pawn_shop
+```
 
 ---
 
@@ -130,6 +253,7 @@ python zone_editor.py pawn_shop
 | **Erase** | Reset cells, clear textures, flatten heights |
 | **Segment** | Split wall faces into stacked texture bands (trim, windows, etc.) |
 | **Select** | Rectangular area operations — batch raise/lower, texture, delete |
+| **Stamp (Model)** | Apply/capture cell presets with 4 apply modes (replace, stack, merge) |
 | **Undo/Redo** | Snapshot-based history (Ctrl+Z / Ctrl+Y) |
 | **Raycaster Preview** | Tab toggles between editor and first-person preview |
 
@@ -141,12 +265,13 @@ python zone_editor.py pawn_shop
 |-----|--------|
 | W/S/A/D | Fly camera |
 | Mouse | Look around |
-| 1–6 | Select tool |
+| 1–7 | Select tool (7 = Stamp/Model) |
 | LMB | Primary tool action |
-| RMB | Secondary tool action |
+| RMB | Secondary tool action (Stamp: capture → name) |
 | MMB | Paint / eyedropper |
 | Scroll | Tool-specific (extend, cycle texture, adjust) |
 | G | Cycle snap height (1/16, 1/8, 1/4, 1/2, 1) |
+| M | Cycle stamp apply mode (replace/stack_floor/stack_ceil/merge) |
 | V | Toggle wall rendering |
 | R | Reset aimed cell height |
 | Delete | Full cell reset |
@@ -189,6 +314,7 @@ Post-Apocalyptic-Pawn-Shop/
 │   ├── transition.py        # Scene transition effects
 │   ├── world_ticker.py      # Background zone simulation ticker
 │   ├── types.py             # Enums (Direction, EntityKind, face constants)
+│   ├── presets.py           # Cell preset system (apply modes, capture, TOML I/O)
 │   ├── tiles/               # TOML-driven tile registry
 │   │   ├── types.py         # TileDef dataclass, TileType, TF flags
 │   │   ├── registry.py      # TILE_REGISTRY, compact-int mapping, LUT builders
@@ -225,6 +351,7 @@ Post-Apocalyptic-Pawn-Shop/
 │       ├── tools_erase.py   # Cell/texture erasing
 │       ├── tools_select.py  # Rectangular selection
 │       ├── tools_segment.py # Wall segment split/merge
+│       ├── tools_stamp.py   # Stamp (Model) preset apply/capture
 │       ├── undo.py          # Snapshot undo/redo
 │       ├── save.py          # Zone serialisation
 │       └── cell_ops.py      # Cell-level operations
@@ -276,7 +403,13 @@ Post-Apocalyptic-Pawn-Shop/
 │   ├── items.toml           # Item definitions
 │   ├── loot_tables.toml     # Loot table definitions
 │   ├── custom_tiles.toml    # User-defined tiles
-│   └── custom_entities.toml # User-defined entities
+│   ├── custom_entities.toml # User-defined entities
+│   └── presets/             # Cell preset definitions (TOML)
+│       ├── brick_wall.toml  # Full-height wall (floor_height=10)
+│       ├── open_ground.toml # Flat ground
+│       ├── stone_platform.toml  # Raised platform (stack_floor)
+│       ├── wooden_counter.toml  # Half-height counter (stack_floor)
+│       └── segmented_brick.toml # Segmented brick wall
 │
 ├── assets/
 │   ├── textures/
@@ -344,7 +477,7 @@ A `Zone` is a named tile grid with rich per-cell properties:
 | Property | Type | Description |
 |----------|------|-------------|
 | `tiles` | `str[H][W]` | Tile IDs from the TOML registry |
-| `floor_heights` | `float[H][W]` | Floor elevation per cell |
+| `floor_heights` | `float[H][W]` | Floor elevation per cell (10.0 = solid wall column) |
 | `ceil_heights` | `float[H][W]` | Ceiling elevation (≥10 = open sky) |
 | `floor_textures` | `str[H][W]` | Floor surface texture override |
 | `ceil_textures` | `str[H][W]` | Ceiling surface texture override |
@@ -379,6 +512,23 @@ Zones are serialised to a **chunked binary format** (`.zone` files):
 | `zone_sim` | Background simulation for off-screen zones |
 | `lod` | Level-of-detail management for distant entities |
 
+### Cell Preset System
+
+Cell presets (`core/presets.py`) are reusable TOML recipes that describe the complete state of a cell — heights, textures, wall segments, and apply behaviour. They power the **Stamp (Model)** tool in the editor.
+
+**Apply modes** control how a preset interacts with the existing cell:
+
+| Mode | Behaviour |
+|------|-----------|
+| `replace` | Overwrite all non-None fields. Default. |
+| `stack_floor` | Add the preset's height on top of the current floor; creates a step segment at the old floor level. Good for platforms and counters. |
+| `stack_ceil` | Subtract from the ceiling downward; creates hanging geometry. |
+| `merge` | Only apply fields that are still at their default values; existing customisation is preserved. |
+
+**Wall cells** are expressed purely through height: when `floor_height >= ceil_height` the cell becomes a solid column. No separate boolean or type flag — the geometry itself determines wall-ness.
+
+**Capture** requires intentional naming: RMB in the Stamp tool enters a HUD naming prompt. Type a name and press Enter to save the aimed cell as a new preset TOML under `data/presets/`.
+
 ---
 
 ## Controls
@@ -401,23 +551,6 @@ Zones are serialised to a **chunked binary format** (`.zone` files):
 | W/S/A/D | Walk |
 | Shift | Sprint |
 | E | Interact with aimed entity |
-
----
-
-## Building C Extensions
-
-The C extensions are optional but provide dramatically better rendering performance.
-
-```bash
-python build_ext.py build_ext --inplace
-```
-
-This compiles three extensions into the `engine/` directory:
-- `_ray_render` — full-frame raycasting renderer
-- `_fast_cast` — accelerated DDA wall casting
-- `_fast_walls` — accelerated wall segment rendering
-
-If compilation fails (no C compiler available), the engine falls back to the pure-Python renderer automatically.
 
 ---
 
