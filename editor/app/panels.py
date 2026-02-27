@@ -233,8 +233,13 @@ class PanelsMixin:
                         "Show Axes", "F10", self.editor_3d.show_axes)
                     _, self.editor_3d.show_walls = imgui.menu_item(
                         "Show Walls", "V", self.editor_3d.show_walls)
-                    _, self.editor_3d.show_ceiling_grid = imgui.menu_item(
-                        "Ceiling Grid", "F9", self.editor_3d.show_ceiling_grid)
+                    _, self.editor_3d.show_floors = imgui.menu_item(
+                        "Show Floors", "F", self.editor_3d.show_floors)
+                    _, self.editor_3d.show_ceilings = imgui.menu_item(
+                        "Show Ceilings", "J", self.editor_3d.show_ceilings)
+                    imgui.separator()
+                    _, self.editor_3d.wireframe = imgui.menu_item(
+                        "Wireframe", "B", self.editor_3d.wireframe)
                 imgui.end_menu()
 
             # Right-aligned FPS
@@ -507,12 +512,13 @@ class PanelsMixin:
     def _draw_display_section(self, ed) -> None:
         self._section_header("\u2581 DISPLAY", 0.50, 0.60, 0.65)
         half_w = imgui.get_content_region_available()[0] * 0.5
-        _, ed.show_walls = imgui.checkbox("Walls", ed.show_walls)
+        _, ed.show_walls = imgui.checkbox("Walls (V)", ed.show_walls)
         imgui.same_line(half_w)
-        _, ed.show_grid = imgui.checkbox("Floor Grid", ed.show_grid)
-        _, ed.show_ceiling_grid = imgui.checkbox("Ceil Grid", ed.show_ceiling_grid)
+        _, ed.show_floors = imgui.checkbox("Floors (F)", ed.show_floors)
+        _, ed.show_ceilings = imgui.checkbox("Ceilings (J)", ed.show_ceilings)
         imgui.same_line(half_w)
         _, ed.show_axes = imgui.checkbox("Axes", ed.show_axes)
+        _, ed.wireframe = imgui.checkbox("Wireframe (B)", ed.wireframe)
 
     def _draw_view_mode_button(self) -> None:
         imgui.spacing()

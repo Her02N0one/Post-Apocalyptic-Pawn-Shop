@@ -153,8 +153,6 @@ class Zone3DEditor(
         self.preview_box:  tuple[int, int, float, float, tuple] | None = None
 
         # Display toggles
-        self.show_grid  = True
-        self.show_ceiling_grid = True
         self.show_axes  = True
         self.show_hud   = True   # pygame HUD overlay (disable when ImGui panels provide the info)
 
@@ -165,8 +163,11 @@ class Zone3DEditor(
         self._redo_stack: list[dict] = []
         self._UNDO_MAX = 50
 
-        # Wall visibility toggle
+        # Visibility toggles
         self.show_walls = True
+        self.show_floors = True
+        self.show_ceilings = True
+        self.wireframe = False
 
         self._resolve_fallback_tiles()
         self._ensure_face_textures()
@@ -360,11 +361,7 @@ class Zone3DEditor(
                 self.tex_idx = palette.index(self.current_texture)
             return True
 
-        # ── Display toggles (F2/F3/F4 → F8/F9/F10 to avoid F-key tool conflict) ──
-        if key == pygame.K_F8:
-            self.show_grid = not self.show_grid; return True
-        if key == pygame.K_F9:
-            self.show_ceiling_grid = not self.show_ceiling_grid; return True
+        # ── Display toggles ──
         if key == pygame.K_F10:
             self.show_axes = not self.show_axes; return True
 
@@ -431,6 +428,17 @@ class Zone3DEditor(
         # Toggle wall drawing
         if key == pygame.K_v:
             self.show_walls = not self.show_walls
+            return True
+
+        # Toggle floor / ceiling / wireframe rendering
+        if key == pygame.K_f:
+            self.show_floors = not self.show_floors
+            return True
+        if key == pygame.K_j:
+            self.show_ceilings = not self.show_ceilings
+            return True
+        if key == pygame.K_b:
+            self.wireframe = not self.wireframe
             return True
 
         # Cycle stamp apply mode

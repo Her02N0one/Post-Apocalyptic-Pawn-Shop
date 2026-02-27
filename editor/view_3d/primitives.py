@@ -65,12 +65,20 @@ class DrawPrimitivesMixin:
         edge_width: int = 1,
         alpha: int = 255,
         face_colors: list[tuple[int, int, int]] | None = None,
+        wireframe: bool = False,
     ) -> None:
         """Draw a filled, face-shaded box with wireframe edges.
 
         *face_colors* -- optional list of 6 RGB tuples in ``_FACE_DEFS``
         order (top, bot, north, south, west, east).
+        If *wireframe* is True only edges are drawn (no filled faces).
         """
+        if wireframe:
+            ec = edge_color or base_color
+            self._box(surface, vp, hw, hh,
+                      x0, y0, z0, x1, y1, z1, ec, edge_width)
+            return
+
         corners = [
             (x0, y0, z0), (x1, y0, z0),
             (x1, y0, z1), (x0, y0, z1),

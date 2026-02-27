@@ -103,18 +103,7 @@ class RenderingMixin:
     # ── Sub-methods ───────────────────────────────────────────────
 
     def _draw_grids(self, surface, vp, hw, hh, W, H):
-        if self.show_grid:
-            for c in range(W + 1):
-                col = COL_GRID_EDGE if c == 0 or c == W else COL_GRID
-                self._line3d(surface, vp, hw, hh, c, 0, 0, c, 0, H, col)
-            for r in range(H + 1):
-                col = COL_GRID_EDGE if r == 0 or r == H else COL_GRID
-                self._line3d(surface, vp, hw, hh, 0, 0, r, W, 0, r, col)
-        if self.show_ceiling_grid:
-            for c in range(W + 1):
-                self._line3d(surface, vp, hw, hh, c, 1, 0, c, 1, H, COL_CEIL_GRID)
-            for r in range(H + 1):
-                self._line3d(surface, vp, hw, hh, 0, 1, r, W, 1, r, COL_CEIL_GRID)
+        pass  # static grids removed; cell edges on walls provide structure
 
     def _draw_axes(self, surface, vp, hw, hh):
         if not self.show_axes:
@@ -143,16 +132,35 @@ class RenderingMixin:
             is_aimed = (aimed is not None
                         and aimed.col == c and aimed.row == r
                         and aimed.part == part)
+
+            # Visibility: skip hidden layers entirely
+            if part == "wall" and not self.show_walls:
+                continue
+            if part == "floor" and not self.show_floors:
+                continue
+            if part == "ceiling" and not self.show_ceilings:
+                continue
+            alpha = 255
+
             fcols = self._get_face_colors(r, c, part)
             bcol = self._get_box_color(r, c, part)
-            edge = COL_BLOCK_SEL if is_aimed else COL_EDGE_DIM
-            ew = 2 if is_aimed else 1
-            alpha = 30 if (part == "wall" and not self.show_walls) else 255
+            # Only draw edge wireframe on the aimed cell or on walls;
+            # floor/ceiling slabs look cleaner without per-cell outlines.
+            if is_aimed:
+                edge = COL_BLOCK_SEL
+                ew = 2
+            elif part == "wall":
+                edge = COL_EDGE_DIM
+                ew = 1
+            else:
+                edge = None
+                ew = 1
             self._filled_box(surface, vp, hw, hh,
                              float(c), yb, float(r),
                              c + 1.0, yt, r + 1.0,
                              bcol, edge, ew, alpha=alpha,
-                             face_colors=fcols)
+                             face_colors=fcols,
+                             wireframe=self.wireframe)
             self._draw_cell_segments(
                 surface, vp, hw, hh, r, c, part, alpha)
 
@@ -166,12 +174,12 @@ class RenderingMixin:
                     continue
                 fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
                 ch = zone.ceil_heights[r][c] if zone.ceil_heights else 1.0
-                if abs(fh) > 0.01:
+                if self.show_floors and abs(fh) > 0.01:
                     self._line3d(surface, vp, hw, hh, c, fh, r, c+1, fh, r, COL_FLOOR_SURF, 2)
                     self._line3d(surface, vp, hw, hh, c+1, fh, r, c+1, fh, r+1, COL_FLOOR_SURF, 2)
                     self._line3d(surface, vp, hw, hh, c+1, fh, r+1, c, fh, r+1, COL_FLOOR_SURF, 2)
                     self._line3d(surface, vp, hw, hh, c, fh, r+1, c, fh, r, COL_FLOOR_SURF, 2)
-                if ch < SKY_HEIGHT - 0.01:
+                if self.show_ceilings and ch < SKY_HEIGHT - 0.01:
                     self._line3d(surface, vp, hw, hh, c, ch, r, c+1, ch, r, COL_CEIL_SURF, 2)
                     self._line3d(surface, vp, hw, hh, c+1, ch, r, c+1, ch, r+1, COL_CEIL_SURF, 2)
                     self._line3d(surface, vp, hw, hh, c+1, ch, r+1, c, ch, r+1, COL_CEIL_SURF, 2)
@@ -722,6 +730,32 @@ class RenderingMixin:
 
     # ── Colour helpers ────────────────────────────────────────────
 
+    def _resolve_floor_tex(self, r: int, c: int) -> str:
+        """Return the effective floor texture key for a cell.
+
+        Priority: floor_textures override -> base tile from tiles[].
+        This matches the raycaster's fallback logic.
+        """
+        zone = self.zone
+        if zone.floor_textures:
+            tex = zone.floor_textures[r][c]
+            if tex:
+                return tex
+        return zone.tiles[r][c]
+
+    def _resolve_ceil_tex(self, r: int, c: int) -> str:
+        """Return the effective ceiling texture key for a cell.
+
+        Priority: ceil_textures override -> 'concrete' default
+        (matching the raycaster).
+        """
+        zone = self.zone
+        if zone.ceil_textures:
+            tex = zone.ceil_textures[r][c]
+            if tex:
+                return tex
+        return "concrete"
+
     def _get_box_color(self, r: int, c: int, part: str
                        ) -> tuple[int, int, int]:
         zone = self.zone
@@ -735,13 +769,9 @@ class RenderingMixin:
                 return self._tile_color(zone.wall_textures[r][c])
             return self._tile_color(zone.tiles[r][c])
         elif part == "floor":
-            tex = (zone.floor_textures[r][c]
-                   if zone.floor_textures else "")
-            return self._tile_color(tex) if tex else COL_FLOOR_DEF
+            return self._tile_color(self._resolve_floor_tex(r, c))
         elif part == "ceiling":
-            tex = (zone.ceil_textures[r][c]
-                   if zone.ceil_textures else "")
-            return self._tile_color(tex) if tex else COL_CEIL_DEF
+            return self._tile_color(self._resolve_ceil_tex(r, c))
         return COL_WALL_DEF
 
     def _get_face_colors(self, r: int, c: int, part: str
@@ -758,13 +788,15 @@ class RenderingMixin:
         is_wall = td is not None and td.wall
 
         if part == "floor":
-            ftex = zone.floor_textures[r][c] if zone.floor_textures else ""
-            cols[0] = tc(ftex) if ftex else COL_FLOOR_DEF
-            cols[1] = COL_FLOOR_DEF
+            ftex = self._resolve_floor_tex(r, c)
+            cols[0] = tc(ftex)
+            # Bottom face of a floor mass: slightly darker base
+            cols[1] = self._darken(tc(ftex), 0.65)
         elif part == "ceiling":
-            ctex = zone.ceil_textures[r][c] if zone.ceil_textures else ""
-            cols[0] = COL_CEIL_DEF
-            cols[1] = tc(ctex) if ctex else COL_CEIL_DEF
+            ctex = self._resolve_ceil_tex(r, c)
+            # Top face of ceiling mass: slightly darker
+            cols[0] = self._darken(tc(ctex), 0.65)
+            cols[1] = tc(ctex)
 
         for fdef_idx, zone_fi in self._FDEF_TO_ZONE.items():
             tex = ""
@@ -820,3 +852,10 @@ class RenderingMixin:
                     min(255, c[1] + 60),
                     min(255, c[2] + 60))
         return COL_WALL_DEF
+
+    @staticmethod
+    def _darken(color: tuple[int, int, int], factor: float
+                ) -> tuple[int, int, int]:
+        return (int(color[0] * factor),
+                int(color[1] * factor),
+                int(color[2] * factor))
