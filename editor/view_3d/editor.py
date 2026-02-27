@@ -54,10 +54,13 @@ from editor.view_3d.constants import (  # noqa: F401
     COL_WALL_DEF, COL_FLOOR_DEF, COL_CEIL_DEF,
     COL_TOOL_WALL, COL_TOOL_FLOOR, COL_TOOL_CEILING,
     COL_TOOL_PAINT, COL_TOOL_SEGMENT,
-    COL_TOOL_FILL, COL_TOOL_ERASE, COL_TOOL_SELECT,
+    COL_TOOL_SELECT,
     COL_TOOL_STAMP,
     COL_FACE_HL,
-    TOOLS, TOOL_LABELS, TOOL_COLORS, TOOL_KEYS, TOOL_HINTS,
+    TOOLS, UTIL_TOOLS, ALL_TOOLS,
+    TOOL_LABELS, TOOL_COLORS, TOOL_KEYS, UTIL_KEYS,
+    HOTBAR_SIZE, HOTBAR_KEYS,
+    TOOL_HINTS,
     _FACE_DEFS,
     FLY_SPEED, FLY_SPRINT,
     MOUSE_SENS, KB_TURN_SPEED,
@@ -125,8 +128,13 @@ class Zone3DEditor(
                         if "brick_wall" in palette else 0)
         self.current_texture: str = palette[self.tex_idx]
 
-        # Tool system
-        self.tool: str = "sculpt"  # one of TOOLS
+        # Hotbar: 10 quick-access texture slots
+        self.hotbar: list[str] = self._init_hotbar(palette)
+        self.hotbar_slot: int = 0
+
+        # Tool system (3 core + 2 utility)
+        self.tool: str = "sculpt"  # one of ALL_TOOLS
+        self._prev_tool: str = "sculpt"  # tool to return to from utility modes
 
         # Continuous paint state
         self._lmb_held: bool = False
@@ -192,6 +200,31 @@ class Zone3DEditor(
                     break
             else:
                 Zone3DEditor._open_tile = "concrete"
+
+    @staticmethod
+    def _init_hotbar(palette: list[str]) -> list[str]:
+        """Fill 10 hotbar slots with useful default textures."""
+        # Preferred defaults (first found wins)
+        preferred = [
+            "brick_wall", "stone_wall", "concrete", "wood_floor",
+            "sand", "grass", "dirt", "metal_floor", "carpet", "void",
+        ]
+        slots: list[str] = []
+        for name in preferred:
+            if name in palette:
+                slots.append(name)
+            if len(slots) >= HOTBAR_SIZE:
+                break
+        # Fill remaining with palette items
+        for name in palette:
+            if name not in slots:
+                slots.append(name)
+            if len(slots) >= HOTBAR_SIZE:
+                break
+        # Pad if palette is tiny
+        while len(slots) < HOTBAR_SIZE:
+            slots.append(palette[0] if palette else "brick_wall")
+        return slots
 
     def _ensure_face_textures(self) -> None:
         """Ensure all face-texture / segment grids exist and are correctly sized."""
@@ -272,37 +305,74 @@ class Zone3DEditor(
         if self.tool == "stamp" and getattr(self, '_capture_pending', False):
             return self._stamp_capture_key(key, event.unicode)
 
-        # Tool selection
+        # ── Core tool selection (F5/F6/F7) ────────────────────────
         if key in TOOL_KEYS:
             new_tool = TOOL_KEYS[key]
-            if new_tool != "select" and self.tool == "select":
-                self._sel_cancel()  # clear selection when leaving select tool
+            if self.tool == "select":
+                self._sel_cancel()
             self.tool = new_tool
+            self._prev_tool = new_tool
             return True
 
-        # Display toggles
-        if key == pygame.K_F2:
+        # ── Utility mode toggles (B=select, P=stamp) ─────────────
+        if key in UTIL_KEYS:
+            target = UTIL_KEYS[key]
+            if self.tool == target:
+                # Toggle off → return to previous core tool
+                if target == "select":
+                    self._sel_cancel()
+                self.tool = self._prev_tool
+            else:
+                # Enter utility mode, remember what we came from
+                if self.tool in TOOLS:
+                    self._prev_tool = self.tool
+                if self.tool == "select":
+                    self._sel_cancel()
+                self.tool = target
+            return True
+
+        # ── Tab = cycle core tools ────────────────────────────────
+        if key == pygame.K_TAB:
+            if self.tool == "select":
+                self._sel_cancel()
+            idx = TOOLS.index(self.tool) if self.tool in TOOLS else 0
+            self.tool = TOOLS[(idx + 1) % len(TOOLS)]
+            self._prev_tool = self.tool
+            return True
+
+        # ── Hotbar: 1-0 select texture slot ───────────────────────
+        if key in HOTBAR_KEYS:
+            slot = HOTBAR_KEYS[key]
+            self.hotbar_slot = slot
+            self.current_texture = self.hotbar[slot]
+            palette = _ensure_palette()
+            if self.current_texture in palette:
+                self.tex_idx = palette.index(self.current_texture)
+            return True
+
+        # ── Display toggles (F2/F3/F4 → F8/F9/F10 to avoid F-key tool conflict) ──
+        if key == pygame.K_F8:
             self.show_grid = not self.show_grid; return True
-        if key == pygame.K_F3:
+        if key == pygame.K_F9:
             self.show_ceiling_grid = not self.show_ceiling_grid; return True
-        if key == pygame.K_F4:
+        if key == pygame.K_F10:
             self.show_axes = not self.show_axes; return True
 
         # Upper wall adjust
         if key == pygame.K_u:
             return self._adjust_upper_wall_height(mod)
 
-        # Reset
+        # Reset height (global — works in any tool when aiming)
         if key == pygame.K_r:
-            if self.tool == "sculpt" and self.aimed:
+            if self.aimed:
                 if self.aimed.part == "ceiling":
                     return self._reset_ceiling()
                 else:
                     return self._reset_floor()
             return False
 
-        # Toggle ceiling
-        if key == pygame.K_t:
+        # Toggle ceiling target (C — was T, now C is free from fly-down)
+        if key == pygame.K_c:
             if self.tool == "sculpt" and self.aimed:
                 return self._toggle_ceiling()
             return False
@@ -364,6 +434,7 @@ class Zone3DEditor(
         tool = self.tool
         btn = event.button
         shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
+        ctrl = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
         part = self.aimed.part if self.aimed else None
 
         # Track LMB held for continuous paint
@@ -386,30 +457,18 @@ class Zone3DEditor(
             return True
 
         if tool == "paint":
-            if btn == 1 and shift:
-                self._paint_all()
+            if btn == 1 and ctrl:
+                self._fill()          # Ctrl+LMB = flood fill
+            elif btn == 1 and shift:
+                self._paint_all()     # Shift+LMB = paint whole cell
             elif btn == 1:
-                self._paint()
+                self._paint()         # LMB = paint face
+            elif btn == 3 and ctrl:
+                self._fill_clear()    # Ctrl+RMB = flood clear
             elif btn == 3:
-                self._erase_texture()
+                self._erase_texture() # RMB = erase texture
             elif btn == 2:
-                self._pick_texture()
-            return True
-
-        if tool == "fill":
-            if btn == 1:
-                self._fill()
-            elif btn == 3:
-                self._fill_clear()
-            return True
-
-        if tool == "erase":
-            if btn == 1 and shift:
-                self._erase_textures_only()
-            elif btn == 1:
-                self._erase_cell()
-            elif btn == 3:
-                self._erase_height()
+                self._pick_texture()  # MMB = eyedropper
             return True
 
         if tool == "select":
@@ -446,12 +505,14 @@ class Zone3DEditor(
     def _on_scroll(self, event: pygame.event.Event) -> bool:
         tool = self.tool
 
-        if tool in ("paint", "segment", "fill"):
+        if tool in ("paint", "segment"):
             palette = _ensure_palette()
             if not palette:
                 return False
             self.tex_idx = (self.tex_idx + event.y) % len(palette)
             self.current_texture = palette[self.tex_idx]
+            # Sync hotbar slot
+            self.hotbar[self.hotbar_slot] = self.current_texture
             return True
 
         if tool == "stamp":
@@ -468,6 +529,7 @@ class Zone3DEditor(
                 return False
             self.tex_idx = (self.tex_idx + event.y) % len(palette)
             self.current_texture = palette[self.tex_idx]
+            self.hotbar[self.hotbar_slot] = self.current_texture
             return True
 
         if tool == "sculpt":

@@ -479,13 +479,13 @@ class TestSegmentMode:
 
         assert ed.tool == "sculpt"
 
-        # Select segment tool via key 5
-        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_5)
+        # Select segment tool via F7
+        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F7)
         ed.handle_event(ev)
         assert ed.tool == "segment"
 
-        # Switch to sculpt tool (key 1)
-        ev1 = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_1)
+        # Switch to sculpt tool (F5)
+        ev1 = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F5)
         ed.handle_event(ev1)
         assert ed.tool == "sculpt"
 
@@ -494,18 +494,18 @@ class TestSegmentMode:
         z = load_zone("showcase")
         ed = Zone3DEditor(z)
 
-        # Enable paint tool (key 2)
-        ev_2 = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_2)
-        ed.handle_event(ev_2)
+        # Enable paint tool (F6)
+        ev_f6 = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F6)
+        ed.handle_event(ev_f6)
         assert ed.tool == "paint"
 
-        # Enable segment tool (key 5) — should disable paint
-        ev_5 = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_5)
-        ed.handle_event(ev_5)
+        # Enable segment tool (F7) — should disable paint
+        ev_f7 = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F7)
+        ed.handle_event(ev_f7)
         assert ed.tool == "segment"
 
         # Enable paint tool again — should disable segment
-        ed.handle_event(ev_2)
+        ed.handle_event(ev_f6)
         assert ed.tool == "paint"
 
     def test_editor_draw_with_segments_no_crash(self):

@@ -51,8 +51,6 @@ COL_TOOL_FLOOR   = (100, 200, 120)
 COL_TOOL_CEILING = (120, 160, 220)
 COL_TOOL_PAINT   = (200, 120, 220)
 COL_TOOL_SEGMENT = (255, 180, 60)
-COL_TOOL_FILL    = (80, 200, 200)
-COL_TOOL_ERASE   = (220, 80, 80)
 COL_TOOL_SELECT  = (255, 220, 100)
 COL_FACE_HL      = (255, 255, 255, 90)  # face highlight overlay alpha
 
@@ -60,12 +58,14 @@ COL_FACE_HL      = (255, 255, 255, 90)  # face highlight overlay alpha
 # ─── Stamp tool colour ────────────────────────────────────────────
 COL_TOOL_STAMP   = (180, 140, 255)
 
-TOOLS = ("sculpt", "paint", "fill", "erase", "segment", "select", "stamp")
+# 3 core tools (F-keys / Tab) + 2 utility modes (letter keys)
+TOOLS = ("sculpt", "paint", "segment")
+UTIL_TOOLS = ("select", "stamp")
+ALL_TOOLS = TOOLS + UTIL_TOOLS
+
 TOOL_LABELS = {
     "sculpt":  "SCULPT",
     "paint":   "PAINT",
-    "fill":    "FILL",
-    "erase":   "ERASER",
     "segment": "DETAIL",
     "select":  "SELECT",
     "stamp":   "MODEL",
@@ -73,21 +73,28 @@ TOOL_LABELS = {
 TOOL_COLORS = {
     "sculpt":  COL_TOOL_WALL,
     "paint":   COL_TOOL_PAINT,
-    "fill":    COL_TOOL_FILL,
-    "erase":   COL_TOOL_ERASE,
     "segment": COL_TOOL_SEGMENT,
     "select":  COL_TOOL_SELECT,
     "stamp":   COL_TOOL_STAMP,
 }
-TOOL_KEYS = {  # key → tool name
-    pygame.K_1: "sculpt",
-    pygame.K_2: "paint",
-    pygame.K_3: "fill",
-    pygame.K_4: "erase",
-    pygame.K_5: "segment",
-    pygame.K_6: "select",
-    pygame.K_7: "stamp",
+# F-key → core tool
+TOOL_KEYS = {
+    pygame.K_F5: "sculpt",
+    pygame.K_F6: "paint",
+    pygame.K_F7: "segment",
 }
+# Letter key → utility mode (toggles in/out)
+UTIL_KEYS = {
+    pygame.K_b: "select",
+    pygame.K_p: "stamp",
+}
+# Hotbar: 10 texture quick-access slots (keys 1-0)
+HOTBAR_SIZE = 10
+HOTBAR_KEYS = {
+    pygame.K_1: 0, pygame.K_2: 1, pygame.K_3: 2, pygame.K_4: 3, pygame.K_5: 4,
+    pygame.K_6: 5, pygame.K_7: 6, pygame.K_8: 7, pygame.K_9: 8, pygame.K_0: 9,
+}
+
 TOOL_HINTS = {
     "sculpt": {
         "title": "Sculpt",
@@ -108,7 +115,7 @@ TOOL_HINTS = {
                 "LMB": "Aim at surface",
             },
         },
-        "keys": "T=ceil  R=reset  Del=clear  G=snap  V=walls",
+        "keys": "C=ceil  R=reset  Del=clear  G=snap  V=walls",
     },
     "paint": {
         "title": "Paint",
@@ -116,34 +123,14 @@ TOOL_HINTS = {
             "any": {
                 "LMB": "Paint face (hold=drag)",
                 "Sh+LMB": "Paint whole cell",
+                "Ct+LMB": "Flood fill",
                 "RMB": "Erase texture",
+                "Ct+RMB": "Flood clear",
                 "MMB": "Eyedropper",
                 "Scroll": "Cycle palette",
             },
         },
-        "keys": "",
-    },
-    "fill": {
-        "title": "Fill",
-        "actions": {
-            "any": {
-                "LMB": "Flood fill",
-                "RMB": "Flood clear",
-                "Scroll": "Cycle palette",
-            },
-        },
-        "keys": "Stops at height/segments",
-    },
-    "erase": {
-        "title": "Eraser",
-        "actions": {
-            "any": {
-                "LMB": "Reset cell",
-                "RMB": "Reset height only",
-                "Sh+LMB": "Reset textures",
-            },
-        },
-        "keys": "",
+        "keys": "T=tile picker  1-0=hotbar",
     },
     "segment": {
         "title": "Detail",
@@ -158,7 +145,7 @@ TOOL_HINTS = {
         "keys": "Aim at wall/step face",
     },
     "select": {
-        "title": "Select",
+        "title": "Select  (B=exit)",
         "actions": {
             "none": {
                 "LMB": "First corner",
@@ -177,10 +164,10 @@ TOOL_HINTS = {
                 "Esc": "Deselect",
             },
         },
-        "keys": "X=floor/ceiling mode",
+        "keys": "X=floor/ceil  B=exit select",
     },
     "stamp": {
-        "title": "Model",
+        "title": "Model  (P=exit)",
         "actions": {
             "any": {
                 "LMB": "Apply preset",
@@ -188,7 +175,7 @@ TOOL_HINTS = {
                 "Scroll": "Cycle presets",
             },
         },
-        "keys": "M=cycle apply mode | 7=Model tool",
+        "keys": "M=cycle mode  P=exit model",
     },
 }
 

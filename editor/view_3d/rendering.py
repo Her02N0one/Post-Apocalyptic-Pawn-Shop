@@ -24,6 +24,7 @@ from editor.view_3d.constants import (
     TOOL_LABELS, TOOL_COLORS, TOOL_HINTS,
     COL_TOOL_SELECT,
     COL_TOOL_CEILING,
+    HOTBAR_SIZE,
 )
 
 
@@ -96,6 +97,7 @@ class RenderingMixin:
         self._draw_face_hl_and_preview(surface, vp, hw, hh, sw, sh)
         self._draw_crosshair(surface, sw, sh)
         self._draw_action_context(surface, sw, sh)
+        self._draw_hotbar(surface, sw, sh)
         self._draw_hud(surface, sw, sh)
 
     # ── Sub-methods ───────────────────────────────────────────────
@@ -363,6 +365,53 @@ class RenderingMixin:
                                  float(c), h, float(r),
                                  c + 1.0, h + 0.05, r + 1.0,
                                  col, col, 1, alpha=60)
+
+    # ── Hotbar ─────────────────────────────────────────────────────
+
+    def _draw_hotbar(self, surface: pygame.Surface, sw: int, sh: int) -> None:
+        """Draw 10 texture-colour slots centred at the bottom of the viewport."""
+        if not self.show_hud:
+            return
+
+        slot_size = 32
+        gap = 4
+        total_w = HOTBAR_SIZE * slot_size + (HOTBAR_SIZE - 1) * gap
+        x0 = (sw - total_w) // 2
+        y0 = sh - slot_size - 12  # 12px margin from bottom
+
+        font = _get_font(11)
+        active = getattr(self, 'hotbar_slot', 0)
+        hotbar = getattr(self, 'hotbar', [''] * HOTBAR_SIZE)
+
+        # Background bar
+        bg = pygame.Surface((total_w + 8, slot_size + 8), pygame.SRCALPHA)
+        bg.fill((0, 0, 0, 140))
+        surface.blit(bg, (x0 - 4, y0 - 4))
+
+        for i in range(HOTBAR_SIZE):
+            x = x0 + i * (slot_size + gap)
+            tex = hotbar[i] if i < len(hotbar) else ''
+
+            # Slot colour from TILE_COLORS
+            c = TILE_COLORS.get(tex) if tex else None
+            if c:
+                fill = (min(255, c[0] + 40), min(255, c[1] + 40), min(255, c[2] + 40))
+            else:
+                fill = (50, 50, 50)
+
+            rect = pygame.Rect(x, y0, slot_size, slot_size)
+            pygame.draw.rect(surface, fill, rect)
+
+            # Active-slot highlight
+            if i == active:
+                pygame.draw.rect(surface, (255, 255, 255), rect, 2)
+            else:
+                pygame.draw.rect(surface, (100, 100, 100), rect, 1)
+
+            # Slot number label (1-9, 0)
+            label = str((i + 1) % 10)
+            lbl_img = font.render(label, True, (200, 200, 200))
+            surface.blit(lbl_img, (x + 2, y0 + 1))
 
     # ── HUD ───────────────────────────────────────────────────────
 

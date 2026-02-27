@@ -37,7 +37,7 @@ The `face` parameter in mutations 4–7 is context-aware: it routes to wall face
 
 Tools combine fundamental mutations into intent-driven actions with clear visual feedback.
 
-### Tool 1: **Sculpt** (was: Wall + Floor + Ceiling)
+### Tool 1: **Sculpt** (F5)
 
 **Intent**: Shape the 3D geometry of a cell.
 
@@ -49,13 +49,13 @@ All three old tools (Wall, Floor, Ceiling) manipulated the same two properties (
 | **RMB** | Lower floor by snap | Raise ceiling by snap |
 | **Scroll** | Change snap increment | Change snap increment |
 | **Shift+LMB** | Set floor to exact height (wall_height) | Set ceiling to exact height |
-| **T** | Toggle target (Floor ↔ Ceiling) | Toggle target |
+| **C** | Toggle target (Floor ↔ Ceiling) | Toggle target |
 | **R** | Reset to default (0.0 / 1.0) | Reset to default |
 | **MMB** | Paint aimed face | Paint aimed face |
 
 The old "Wall tool" Floor Up / Ceil Down modes become **Shift+LMB** — "stamp to height" rather than a separate tool. When floor meets ceiling the cell becomes geometry-solid automatically.
 
-### Tool 2: **Paint**
+### Tool 2: **Paint** (F6)
 
 **Intent**: Change what a surface looks like without changing geometry.
 
@@ -63,12 +63,15 @@ The old "Wall tool" Floor Up / Ceil Down modes become **Shift+LMB** — "stamp t
 |--------|-------------|
 | **LMB** | Apply current texture to aimed face |
 | **RMB** | Erase texture override (revert to default) |
+| **Ctrl+LMB** | Flood fill current texture across connected cells |
+| **Ctrl+RMB** | Flood clear texture across connected cells |
 | **MMB** | Eyedropper — pick texture from aimed face |
-| **Scroll** | Cycle texture palette |
+| **Scroll** | Cycle texture palette (syncs hotbar slot) |
+| **Shift+LMB** | Paint all faces of aimed cell at once |
 
 Context-aware face routing: wall N/S/E/W, floor-step N/S/E/W, ceil-step N/S/E/W, floor-top, ceil-bottom — all via the same tool, determined by what the crosshair hits.
 
-### Tool 3: **Segment**
+### Tool 3: **Segment** (F7)
 
 **Intent**: Subdivide a face vertically for multi-texture bands.
 
@@ -78,6 +81,23 @@ Context-aware face routing: wall N/S/E/W, floor-step N/S/E/W, ceil-step N/S/E/W,
 | **RMB** | Merge nearest split boundary |
 | **MMB** | Paint the specific segment band |
 | **Scroll** | Cycle texture palette |
+
+### Utility Mode: **Select** (B toggle)
+
+**Intent**: Rectangle-select cells for batch operations.
+
+| Action | What it does |
+|--------|-------------|
+| **LMB** | Set selection start / end corner |
+| **RMB** | Clear selection |
+| **Delete** | Batch delete selected cells |
+| **X** | Toggle floor / ceiling mode |
+
+### Utility Mode: **Stamp** (P toggle)
+
+**Intent**: Place / capture preset structures.
+
+Pressing B or P again returns to the previously active core tool.
 
 ---
 
@@ -100,13 +120,16 @@ These are multi-cell or multi-mutation actions that combine fundamentals for com
 
 | Old | New | Why |
 |-----|-----|-----|
-| 5 tools (Wall, Floor, Ceiling, Paint, Segment) | 3 tools (Sculpt, Paint, Segment) | Floor/Ceiling/Wall all edit geometry — one tool, one concept |
+| 7 tools (Sculpt, Paint, Fill, Erase, Segment, Select, Stamp) | 3 core + 2 utility (Sculpt, Paint, Segment + Select, Stamp) | Fill/Erase absorbed into Paint + globals; Select/Stamp are modes |
+| Number keys 1–7 select tools | F5/F6/F7 for core tools, B/P toggle utility modes | Frees 1–0 for hotbar texture slots |
 | Wall tool has floor_up / ceil_down modes | Sculpt tool has Floor / Ceiling targets | Direct manipulation — "which surface am I moving?" |
 | Wall tool `height` parameter (1–10 tiles) | Shift+LMB = stamp to height | Height is a parameter of the stamp action, not a mode |
-| RMB Wall = "remove wall" (confusing semantics) | RMB Sculpt = lower/raise (symmetric) | Every action has a clear inverse |
-| Floor/Ceiling tools as separate concepts | One Sculpt tool toggles target with T | Same property type, same operations, same UI |
-| MMB paint on every tool | Paint always accessible via MMB everywhere | Paint is orthogonal to geometry |
-| Separate key bindings per tool for snap | Snap is global, shown in status bar | One concept, one control |
+| Separate Fill tool | Ctrl+LMB/RMB in Paint tool | Fill is a modifier of paint, not a separate tool |
+| Separate Erase tool | Del = cell reset, R = height reset, RMB on paint = texture clear | Erase variants folded into globals and Paint |
+| T = ceiling toggle | C = ceiling toggle | T freed for future tile picker; C freed from fly-down |
+| F2/F3/F4 = display toggles | F8/F9/F10 = display toggles | F-keys near tool range freed |
+| No hotbar | 10-slot texture hotbar (keys 1–0) | Quick texture access like Minecraft |
+| Tab not used | Tab cycles core tools | Keyboard-only tool switching |
 
 ---
 
@@ -114,17 +137,23 @@ These are multi-cell or multi-mutation actions that combine fundamentals for com
 
 | Key | Action |
 |-----|--------|
-| `1` | Sculpt tool |
-| `2` | Paint tool |
-| `3` | Segment tool |
-| `T` | Toggle sculpt target (Floor ↔ Ceiling) |
-| `R` | Reset cell to defaults |
+| `F5` | Sculpt tool |
+| `F6` | Paint tool |
+| `F7` | Segment tool |
+| `Tab` | Cycle core tools (Sculpt → Paint → Segment) |
+| `B` | Toggle Select utility mode |
+| `P` | Toggle Stamp utility mode |
+| `1`–`0` | Select hotbar texture slot (1=slot0 … 0=slot9) |
+| `C` | Toggle sculpt target (Floor ↔ Ceiling) |
+| `R` | Reset height (global — works in any tool) |
 | `G` | Cycle snap height |
 | `U` / `Shift+U` / `Ctrl+U` | Upper wall height adjust |
 | `Scroll` | Tool-specific (snap cycle / texture cycle) |
 | `LMB` | Primary action |
 | `RMB` | Secondary action (inverse of primary) |
-| `Shift+LMB` | Stamp to height (sculpt) |
+| `Ctrl+LMB` | Flood fill (paint tool) |
+| `Ctrl+RMB` | Flood clear (paint tool) |
+| `Shift+LMB` | Stamp to height (sculpt) / Paint all faces (paint) |
 | `MMB` | Paint / eyedropper / segment-paint |
 | `Delete` | Full cell reset |
-| `F2/F3/F4` | Toggle grid/ceiling/axes display |
+| `F8/F9/F10` | Toggle grid / ceiling grid / axes display |

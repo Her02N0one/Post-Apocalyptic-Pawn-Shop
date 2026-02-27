@@ -69,30 +69,38 @@ class TestToolSystem:
 
     def test_tool_selection_keys(self):
         ed, z = _make_editor()
-        expected = ["sculpt", "paint", "fill", "erase", "segment", "select"]
-        keys = [pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4, pygame.K_5, pygame.K_6]
+        # Core tools: F5=sculpt, F6=paint, F7=segment
+        expected = ["sculpt", "paint", "segment"]
+        keys = [pygame.K_F5, pygame.K_F6, pygame.K_F7]
         for key, tool in zip(keys, expected):
             ev = pygame.event.Event(pygame.KEYDOWN, key=key)
             ed.handle_event(ev)
             assert ed.tool == tool, f"Key should select tool={tool}"
+        # Utility toggles: B=select, P=stamp
+        ev_b = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_b)
+        ed.handle_event(ev_b)
+        assert ed.tool == "select"
+        ev_p = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_p)
+        ed.handle_event(ev_p)
+        assert ed.tool == "stamp"
 
     def test_all_tools_present(self):
-        assert TOOLS == ("sculpt", "paint", "fill", "erase", "segment", "select", "stamp")
+        assert TOOLS == ("sculpt", "paint", "segment")
 
-    def test_display_toggle_keys_moved_to_f2_f3_f4(self):
+    def test_display_toggle_keys_moved_to_f8_f9_f10(self):
         ed, z = _make_editor()
         assert ed.show_grid is True
-        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F2)
+        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F8)
         ed.handle_event(ev)
         assert ed.show_grid is False
 
         assert ed.show_ceiling_grid is True
-        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F3)
+        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F9)
         ed.handle_event(ev)
         assert ed.show_ceiling_grid is False
 
         assert ed.show_axes is True
-        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F4)
+        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F10)
         ed.handle_event(ev)
         assert ed.show_axes is False
 
@@ -1401,15 +1409,15 @@ class TestToggleCeiling:
         ed._toggle_ceiling()  # remove
         assert z.ceil_heights[r][c] >= SKY_HEIGHT - 0.01
 
-    def test_t_key_event(self):
-        """T key press triggers _toggle_ceiling via handle_event."""
+    def test_c_key_toggles_ceiling(self):
+        """C key press triggers _toggle_ceiling via handle_event."""
         ed, z = _make_editor()
         r, c = 2, 2
         _open_cell(z, r, c, fh=0.0, ch=0.95)
         z.ceil_heights[r][c] = SKY_HEIGHT
         ed.tool = "sculpt"
         ed.aimed = _CellHit(1.0, c, r, "floor", "top", 0.04)
-        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_t)
+        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_c)
         ed.handle_event(ev)
         assert z.ceil_heights[r][c] == pytest.approx(DEFAULT_CEIL)
 

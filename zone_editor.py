@@ -35,7 +35,10 @@ from core.paths import ZONES_DIR
 from core.zones import GameRegistry
 from engine.textures import TextureAtlas
 from engine.ray_renderer import RayRenderer
-from editor.view_3d import Zone3DEditor, TOOLS, TOOL_LABELS, TOOL_COLORS, TOOL_HINTS, SNAP_Y_OPTIONS, _ensure_palette
+from editor.view_3d import (
+    Zone3DEditor, TOOLS, UTIL_TOOLS, ALL_TOOLS,
+    TOOL_LABELS, TOOL_COLORS, TOOL_HINTS, SNAP_Y_OPTIONS, _ensure_palette,
+)
 from editor.fly_camera import MOUSE_SENS, wasd_2d
 from core.presets import PRESET_REGISTRY
 
@@ -1097,11 +1100,11 @@ class ZoneEditorApp:
                 imgui.separator()
                 if self.editor_3d:
                     _, self.editor_3d.show_axes = imgui.menu_item(
-                        "Show Axes", "F4", self.editor_3d.show_axes)
+                        "Show Axes", "F10", self.editor_3d.show_axes)
                     _, self.editor_3d.show_walls = imgui.menu_item(
                         "Show Walls", "V", self.editor_3d.show_walls)
                     _, self.editor_3d.show_ceiling_grid = imgui.menu_item(
-                        "Ceiling Grid", "F3", self.editor_3d.show_ceiling_grid)
+                        "Ceiling Grid", "F9", self.editor_3d.show_ceiling_grid)
                 imgui.end_menu()
 
             # Right-aligned FPS
@@ -1160,7 +1163,9 @@ class ZoneEditorApp:
         # ━━━ TOOLS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         self._section_header("\u2581 TOOLS", 0.65, 0.75, 0.95, pad_top=False)
         avail_w = imgui.get_content_region_available()[0]
+        # Core tools row (3 buttons)
         btn_w = (avail_w - 2 * spacing_x) / 3.0
+        fkey_labels = {0: "F5", 1: "F6", 2: "F7"}
         for i, tool_name in enumerate(TOOLS):
             if i % 3 != 0:
                 imgui.same_line()
@@ -1173,8 +1178,42 @@ class ZoneEditorApp:
                 imgui.push_style_color(imgui.COLOR_TEXT, 1.0, 1.0, 1.0, 1.0)
             else:
                 imgui.push_style_color(imgui.COLOR_TEXT, 0.65, 0.65, 0.70, 1.0)
-            if imgui.button(f"{i+1} {TOOL_LABELS[tool_name]}##{tool_name}", btn_w, 28):
+            if imgui.button(f"{fkey_labels[i]} {TOOL_LABELS[tool_name]}##{tool_name}", btn_w, 28):
+                if ed.tool == "select":
+                    ed._sel_cancel()
                 ed.tool = tool_name
+                ed._prev_tool = tool_name
+            if is_active:
+                imgui.pop_style_color(4)
+            else:
+                imgui.pop_style_color(1)
+
+        # Utility mode row (2 buttons)
+        btn_w2 = (avail_w - spacing_x) / 2.0
+        util_keys_label = {"select": "B", "stamp": "P"}
+        for i, tool_name in enumerate(UTIL_TOOLS):
+            if i > 0:
+                imgui.same_line()
+            is_active = ed.tool == tool_name
+            r, g, b = [c / 255.0 for c in TOOL_COLORS[tool_name]]
+            if is_active:
+                imgui.push_style_color(imgui.COLOR_BUTTON, r, g, b, 0.55)
+                imgui.push_style_color(imgui.COLOR_BUTTON_HOVERED, r, g, b, 0.75)
+                imgui.push_style_color(imgui.COLOR_BUTTON_ACTIVE, r, g, b, 0.90)
+                imgui.push_style_color(imgui.COLOR_TEXT, 1.0, 1.0, 1.0, 1.0)
+            else:
+                imgui.push_style_color(imgui.COLOR_TEXT, 0.55, 0.55, 0.60, 1.0)
+            if imgui.button(f"{util_keys_label[tool_name]} {TOOL_LABELS[tool_name]}##{tool_name}", btn_w2, 24):
+                if ed.tool == tool_name:
+                    if tool_name == "select":
+                        ed._sel_cancel()
+                    ed.tool = ed._prev_tool
+                else:
+                    if ed.tool in TOOLS:
+                        ed._prev_tool = ed.tool
+                    if ed.tool == "select":
+                        ed._sel_cancel()
+                    ed.tool = tool_name
             if is_active:
                 imgui.pop_style_color(4)
             else:
@@ -1201,7 +1240,7 @@ class ZoneEditorApp:
 
         # ━━━ BRUSH / PALETTE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         tool_name = ed.tool
-        uses_texture = tool_name in ("paint", "segment", "fill", "select")
+        uses_texture = tool_name in ("paint", "segment", "select")
         uses_preset = tool_name == "stamp"
 
         if uses_texture:
@@ -1645,7 +1684,7 @@ class ZoneEditorApp:
                 imgui.same_line()
                 imgui.text_disabled(f"  Snap:{ed.snap_y}")
 
-                if ed.tool in ("paint", "fill", "segment", "select"):
+                if ed.tool in ("paint", "segment", "select"):
                     imgui.same_line()
                     imgui.text_disabled(f"  Tex:{ed.current_texture}")
                 elif ed.tool == "stamp":
