@@ -165,7 +165,7 @@ class RayRenderer:
         # ── Per-cell solid map (replaces per-tile wall_lut) ──
         #
         # A cell is solid (blocks rays, blocks movement) if:
-        #   1. It's a full-height wall tile (backward compat), OR
+        #   1. It's a full-height wall tile, OR
         #   2. The floor/ceiling gap is < 0.1 (geometry-based wall)
         #
         # Short walls (counters, railings) are NOT solid — they are
@@ -317,7 +317,7 @@ class RayRenderer:
                 ch = zone.ceil_heights[r][c]
                 gap = ch - fh
 
-                # Tile-type detection (backward compat with existing zones)
+                # Tile-type detection (full-height walls)
                 td = _td(zone.tiles[r][c])
                 if td and td.wall:
                     if td.height_scale >= 0.999 and not td.thin_wall:

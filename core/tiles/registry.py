@@ -224,23 +224,3 @@ def alt_tex_lut() -> list[int]:
                 out[i] = alt_id
     return out
 
-
-# ── Old int→str migration map ───────────────────────────────────
-
-_OLD_INT_TO_STR: dict[int, str] = {
-    0: "void", 1: "grass", 2: "dirt", 3: "stone", 4: "water",
-    5: "wood_floor", 6: "wall", 7: "sand", 8: "rubble",
-    9: "door", 10: "window", 11: "farmland", 12: "gateway",
-    13: "concrete", 14: "tile_floor", 15: "metal_wall",
-    16: "half_wall", 17: "low_wall", 18: "pillar",
-    19: "counter_top", 20: "railing", 21: "carpet",
-    22: "brick_wall", 23: "wood_panel", 24: "cracked_floor",
-    25: "stone_floor", 26: "shelf_wall", 27: "stone_platform",
-    28: "wood_platform", 29: "metal_platform", 30: "crate_stack",
-    31: "table", 32: "curb", 33: "stool", 34: "step",
-}
-
-
-def migrate_int_grid(tiles: list[list[int]]) -> list[list[str]]:
-    m = _OLD_INT_TO_STR
-    return [[m.get(c, "void") for c in row] for row in tiles]

@@ -28,9 +28,8 @@ class GeometryMixin:
 
         if td and td.wall:
             # Render a solid column from ground up to the max height.
-            # With floor_height-based walls (fh=10, ch=10) the old
-            # (fh → ch) range was a paper-thin invisible sliver;
-            # always anchoring at 0 keeps the wall visible.
+            # When fh == ch (e.g. both 10.0) the (fh \u2192 ch) range is a
+            # paper-thin invisible sliver; anchoring at 0 keeps it visible.
             return [("wall", min(0.0, fh), max(ch, fh + 0.05, 1.0))]
 
         # Geometry-solid: floor meets or exceeds ceiling

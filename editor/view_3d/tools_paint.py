@@ -108,6 +108,46 @@ class PaintMixin:
         """
         self._paint(push_undo=False)
 
+    def _paint_all(self) -> None:
+        """Shift+LMB: paint every surface of the aimed cell at once.
+
+        Sets the floor texture, ceiling texture, wall texture, all four
+        cardinal face overrides, and all step-wall textures to the current
+        brush.  A single undo snapshot covers the whole operation.
+        """
+        hit = self.aimed
+        if not hit:
+            return
+
+        zone = self.zone
+        r, c = hit.row, hit.col
+        tex = self.current_texture
+
+        self._ensure_face_textures()
+        self._push_undo()
+
+        # Floor + ceiling surface
+        if zone.floor_textures:
+            zone.floor_textures[r][c] = tex
+        if zone.ceil_textures:
+            zone.ceil_textures[r][c] = tex
+
+        # Wall base texture
+        zone.wall_textures[r][c] = tex
+
+        # All 4 cardinal face overrides (N/S/E/W)
+        zone.face_textures[r][c] = [tex, tex, tex, tex]
+
+        # Floor step textures (4 directions)
+        if zone.floor_step_textures and len(zone.floor_step_textures) > r:
+            zone.floor_step_textures[r][c] = [tex, tex, tex, tex]
+
+        # Ceiling step textures (4 directions)
+        if zone.ceil_step_textures and len(zone.ceil_step_textures) > r:
+            zone.ceil_step_textures[r][c] = [tex, tex, tex, tex]
+
+        self.dirty = True
+
     def _erase_texture(self) -> None:
         """RMB: erase texture override (reset to default)."""
         hit = self.aimed

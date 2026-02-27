@@ -268,9 +268,6 @@ PREFAB_DEFAULTS: dict[str, dict[str, Any]] = {
     },
 }
 
-# Backward-compat alias for code that still imports the private name.
-_PREFAB_DEFAULTS = PREFAB_DEFAULTS
-
 
 def get_prefab_defaults() -> dict[str, dict[str, Any]]:
     """Public accessor for the prefab defaults registry."""

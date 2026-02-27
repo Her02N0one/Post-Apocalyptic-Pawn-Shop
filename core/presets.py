@@ -404,26 +404,6 @@ def _preset_path(preset_id: str) -> str:
     return _os.path.join(PRESETS_DIR, f"{preset_id}.toml")
 
 
-def _parse_cell_type(d: dict) -> float | None:
-    """Read legacy cell-type fields and convert to floor_height.
-
-    If the TOML has ``cell_type = 1``, ``solid = true``, or
-    ``is_wall = true`` *and* no explicit ``floor_height``, return
-    10.0 (fills to default ceiling).  Otherwise return ``None``
-    so the normal ``floor_height`` key is used instead.
-    """
-    # New-style files just use floor_height directly.
-    if "floor_height" in d:
-        return None
-    # Legacy boolean / int fields
-    if "cell_type" in d and int(d["cell_type"]) == 1:
-        return 10.0
-    legacy = d.get("solid", d.get("is_wall", False))
-    if legacy:
-        return 10.0
-    return None
-
-
 def _parse_preset_toml(path: str) -> CellPreset | None:
     """Parse a single preset TOML file."""
     try:
@@ -459,16 +439,13 @@ def _parse_preset_toml(path: str) -> CellPreset | None:
     fss = _parse_seg_field(d, "floor_step_segments")
     css = _parse_seg_field(d, "ceil_step_segments")
 
-    # Legacy compat: convert old is_wall / solid / cell_type
-    legacy_fh = _parse_cell_type(d)
-
     return CellPreset(
         id=basename,
         name=d.get("name", basename),
         category=d.get("category", "General"),
         color=color,
         apply_mode=d.get("apply_mode", "replace"),
-        floor_height=d.get("floor_height", legacy_fh),
+        floor_height=d.get("floor_height"),
         ceil_height=d.get("ceil_height"),
         upper_wall_height=d.get("upper_wall_height"),
         floor_texture=d.get("floor_texture"),

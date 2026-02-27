@@ -4,54 +4,7 @@
 A dedicated application for sculpting zones in 3D with a professional
 dockable-panel UI.  Includes a raycaster preview mode (Tab to toggle).
 
-Usage
------
     python zone_editor.py [zone_name]
-
-Controls
---------
-    Click viewport to enter edit mode (capture mouse).
-    Escape releases the mouse back to the UI panels.
-
-    3D Editor (when captured)
-        W/S/A/D         Fly camera
-        Mouse           Look around
-        1-6             Select tool (sculpt/paint/fill/erase/segment/select)
-        LMB             Tool primary action
-        RMB             Tool secondary action (inverse)
-        MMB             Paint / eyedropper
-        Scroll          Tool-specific (extend, cycle texture, selection height)
-
-        Floor target:
-          LMB=raise  RMB=lower  Scroll=extend  Shift+Scroll=snap grid
-
-        Ceiling target (dig/fill model):
-          LMB=dig (lower ceiling)  RMB=fill (raise ceiling)
-          Scroll=upper wall height  Shift+Scroll=snap grid
-
-        Select tool:
-          LMB=set corners / fill texture
-          RMB=clear textures  Del=reset cells  Esc=cancel
-          Scroll=raise/lower selected heights
-          X=toggle floor/ceiling mode
-
-        R               Reset height on aimed cell
-        Delete          Full cell reset
-        G               Cycle snap height
-        Ctrl+S          Save zone
-        Ctrl+Z / Y      Undo / redo
-        V               Toggle wall drawing
-
-    Raycaster Preview (when captured)
-        W/S/A/D         Walk around
-        Mouse           Look
-        Shift           Sprint
-        Ctrl            Slow walk
-        I               Toggle interior rendering
-
-    General
-        Tab             Toggle 3D editor / raycaster
-        Escape          Release mouse / quit
 """
 
 from __future__ import annotations

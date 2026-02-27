@@ -27,6 +27,25 @@ from editor.view_3d.constants import (
 )
 
 
+def _face_edge_pts(
+    c: int, r: int, y: float, face: str,
+) -> list[tuple[float, float, float]] | None:
+    """Return the two 3D endpoints of a horizontal edge on one face of a cell."""
+    if face == "north":
+        return [(c, y, r), (c + 1, y, r)]
+    if face == "south":
+        return [(c + 1, y, r + 1), (c, y, r + 1)]
+    if face == "east":
+        return [(c + 1, y, r), (c + 1, y, r + 1)]
+    if face == "west":
+        return [(c, y, r + 1), (c, y, r)]
+    return None
+
+
+# Merge-target boundary colour (red-ish to contrast split preview orange)
+COL_SEG_MERGE = (255, 80, 80)
+
+
 class RenderingMixin:
     """draw(), HUD, face highlight, segment overdraw, colour helpers."""
 
@@ -156,8 +175,11 @@ class RenderingMixin:
                     self._line3d(surface, vp, hw, hh, c+1, ch, r+1, c, ch, r+1, COL_CEIL_SURF, 2)
                     self._line3d(surface, vp, hw, hh, c, ch, r+1, c, ch, r, COL_CEIL_SURF, 2)
 
+    _ZONE_FI_FACE = {0: "north", 1: "south", 2: "east", 3: "west"}
+
     def _draw_seg_boundary_rings(self, surface, vp, hw, hh, zone, W, H):
-        def _draw_seg_rings(seg_grid: list) -> None:
+        """Draw segment boundaries as per-face edges (not full-cell rings)."""
+        def _draw_seg_edges(seg_grid: list) -> None:
             if not seg_grid:
                 return
             for r2 in range(H):
@@ -167,26 +189,28 @@ class RenderingMixin:
                     for fi2, segs2 in enumerate(seg_grid[r2][c2]):
                         if len(segs2) < 2:
                             continue
+                        face = self._ZONE_FI_FACE.get(fi2)
+                        if face is None:
+                            continue
                         for si2 in range(len(segs2) - 1):
                             y2 = segs2[si2][1]
-                            col2 = COL_SEG_LINE
-                            self._line3d(surface, vp, hw, hh,
-                                         c2, y2, r2, c2+1, y2, r2, col2, 2)
-                            self._line3d(surface, vp, hw, hh,
-                                         c2+1, y2, r2, c2+1, y2, r2+1, col2, 2)
-                            self._line3d(surface, vp, hw, hh,
-                                         c2+1, y2, r2+1, c2, y2, r2+1, col2, 2)
-                            self._line3d(surface, vp, hw, hh,
-                                         c2, y2, r2+1, c2, y2, r2, col2, 2)
+                            pts = _face_edge_pts(c2, r2, y2, face)
+                            if pts:
+                                self._line3d(surface, vp, hw, hh,
+                                             *pts[0], *pts[1], COL_SEG_LINE, 2)
 
-        _draw_seg_rings(zone.wall_segments)
-        _draw_seg_rings(zone.floor_step_segments)
-        _draw_seg_rings(zone.ceil_step_segments)
+        _draw_seg_edges(zone.wall_segments)
+        _draw_seg_edges(zone.floor_step_segments)
+        _draw_seg_edges(zone.ceil_step_segments)
 
     def _draw_face_hl_and_preview(self, surface, vp, hw, hh, sw, sh):
         aimed = self.aimed
         if aimed is not None and aimed.face != "ground":
             self._draw_face_highlight(surface, vp, hw, hh, aimed)
+
+        # Segment merge-target: highlight the boundary nearest to crosshair
+        if self.tool == "segment" and aimed is not None:
+            self._draw_merge_target(surface, vp, hw, hh)
 
         if self.preview_box is not None:
             gc, gr, gy0, gy1, gcol = self.preview_box
@@ -196,11 +220,19 @@ class RenderingMixin:
                              gcol, gcol, 2, alpha=100)
 
         if self.preview_line is not None:
-            lc, lr, ly, lcol = self.preview_line
-            self._line3d(surface, vp, hw, hh, lc, ly, lr, lc + 1, ly, lr, lcol, 2)
-            self._line3d(surface, vp, hw, hh, lc + 1, ly, lr, lc + 1, ly, lr + 1, lcol, 2)
-            self._line3d(surface, vp, hw, hh, lc + 1, ly, lr + 1, lc, ly, lr + 1, lcol, 2)
-            self._line3d(surface, vp, hw, hh, lc, ly, lr + 1, lc, ly, lr, lcol, 2)
+            lc, lr, ly, lcol = self.preview_line[:4]
+            face = self.preview_line[4] if len(self.preview_line) > 4 else None
+            if face is None:
+                # Full perimeter ring (sculpt preview)
+                self._line3d(surface, vp, hw, hh, lc, ly, lr, lc + 1, ly, lr, lcol, 2)
+                self._line3d(surface, vp, hw, hh, lc + 1, ly, lr, lc + 1, ly, lr + 1, lcol, 2)
+                self._line3d(surface, vp, hw, hh, lc + 1, ly, lr + 1, lc, ly, lr + 1, lcol, 2)
+                self._line3d(surface, vp, hw, hh, lc, ly, lr + 1, lc, ly, lr, lcol, 2)
+            else:
+                # Single-face edge (segment split preview)
+                pts = _face_edge_pts(lc, lr, ly, face)
+                if pts:
+                    self._line3d(surface, vp, hw, hh, *pts[0], *pts[1], lcol, 3)
 
     def _draw_crosshair(self, surface, sw, sh):
         tool_col = TOOL_COLORS.get(self.tool, COL_CROSSHAIR)
@@ -493,9 +525,10 @@ class RenderingMixin:
             tw = max_x - min_x + 1
             th = max_y - min_y + 1
             if tw > 0 and th > 0:
-                fill_a = 90 if self.tool == "paint" else 60
-                edge_a = 150 if self.tool == "paint" else 100
-                edge_w = 3 if self.tool == "paint" else 2
+                is_seg = self.tool == "segment"
+                fill_a = 90 if self.tool == "paint" else (100 if is_seg else 60)
+                edge_a = 150 if self.tool == "paint" else (180 if is_seg else 100)
+                edge_w = 3 if self.tool in ("paint", "segment") else 2
                 tmp = pygame.Surface((tw, th), pygame.SRCALPHA)
                 off = [(px - min_x, py - min_y) for px, py in poly]
                 pygame.draw.polygon(tmp, (*tool_col[:3], fill_a), off)
@@ -504,6 +537,37 @@ class RenderingMixin:
                 surface.blit(tmp, (min_x, min_y))
         except (ValueError, OverflowError):
             pass
+
+    def _draw_merge_target(
+        self, surface: pygame.Surface, vp: list[float],
+        hw: float, hh: float,
+    ) -> None:
+        """Highlight the segment boundary nearest to crosshair (merge target) in red."""
+        info = self._seg_face_info()
+        if info is None:
+            return
+        r, c, fi, segs, y_bot, y_top, hy, seg_type = info
+        if len(segs) < 2:
+            return
+        face = self._ZONE_FI_FACE.get(fi)
+        if face is None:
+            return
+        # Find nearest internal boundary (same logic as _seg_merge)
+        best_dist = float("inf")
+        best_y = None
+        bot = y_bot
+        for i, (stex, ytop) in enumerate(segs):
+            if i > 0:
+                d = abs(hy - bot)
+                if d < best_dist:
+                    best_dist = d
+                    best_y = bot
+            bot = ytop
+        if best_y is not None:
+            pts = _face_edge_pts(c, r, best_y, face)
+            if pts:
+                self._line3d(surface, vp, hw, hh,
+                             *pts[0], *pts[1], COL_SEG_MERGE, 3)
 
     # ── Segment overdraw ──────────────────────────────────────────
 

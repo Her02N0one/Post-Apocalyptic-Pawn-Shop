@@ -58,14 +58,6 @@ def _face_name_from_idx(face_idx: int) -> str:
     """Convert face constant (0–3) to cardinal name string."""
     return FACE_NAMES[face_idx] if 0 <= face_idx < 4 else "south"
 
-# Legacy: derive face from side + ray direction (C-ext path pre-compute)
-def _face_name(side: int, rdx: float, rdy: float) -> str:
-    """Derive cardinal face name from DDA side + ray direction."""
-    if side == 0:  # X boundary
-        return "west" if rdx > 0 else "east"
-    else:  # Y boundary
-        return "north" if rdy > 0 else "south"
-
 # Per-tile face texture resolution (rotation-aware)
 _face_has_dir: dict[str, bool] = {}
 

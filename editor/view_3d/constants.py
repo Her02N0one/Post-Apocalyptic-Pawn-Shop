@@ -108,13 +108,14 @@ TOOL_HINTS = {
                 "LMB": "Aim at surface",
             },
         },
-        "keys": "T=ceil  R=reset  Del=clear  G=snap",
+        "keys": "T=ceil  R=reset  Del=clear  G=snap  V=walls",
     },
     "paint": {
         "title": "Paint",
         "actions": {
             "any": {
-                "LMB": "Paint (hold=drag)",
+                "LMB": "Paint face (hold=drag)",
+                "Sh+LMB": "Paint whole cell",
                 "RMB": "Erase texture",
                 "MMB": "Eyedropper",
                 "Scroll": "Cycle palette",
@@ -148,13 +149,13 @@ TOOL_HINTS = {
         "title": "Detail",
         "actions": {
             "any": {
-                "LMB": "Split face",
-                "RMB": "Merge segment",
+                "LMB": "Split face at line",
+                "RMB": "Merge (red line)",
                 "MMB": "Paint segment",
                 "Scroll": "Cycle palette",
             },
         },
-        "keys": "Per-band texturing",
+        "keys": "Aim at wall/step face",
     },
     "select": {
         "title": "Select",
@@ -213,7 +214,6 @@ from editor.fly_camera import (
 
 FLY_SPEED      = 6.0
 FLY_SPRINT     = 2.5
-FLY_SLOW       = 0.25
 MOUSE_SENS     = _MOUSE_SENS    # from fly_camera (canonical)
 KB_TURN_SPEED  = _KB_TURN_SPEED  # from fly_camera (canonical)
 

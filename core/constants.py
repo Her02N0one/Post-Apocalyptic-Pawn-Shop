@@ -61,9 +61,6 @@ DAY_LENGTH: float = 300.0              # real seconds per in-game day
 TILE_SIZE = 32
 
 # ── Tile definitions ────────────────────────────────────────────────
-# The canonical source for tile IDs, names, colours, and flags is
-# ``core.tiles``.  We re-export the most commonly-used symbols here
-# for backward compatibility.
 from core.tiles import (                          # noqa: E402
     TF,
     TILE_COLORS,

@@ -59,13 +59,10 @@ from editor.view_3d.constants import (  # noqa: F401
     COL_FACE_HL,
     TOOLS, TOOL_LABELS, TOOL_COLORS, TOOL_KEYS, TOOL_HINTS,
     _FACE_DEFS,
-    FLY_SPEED, FLY_SPRINT, FLY_SLOW,
+    FLY_SPEED, FLY_SPRINT,
     MOUSE_SENS, KB_TURN_SPEED,
     _ensure_palette,
 )
-
-# Re-export for test compatibility (tests patch _core_paths.ZONES_DIR)
-import core.paths as _core_paths  # noqa: F401
 
 # Mixins
 from editor.view_3d.undo import UndoMixin
@@ -143,7 +140,8 @@ class Zone3DEditor(
         self.aimed: _CellHit | None = None
 
         # Preview indicators
-        self.preview_line: tuple[int, int, float, tuple] | None = None
+        # (col, row, y, color) or (col, row, y, color, face_name)
+        self.preview_line: tuple | None = None
         self.preview_box:  tuple[int, int, float, float, tuple] | None = None
 
         # Display toggles
@@ -388,7 +386,9 @@ class Zone3DEditor(
             return True
 
         if tool == "paint":
-            if btn == 1:
+            if btn == 1 and shift:
+                self._paint_all()
+            elif btn == 1:
                 self._paint()
             elif btn == 3:
                 self._erase_texture()
@@ -501,8 +501,6 @@ class Zone3DEditor(
         speed = FLY_SPEED
         if keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]:
             speed *= FLY_SPRINT
-        if keys[pygame.K_LCTRL] or keys[pygame.K_RCTRL]:
-            speed *= FLY_SLOW
 
         if mouse_captured:
             mx, my = pygame.mouse.get_rel()
@@ -514,16 +512,16 @@ class Zone3DEditor(
         if keys[pygame.K_e]:
             self.yaw += KB_TURN_SPEED * dt
 
-        s_blocked = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
+        ctrl_held = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
 
         dx, dy, dz = wasd_3d(
             self.yaw, self.pitch,
             forward=keys[pygame.K_w],
-            backward=keys[pygame.K_s] and not s_blocked,
+            backward=keys[pygame.K_s] and not ctrl_held,
             strafe_left=keys[pygame.K_a],
             strafe_right=keys[pygame.K_d],
             up=keys[pygame.K_SPACE],
-            down=keys[pygame.K_c],
+            down=ctrl_held,
             speed=speed,
             dt=dt,
         )
@@ -689,22 +687,23 @@ class Zone3DEditor(
 
         if tool == "segment":
             if hit.face in ("north", "south", "east", "west"):
+                face = hit.face
                 if hit.part == "wall" and is_wall:
                     split_y = round(hit.hit_y / snap) * snap
                     split_y = max(fh + 0.01, min(ch - 0.01, split_y))
-                    self.preview_line = (c, r, split_y, COL_SEG_LINE)
+                    self.preview_line = (c, r, split_y, COL_SEG_LINE, face)
                 elif hit.part == "floor" and abs(fh) > 0.02:
                     lo = min(0.0, fh)
                     hi = max(0.0, fh)
                     split_y = round(hit.hit_y / snap) * snap
                     split_y = max(lo + 0.01, min(hi - 0.01, split_y))
-                    self.preview_line = (c, r, split_y, COL_SEG_LINE)
+                    self.preview_line = (c, r, split_y, COL_SEG_LINE, face)
                 elif hit.part == "ceiling":
                     ct = self._ceil_mass_top(r, c)
                     if ct - ch > 0.02:
                         split_y = round(hit.hit_y / snap) * snap
                         split_y = max(ch + 0.01, min(ct - 0.01, split_y))
-                        self.preview_line = (c, r, split_y, COL_SEG_LINE)
+                        self.preview_line = (c, r, split_y, COL_SEG_LINE, face)
             return
 
         if tool == "sculpt":

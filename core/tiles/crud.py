@@ -1,6 +1,6 @@
 """core/tiles/crud.py — Tile CRUD operations (editor API).
 
-Create, update, delete tiles; manage categories; legacy compat shims.
+Create, update, delete tiles and manage categories.
 """
 
 from __future__ import annotations
@@ -154,29 +154,3 @@ def remove_category(name: str) -> None:
             if td.category == name:
                 update_tile(tid, category="Custom")
 
-
-# ── Legacy compat aliases ────────────────────────────────────────
-
-def register_custom_tile(name, color, flags=TF.NONE, texture_key="",
-                         height_scale=1.0, category="Custom"):
-    tile_type = _type_from_flags(flags)
-    return register_tile(name, color, tile_type=tile_type, flags=flags,
-                         texture_key=texture_key, height_scale=height_scale,
-                         category=category)
-
-
-def delete_custom_tile(tile_id):
-    return delete_tile(tile_id)
-
-
-def save_custom_tiles():
-    from core.tiles.io import save_tiles
-    save_tiles()
-
-
-def load_custom_tiles():
-    pass
-
-
-def _next_custom_id():
-    return _next_tile_key("custom")

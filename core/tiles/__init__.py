@@ -1,7 +1,5 @@
 """core.tiles — TOML-backed tile registry package.
 
-All public names are re-exported here for backward compatibility::
-
     from core.tiles import tile_def, TF, TileDef, TILE_REGISTRY
 """
 
@@ -30,7 +28,6 @@ from core.tiles.registry import (                             # noqa: F401
     color_lut, solid_int_set,
     wall_lut, half_wall_lut, platform_lut, hs_lut,
     transparent_lut, thin_wall_lut, tall_wall_lut, alt_tex_lut,
-    migrate_int_grid,
 )
 
 # TOML I/O
@@ -43,9 +40,7 @@ from core.tiles.io import (                                   # noqa: F401
 from core.tiles.crud import (                                 # noqa: F401
     register_tile, update_tile, delete_tile,
     add_category, remove_category,
-    register_custom_tile, delete_custom_tile,
-    save_custom_tiles, load_custom_tiles,
-    _next_tile_key, _next_custom_id,
+    _next_tile_key,
 )
 
 
