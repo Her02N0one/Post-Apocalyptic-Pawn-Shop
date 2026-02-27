@@ -437,7 +437,7 @@ class Zone3DEditor(
         if key == pygame.K_j:
             self.show_ceilings = not self.show_ceilings
             return True
-        if key == pygame.K_b:
+        if key == pygame.K_BACKSLASH:
             self.wireframe = not self.wireframe
             return True
 

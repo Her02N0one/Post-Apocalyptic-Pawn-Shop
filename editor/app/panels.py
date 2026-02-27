@@ -239,7 +239,7 @@ class PanelsMixin:
                         "Show Ceilings", "J", self.editor_3d.show_ceilings)
                     imgui.separator()
                     _, self.editor_3d.wireframe = imgui.menu_item(
-                        "Wireframe", "B", self.editor_3d.wireframe)
+                        "Wireframe", "\\", self.editor_3d.wireframe)
                 imgui.end_menu()
 
             # Right-aligned FPS
@@ -518,7 +518,7 @@ class PanelsMixin:
         _, ed.show_ceilings = imgui.checkbox("Ceilings (J)", ed.show_ceilings)
         imgui.same_line(half_w)
         _, ed.show_axes = imgui.checkbox("Axes", ed.show_axes)
-        _, ed.wireframe = imgui.checkbox("Wireframe (B)", ed.wireframe)
+        _, ed.wireframe = imgui.checkbox("Wireframe (\\)", ed.wireframe)
 
     def _draw_view_mode_button(self) -> None:
         imgui.spacing()

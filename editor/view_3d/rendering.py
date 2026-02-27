@@ -189,6 +189,8 @@ class RenderingMixin:
 
     def _draw_seg_boundary_rings(self, surface, vp, hw, hh, zone, W, H):
         """Draw segment boundaries as per-face edges (not full-cell rings)."""
+        if not self.show_walls:
+            return
         def _draw_seg_edges(seg_grid: list) -> None:
             if not seg_grid:
                 return
