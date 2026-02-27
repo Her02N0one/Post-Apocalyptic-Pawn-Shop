@@ -85,7 +85,7 @@ class TestToolSystem:
         assert ed.tool == "stamp"
 
     def test_all_tools_present(self):
-        assert TOOLS == ("sculpt", "paint", "segment")
+        assert TOOLS == ("sculpt", "paint", "segment", "entity")
 
     def test_display_toggle_keys_moved_to_f8_f9_f10(self):
         ed, z = _make_editor()

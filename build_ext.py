@@ -40,7 +40,11 @@ ext_walls = Extension(
 
 ext_ray_render = Extension(
     "engine._ray_render",
-    sources=["engine/_ray_render.c"],
+    sources=[
+        "engine/_ray_render.c",
+        "engine/_ray_entities.c",
+        "engine/_ray_debug.c",
+    ],
     language="c",
     extra_compile_args=_extra_compile,
 )

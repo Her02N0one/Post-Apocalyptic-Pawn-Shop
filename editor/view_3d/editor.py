@@ -77,6 +77,7 @@ from editor.view_3d.tools_erase import EraseMixin
 from editor.view_3d.tools_select import SelectMixin
 from editor.view_3d.tools_segment import SegmentMixin
 from editor.view_3d.tools_stamp import StampMixin
+from editor.view_3d.tools_entity import EntityMixin
 from editor.view_3d.save import SaveMixin
 from editor.view_3d.primitives import DrawPrimitivesMixin
 from editor.view_3d.rendering import RenderingMixin
@@ -96,6 +97,7 @@ class Zone3DEditor(
     SelectMixin,
     SegmentMixin,
     StampMixin,
+    EntityMixin,
     GeometryMixin,
     UndoMixin,
     SaveMixin,
@@ -167,6 +169,7 @@ class Zone3DEditor(
         self.show_walls = True
         self.show_floors = True
         self.show_ceilings = True
+        self.show_entities = True
         self.wireframe = False
 
         self._resolve_fallback_tiles()
@@ -291,6 +294,8 @@ class Zone3DEditor(
         if old_tool == "stamp":
             self._capture_pending = False
             self._capture_name = ""
+        if old_tool == "entity":
+            self._ent_deselect()
 
     def handle_event(self, event: pygame.event.Event) -> bool:
         """Route a pygame event to the appropriate handler.  Returns True if consumed."""
@@ -388,6 +393,9 @@ class Zone3DEditor(
         if key in (pygame.K_DELETE, pygame.K_BACKSPACE):
             if self.tool == "select" and self._sel_start is not None and self._sel_end is not None:
                 return self._sel_delete()
+            if self.tool == "entity" and self._ent_selected is not None:
+                self._ent_delete()
+                return True
             return self._clear_cell()
 
         # Cycle snap grid
@@ -403,10 +411,18 @@ class Zone3DEditor(
 
         # Cancel aim / selection
         if key == pygame.K_ESCAPE:
+            if self.tool == "entity" and self._ent_selected is not None:
+                self._ent_deselect()
+                return True
             if self.tool == "select" and (self._sel_start is not None or self._sel_end is not None):
                 self._sel_cancel()
                 return True
             self.aimed = None
+            return True
+
+        # Entity tool: cycle state
+        if key == pygame.K_t and self.tool == "entity":
+            self._ent_cycle_state()
             return True
 
         # Toggle ceiling mode in select tool
@@ -436,6 +452,9 @@ class Zone3DEditor(
             return True
         if key == pygame.K_j:
             self.show_ceilings = not self.show_ceilings
+            return True
+        if key == pygame.K_n:
+            self.show_entities = not self.show_entities
             return True
         if key == pygame.K_BACKSLASH:
             self.wireframe = not self.wireframe
@@ -512,6 +531,22 @@ class Zone3DEditor(
                 self._stamp_capture_begin()
             return True
 
+        if tool == "entity":
+            aimed_ent = self._ent_find_aimed()
+            if btn == 1:
+                if aimed_ent is not None:
+                    self._ent_select(aimed_ent)
+                elif self._ent_selected is not None:
+                    self._ent_move_to_aimed()
+                else:
+                    self._ent_place()
+            elif btn == 3:
+                if aimed_ent is not None:
+                    self._ent_delete(aimed_ent)
+                elif self._ent_selected is not None:
+                    self._ent_deselect()
+            return True
+
         return False
 
     def _on_mouseup(self, event: pygame.event.Event) -> bool:
@@ -535,6 +570,14 @@ class Zone3DEditor(
 
         if tool == "stamp":
             self._stamp_cycle(event.y)
+            return True
+
+        if tool == "entity":
+            shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
+            if shift and self._ent_selected is not None:
+                self._ent_rotate(event.y)
+            else:
+                self._ent_cycle_palette(event.y)
             return True
 
         if tool == "select":

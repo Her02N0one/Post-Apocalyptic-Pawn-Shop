@@ -69,6 +69,14 @@ _PREFAB_TEX_MAP = {
     "lantern": "metal",
 }
 
+# Facing direction string → angle in radians (matches components.Facing)
+_FACING_ANGLES: dict[str, float] = {
+    "up":    math.pi * 1.5,
+    "down":  math.pi * 0.5,
+    "left":  math.pi,
+    "right": 0.0,
+}
+
 # ═════════════════════════════════════════════════════════════════#  FOG COMPUTATION  (matches scenes/world/fp_lighting.py)
 # ═══════════════════════════════════════════════════════════════════
 
@@ -113,7 +121,7 @@ class RayRenderer:
         *,
         sw: int = 640,
         sh: int = 360,
-        fov: float = math.pi / 3.0,
+        fov: float = math.pi / 2.0,
         dn: float = 1.0,
     ) -> None:
         if not _HAS_C:
@@ -333,9 +341,9 @@ class RayRenderer:
         return cell_solid
 
     def _build_atlas(self, atlas: TextureAtlas, num_tiles: int) -> bytes:
-        """Pack all tile textures into a flat RGB buffer for C."""
+        """Pack all tile textures into a flat RGBA buffer for C."""
         ts = TEX_SIZE
-        tex_bytes = ts * ts * 3
+        tex_bytes = ts * ts * 4
         buf = bytearray(num_tiles * tex_bytes)
 
         for tid_str in TILE_REGISTRY:
@@ -346,9 +354,12 @@ class RayRenderer:
             # Ensure correct size
             if surf.get_size() != (ts, ts):
                 surf = pygame.transform.scale(surf, (ts, ts))
-            # Convert to display format then extract raw RGB
-            surf = surf.convert()
-            raw = pygame.image.tostring(surf, "RGB")
+            # Convert to display format with alpha then extract RGBA
+            try:
+                surf = surf.convert_alpha()
+            except pygame.error:
+                pass
+            raw = pygame.image.tostring(surf, "RGBA")
             offset = tid_int * tex_bytes
             buf[offset : offset + tex_bytes] = raw
 
@@ -636,53 +647,62 @@ class RayRenderer:
         # tan(pitch) * sh gives a screen-space shift that approximates
         # vertical look for moderate angles.
         horizon_shift = int(math.tan(pitch) * self.sh)
-        _c_render_frame(
-            self._fb,
-            px, py, angle, self.fov, cam_h,
-            horizon_shift,
-            self.sw, self.sh,
-            self._map_w, self._map_h,
-            self._tiles_buf,
-            self._wall_buf,
-            self._atlas_buf,
-            TEX_SIZE, self._num_tiles,
-            self._fog_buf,
-            self._fh_buf, self._ch_buf,
-            self._ft_buf, self._ct_buf,
-            self._is_interior,
-            self._thin_buf,
-            self._tall_buf,
-            self._hs_buf,
-            self._face_tex_buf,
-            self._zbuf,
-            self._light_buf,
-            self._alt_tex_buf,
-            self._depth_px,
-            self._trans_buf,
-            self._overlay_buf,
-            self._n_overlay,
+        _c_render_frame({
+            "fb":       self._fb,
+            "cam_x":    px,
+            "cam_y":    py,
+            "cam_angle": angle,
+            "cam_fov":  self.fov,
+            "cam_h":    cam_h,
+            "horizon_shift": horizon_shift,
+            "sw":       self.sw,
+            "sh":       self.sh,
+            "map_w":    self._map_w,
+            "map_h":    self._map_h,
+            "tiles":    self._tiles_buf,
+            "walls":    self._wall_buf,
+            "atlas":    self._atlas_buf,
+            "tex_size": TEX_SIZE,
+            "num_tiles": self._num_tiles,
+            "fog_lut":  self._fog_buf,
+            "floor_h":  self._fh_buf,
+            "ceil_h":   self._ch_buf,
+            "floor_tex": self._ft_buf,
+            "ceil_tex": self._ct_buf,
+            "is_interior": self._is_interior,
+            "thin_lut": self._thin_buf,
+            "tall_lut": self._tall_buf,
+            "hs_lut":   self._hs_buf,
+            "face_tex": self._face_tex_buf,
+            "zbuf":     self._zbuf,
+            "light":    self._light_buf,
+            "alt_tex":  self._alt_tex_buf,
+            "depth_px": self._depth_px,
+            "trans_lut": self._trans_buf,
+            "overlay":  self._overlay_buf,
+            "n_overlay": self._n_overlay,
             # Wall-segment stacked textures
-            self._seg_off_buf,
-            self._seg_cnt_buf,
-            self._seg_tex_buf,
-            self._seg_ytop_buf,
-            self._n_total_segs,
-            self._vscale_buf,
+            "seg_off":  self._seg_off_buf,
+            "seg_cnt":  self._seg_cnt_buf,
+            "seg_tex":  self._seg_tex_buf,
+            "seg_ytop": self._seg_ytop_buf,
+            "n_total_segs": self._n_total_segs,
+            "vscale":   self._vscale_buf,
             # Step-wall per-face textures + segments
-            self._fstep_tex_buf,
-            self._cstep_tex_buf,
-            self._uwh_buf,
-            self._fstep_seg_off_buf,
-            self._fstep_seg_cnt_buf,
-            self._fstep_seg_tex_buf,
-            self._fstep_seg_ytop_buf,
-            self._n_fstep_segs,
-            self._cstep_seg_off_buf,
-            self._cstep_seg_cnt_buf,
-            self._cstep_seg_tex_buf,
-            self._cstep_seg_ytop_buf,
-            self._n_cstep_segs,
-        )
+            "fstep_tex": self._fstep_tex_buf,
+            "cstep_tex": self._cstep_tex_buf,
+            "uwh":      self._uwh_buf,
+            "fstep_seg_off":  self._fstep_seg_off_buf,
+            "fstep_seg_cnt":  self._fstep_seg_cnt_buf,
+            "fstep_seg_tex":  self._fstep_seg_tex_buf,
+            "fstep_seg_ytop": self._fstep_seg_ytop_buf,
+            "n_fstep_segs":   self._n_fstep_segs,
+            "cstep_seg_off":  self._cstep_seg_off_buf,
+            "cstep_seg_cnt":  self._cstep_seg_cnt_buf,
+            "cstep_seg_tex":  self._cstep_seg_tex_buf,
+            "cstep_seg_ytop": self._cstep_seg_ytop_buf,
+            "n_cstep_segs":   self._n_cstep_segs,
+        })
         return self._surf
 
     def render_entities(
@@ -698,9 +718,39 @@ class RayRenderer:
         if not entities:
             return
 
-        # Build packed entity data: [x, y, r, g, b, h_scale, w_scale, tex_id]
+        # Build packed entity data (12 doubles per entity):
+        # [x, y, r, g, b, h_scale, w_scale, base_tex,
+        #  facing_angle, n_facings, anim_offset, flags]
         ent_list: list[float] = []
         for e in entities:
+            # ── New format: type / x / y / angle ──────────────
+            if "type" in e and "x" in e:
+                from core.entity_defs import get_entity_def as _get_edef
+                edef = _get_edef(e["type"])
+                if edef:
+                    color = edef.color
+                    h_scale = edef.scale * 0.6
+                    w_scale = edef.scale * 0.4
+                else:
+                    color = (200, 200, 200)
+                    h_scale, w_scale = 0.6, 0.4
+                ent_list.extend([
+                    float(e["x"]),
+                    float(e["y"]),
+                    float(color[0]),
+                    float(color[1]),
+                    float(color[2]),
+                    h_scale,
+                    w_scale,
+                    -1.0,                          # base_tex (flat colour)
+                    float(e.get("angle", 0.0)),    # facing
+                    1.0,                            # n_facings
+                    0.0,                            # anim_offset
+                    0.0,                            # flags
+                ])
+                continue
+
+            # ── Legacy format: position / sprite / prefab ─────
             pos = e.get("position")
             if not pos:
                 continue
@@ -726,18 +776,42 @@ class RayRenderer:
                     except Exception:
                         pass
 
+            # Multi-facing sprite support
+            facing_angle = 0.0
+            n_facings = 1.0
+            anim_offset = 0.0
+            flags = 0.0
+            bb_mode = spr.get("billboard_mode", 0)
+            if bb_mode == 1:
+                # 8-way directional billboard
+                n_facings = 8.0
+                fc = e.get("facing", {})
+                facing_dir = fc.get("direction", "down") if fc else "down"
+                facing_angle = _FACING_ANGLES.get(facing_dir, math.pi * 0.5)
+                # Resolve base texture from sprite_key prefix
+                sprite_key = spr.get("sprite_key", "")
+                if sprite_key:
+                    try:
+                        tex_id = float(tile_str_to_int(sprite_key + "_0"))
+                    except Exception:
+                        pass  # keep whatever tex_id was resolved above
+
             ent_list.extend([
                 float(pos.get("x", 0)),
                 float(pos.get("y", 0)),
                 float(color[0]),
                 float(color[1]),
                 float(color[2]),
-                0.6,      # h_scale (entity height relative to wall)
-                0.4,      # w_scale (entity width relative to wall)
-                tex_id,   # texture atlas ID (-1 = flat colour)
+                0.6,            # h_scale
+                0.4,            # w_scale
+                tex_id,         # base_tex (atlas ID, -1 = flat colour)
+                facing_angle,   # entity facing direction (radians)
+                n_facings,      # number of facing textures (1=static)
+                anim_offset,    # animation frame offset
+                flags,          # reserved
             ])
 
-        n_ents = len(ent_list) // 8
+        n_ents = len(ent_list) // 12
         if n_ents == 0:
             return
 
@@ -750,19 +824,24 @@ class RayRenderer:
         plane_x = -dir_y * tan_hf
         plane_y = dir_x * tan_hf
 
-        _c_render_entities(
-            self._fb,
-            self.sw, self.sh,
-            px, py,
-            dir_x, dir_y,
-            plane_x, plane_y,
-            self._depth_px,
-            self._fog_buf,
-            self._atlas_buf,
-            TEX_SIZE, self._num_tiles,
-            ent_buf,
-            n_ents,
-        )
+        _c_render_entities({
+            "fb":        self._fb,
+            "sw":        self.sw,
+            "sh":        self.sh,
+            "cam_x":     px,
+            "cam_y":     py,
+            "dir_x":     dir_x,
+            "dir_y":     dir_y,
+            "plane_x":   plane_x,
+            "plane_y":   plane_y,
+            "depth_px":  self._depth_px,
+            "fog_lut":   self._fog_buf,
+            "atlas":     self._atlas_buf,
+            "tex_size":  TEX_SIZE,
+            "num_tiles": self._num_tiles,
+            "ent_data":  ent_buf,
+            "n_ents":    n_ents,
+        })
 
     # ──────────────────────────────────────────────────────────────
     #  Collision helpers (for the demo)

@@ -29,6 +29,7 @@ class UndoMixin:
             "ceil_step_segments": copy.deepcopy(z.ceil_step_segments),
             "light_levels": copy.deepcopy(z.light_levels) if z.light_levels else None,
             "rotations": copy.deepcopy(z.rotations) if z.rotations else None,
+            "entities": copy.deepcopy(z.entities) if z.entities else [],
         }
 
     def _restore(self, snap: dict) -> None:
@@ -54,6 +55,8 @@ class UndoMixin:
             z.light_levels = snap["light_levels"]
         if snap.get("rotations") is not None:
             z.rotations = snap["rotations"]
+        if "entities" in snap:
+            z.entities = snap["entities"]
         self.dirty = True
 
     def _push_undo(self) -> None:

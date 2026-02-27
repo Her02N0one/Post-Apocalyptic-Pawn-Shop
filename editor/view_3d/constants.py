@@ -52,14 +52,15 @@ COL_TOOL_CEILING = (120, 160, 220)
 COL_TOOL_PAINT   = (200, 120, 220)
 COL_TOOL_SEGMENT = (255, 180, 60)
 COL_TOOL_SELECT  = (255, 220, 100)
+COL_TOOL_ENTITY  = (60, 200, 255)
 COL_FACE_HL      = (255, 255, 255, 90)  # face highlight overlay alpha
 
 # ─── Tool definitions ─────────────────────────────────────────────
 # ─── Stamp tool colour ────────────────────────────────────────────
 COL_TOOL_STAMP   = (180, 140, 255)
 
-# 3 core tools (F-keys / Tab) + 2 utility modes (letter keys)
-TOOLS = ("sculpt", "paint", "segment")
+# Core tools (F-keys / Tab) + utility modes (letter keys)
+TOOLS = ("sculpt", "paint", "segment", "entity")
 UTIL_TOOLS = ("select", "stamp")
 ALL_TOOLS = TOOLS + UTIL_TOOLS
 
@@ -67,6 +68,7 @@ TOOL_LABELS = {
     "sculpt":  "SCULPT",
     "paint":   "PAINT",
     "segment": "DETAIL",
+    "entity":  "ENTITY",
     "select":  "SELECT",
     "stamp":   "PRESET",
 }
@@ -74,6 +76,7 @@ TOOL_COLORS = {
     "sculpt":  COL_TOOL_WALL,
     "paint":   COL_TOOL_PAINT,
     "segment": COL_TOOL_SEGMENT,
+    "entity":  COL_TOOL_ENTITY,
     "select":  COL_TOOL_SELECT,
     "stamp":   COL_TOOL_STAMP,
 }
@@ -82,6 +85,7 @@ TOOL_KEYS = {
     pygame.K_F5: "sculpt",
     pygame.K_F6: "paint",
     pygame.K_F7: "segment",
+    pygame.K_F8: "entity",
 }
 # Letter key → utility mode (toggles in/out)
 UTIL_KEYS = {
@@ -176,6 +180,18 @@ TOOL_HINTS = {
             },
         },
         "keys": "M=cycle mode  P=exit preset",
+    },
+    "entity": {
+        "title": "Entity",
+        "actions": {
+            "any": {
+                "LMB": "Place / select / move",
+                "RMB": "Delete / deselect",
+                "Scroll": "Cycle entity type",
+                "Sh+Scrl": "Rotate selected",
+            },
+        },
+        "keys": "Del=delete  T=cycle state  Esc=deselect",
     },
 }
 

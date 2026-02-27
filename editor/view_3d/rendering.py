@@ -93,6 +93,7 @@ class RenderingMixin:
         self._draw_cell_boxes(surface, vp, hw, hh, zone, W, H)
         self._draw_surface_markers(surface, vp, hw, hh, zone, W, H)
         self._draw_seg_boundary_rings(surface, vp, hw, hh, zone, W, H)
+        self._draw_entities(surface, vp, hw, hh, zone)
         self._draw_selection_highlight(surface, vp, hw, hh, zone)
         self._draw_face_hl_and_preview(surface, vp, hw, hh, sw, sh)
         self._draw_crosshair(surface, sw, sh)
@@ -111,6 +112,101 @@ class RenderingMixin:
         self._line3d(surface, vp, hw, hh, 0, 0, 0, 2, 0, 0, COL_AXIS_X, 2)
         self._line3d(surface, vp, hw, hh, 0, 0, 0, 0, 2, 0, COL_AXIS_Y, 2)
         self._line3d(surface, vp, hw, hh, 0, 0, 0, 0, 0, 2, COL_AXIS_Z, 2)
+
+    # ── Entity markers ────────────────────────────────────────────
+
+    # Default colour for entity markers (warm amber)
+    _COL_ENT_DEFAULT = (255, 180, 60)
+    # Selection highlight colour (bright cyan)
+    _COL_ENT_SELECTED = (60, 255, 255)
+    # Marker half-width (world units)
+    _ENT_MARKER_R = 0.15
+    # Marker vertical bar half-height
+    _ENT_MARKER_H = 0.30
+
+    def _draw_entities(self, surface, vp, hw, hh, zone):
+        """Draw diamond-shaped markers at each entity's position."""
+        if not getattr(self, 'show_entities', True):
+            return
+        entities = getattr(zone, 'entities', None)
+        if not entities:
+            return
+
+        from core.entity_defs import get_entity_def
+
+        r = self._ENT_MARKER_R
+        L = self._line3d
+        selected_idx = getattr(self, '_ent_selected', None)
+
+        for i, ent in enumerate(entities):
+            # Resolve position — new format (x/y) or legacy (position dict)
+            if "x" in ent:
+                ex = float(ent["x"])
+                ez = float(ent["y"])
+            else:
+                pos = ent.get("position")
+                if not pos:
+                    continue
+                ex = float(pos.get("x", 0))
+                ez = float(pos.get("y", 0))
+
+            # Resolve floor height at entity cell
+            ci = max(0, min(zone.width - 1, int(ex)))
+            ri = max(0, min(zone.height - 1, int(ez)))
+            fh = zone.floor_heights[ri][ci] if zone.floor_heights else 0.0
+
+            # Resolve colour from entity_defs, sprite data, or default
+            edef = get_entity_def(ent.get("type", ""))
+            if edef:
+                col = edef.color
+                scale = edef.scale
+            else:
+                spr = ent.get("sprite", {})
+                color = spr.get("color")
+                if color and len(color) >= 3:
+                    col = (int(color[0]), int(color[1]), int(color[2]))
+                else:
+                    col = self._COL_ENT_DEFAULT
+                scale = 0.5
+
+            # Override colour + width for selected entity
+            is_sel = (selected_idx is not None and i == selected_idx)
+            draw_col = self._COL_ENT_SELECTED if is_sel else col
+            lw = 3 if is_sel else 2
+            mh = scale * 0.5
+
+            ey = fh  # base Y = floor height
+
+            # Horizontal diamond (X-Z plane) at floor level
+            L(surface, vp, hw, hh, ex - r, ey, ez, ex, ey, ez - r, draw_col, lw)
+            L(surface, vp, hw, hh, ex, ey, ez - r, ex + r, ey, ez, draw_col, lw)
+            L(surface, vp, hw, hh, ex + r, ey, ez, ex, ey, ez + r, draw_col, lw)
+            L(surface, vp, hw, hh, ex, ey, ez + r, ex - r, ey, ez, draw_col, lw)
+
+            # Vertical bar from floor to marker height
+            top = ey + mh * 2
+            L(surface, vp, hw, hh, ex, ey, ez, ex, top, ez, draw_col, lw)
+
+            # Top diamond
+            L(surface, vp, hw, hh, ex - r, top, ez, ex, top, ez - r, draw_col, lw)
+            L(surface, vp, hw, hh, ex, top, ez - r, ex + r, top, ez, draw_col, lw)
+            L(surface, vp, hw, hh, ex + r, top, ez, ex, top, ez + r, draw_col, lw)
+            L(surface, vp, hw, hh, ex, top, ez + r, ex - r, top, ez, draw_col, lw)
+
+            # Vertical edges connecting top and bottom diamonds
+            L(surface, vp, hw, hh, ex - r, ey, ez, ex - r, top, ez, draw_col, 1)
+            L(surface, vp, hw, hh, ex + r, ey, ez, ex + r, top, ez, draw_col, 1)
+            L(surface, vp, hw, hh, ex, ey, ez - r, ex, top, ez - r, draw_col, 1)
+            L(surface, vp, hw, hh, ex, ey, ez + r, ex, top, ez + r, draw_col, 1)
+
+            # Facing direction line for directional entities
+            if edef and edef.directional:
+                angle = float(ent.get("angle", 0.0))
+                dx = math.cos(angle) * r * 2.5
+                dz = -math.sin(angle) * r * 2.5  # -sin: Z is flipped in 3D
+                mid_y = ey + mh
+                L(surface, vp, hw, hh,
+                  ex, mid_y, ez, ex + dx, mid_y, ez + dz, draw_col, 2)
 
     def _draw_cell_boxes(self, surface, vp, hw, hh, zone, W, H):
         aimed = self.aimed

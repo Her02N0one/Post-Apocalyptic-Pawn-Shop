@@ -9,6 +9,7 @@ import imgui
 
 from core.tiles import tile_def, TILE_COLORS
 from core.presets import PRESET_REGISTRY
+from core.entity_defs import entity_palette as _entity_palette, get_entity_def, angle_to_label
 from editor.view_3d import (
     TOOLS, UTIL_TOOLS, TOOL_LABELS, TOOL_COLORS,
     TOOL_HINTS, SNAP_Y_OPTIONS, _ensure_palette,
@@ -237,6 +238,8 @@ class PanelsMixin:
                         "Show Floors", "F", self.editor_3d.show_floors)
                     _, self.editor_3d.show_ceilings = imgui.menu_item(
                         "Show Ceilings", "J", self.editor_3d.show_ceilings)
+                    _, self.editor_3d.show_entities = imgui.menu_item(
+                        "Show Entities", "N", self.editor_3d.show_entities)
                     imgui.separator()
                     _, self.editor_3d.wireframe = imgui.menu_item(
                         "Wireframe", "\\", self.editor_3d.wireframe)
@@ -291,11 +294,12 @@ class PanelsMixin:
         self._section_header("\u2581 TOOLS", 0.65, 0.75, 0.95, pad_top=False)
         avail_w = imgui.get_content_region_available()[0]
 
-        # Core tools row (3 buttons)
-        btn_w = (avail_w - 2 * spacing_x) / 3.0
-        fkey_labels = {0: "F5", 1: "F6", 2: "F7"}
+        # Core tools: 2 rows of 2 (4 tools)
+        n_cols = 2
+        btn_w = (avail_w - (n_cols - 1) * spacing_x) / n_cols
+        fkey_labels = {0: "F5", 1: "F6", 2: "F7", 3: "F8"}
         for i, tool_name in enumerate(TOOLS):
-            if i % 3 != 0:
+            if i % n_cols != 0:
                 imgui.same_line()
             is_active = ed.tool == tool_name
             r, g, b = [c / 255.0 for c in TOOL_COLORS[tool_name]]
@@ -374,11 +378,14 @@ class PanelsMixin:
         tool_name = ed.tool
         uses_texture = tool_name in ("paint", "segment", "select")
         uses_preset = tool_name == "stamp"
+        uses_entity = tool_name == "entity"
 
         if uses_texture:
             self._draw_texture_palette(ed)
         elif uses_preset:
             self._draw_preset_palette(ed)
+        elif uses_entity:
+            self._draw_entity_palette(ed)
 
     def _draw_texture_palette(self, ed) -> None:
         self._section_header("\u2581 BRUSH", 0.75, 0.55, 0.85)
@@ -446,6 +453,76 @@ class PanelsMixin:
             imgui.end_child()
         else:
             imgui.text_colored("No presets loaded", 0.5, 0.5, 0.5, 1.0)
+
+    def _draw_entity_palette(self, ed) -> None:
+        """Draw entity type palette for the entity tool."""
+        self._section_header("\u2581 ENTITY", 0.25, 0.78, 1.0)
+        pal = _entity_palette()
+        if not pal:
+            imgui.text_colored("No entity defs loaded", 0.5, 0.5, 0.5, 1.0)
+            return
+
+        cur_type = ed._ent_current_type()
+        edef = get_entity_def(cur_type)
+        cur_idx = ed._ent_type_idx % len(pal) if pal else 0
+
+        # Current entity preview
+        if edef:
+            r0, g0, b0 = edef.color[0] / 255.0, edef.color[1] / 255.0, edef.color[2] / 255.0
+            imgui.color_button("##curent_big", r0, g0, b0, 1.0, 0, 20, 20)
+            imgui.same_line()
+            imgui.text_colored(edef.display_name, 0.95, 0.90, 0.75, 1.0)
+            imgui.same_line()
+            imgui.text_disabled(f"({cur_idx + 1}/{len(pal)})")
+            imgui.text_disabled(f"  {edef.category}")
+            if edef.directional:
+                imgui.same_line()
+                imgui.text_colored("\u27a4", 0.6, 0.8, 1.0, 1.0)
+        else:
+            imgui.text(cur_type)
+
+        # Selected entity quick info
+        if ed._ent_selected is not None and self.zone and self.zone.entities:
+            idx = ed._ent_selected
+            if 0 <= idx < len(self.zone.entities):
+                ent = self.zone.entities[idx]
+                imgui.spacing()
+                imgui.text_colored("\u25b8 Selected", 0.3, 0.9, 1.0, 1.0)
+                imgui.same_line()
+                imgui.text_disabled(ent.get("type", "?"))
+
+        # Scrollable palette list
+        remaining = imgui.get_content_region_available()[1]
+        list_h = max(80, min(220, remaining - 200))
+        child_w = imgui.get_content_region_available()[0]
+        imgui.begin_child("##entlist", child_w, list_h, border=True)
+        prev_cat = None
+        for pi, etype in enumerate(pal):
+            ed2 = get_entity_def(etype)
+            if not ed2:
+                continue
+            # Category separator
+            if ed2.category != prev_cat:
+                if prev_cat is not None:
+                    imgui.separator()
+                imgui.text_disabled(ed2.category.upper())
+                prev_cat = ed2.category
+            # Color swatch + name
+            pr, pg, pb = ed2.color[0] / 255.0, ed2.color[1] / 255.0, ed2.color[2] / 255.0
+            imgui.color_button(f"##e{pi}", pr, pg, pb, 1.0, 0, 12, 12)
+            imgui.same_line()
+            is_sel = pi == cur_idx
+            clicked, _ = imgui.selectable(f"{ed2.display_name}##ent{pi}", is_sel)
+            if clicked:
+                ed._ent_type_idx = pi
+            if is_sel and (self.mouse_captured or imgui.is_window_appearing()):
+                imgui.set_scroll_here_y(0.5)
+        imgui.end_child()
+
+        # Entity count
+        if self.zone:
+            n = len(self.zone.entities) if self.zone.entities else 0
+            imgui.text_disabled(f"{n} entities in zone")
 
     def _draw_controls_section(self, ed) -> None:
         hint = TOOL_HINTS.get(ed.tool, {})
@@ -518,7 +595,18 @@ class PanelsMixin:
         _, ed.show_ceilings = imgui.checkbox("Ceilings (J)", ed.show_ceilings)
         imgui.same_line(half_w)
         _, ed.show_axes = imgui.checkbox("Axes", ed.show_axes)
+        _, ed.show_entities = imgui.checkbox("Entities (N)", ed.show_entities)
+        imgui.same_line(half_w)
         _, ed.wireframe = imgui.checkbox("Wireframe (\\)", ed.wireframe)
+
+        # FOV slider (visible in raycaster preview mode)
+        if self.view_mode == "2d" and self.renderer:
+            imgui.spacing()
+            fov_deg = math.degrees(self.renderer.fov)
+            changed, fov_deg = imgui.slider_float(
+                "FOV", fov_deg, 45.0, 120.0, "%.0f\u00b0")
+            if changed:
+                self.renderer.fov = math.radians(fov_deg)
 
     def _draw_view_mode_button(self) -> None:
         imgui.spacing()
@@ -568,6 +656,12 @@ class PanelsMixin:
         imgui.same_line()
         imgui.text_disabled(f"{zone.width} x {zone.height}")
         imgui.separator()
+
+        # Entity inspector (when entity tool active and entity selected)
+        if (self.editor_3d and self.editor_3d.tool == "entity"
+                and self.editor_3d._ent_selected is not None
+                and zone.entities):
+            self._draw_entity_inspector(zone)
 
         # Cell inspector
         if self.editor_3d and self.editor_3d.aimed:
@@ -708,6 +802,75 @@ class PanelsMixin:
                 imgui.same_line(55)
                 imgui.text(cur if cur else "\u2014")
 
+    def _draw_entity_inspector(self, zone) -> None:
+        """Draw inspector for the currently selected entity."""
+        ed = self.editor_3d
+        idx = ed._ent_selected
+        if idx is None or idx < 0 or idx >= len(zone.entities):
+            return
+        ent = zone.entities[idx]
+        etype = ent.get("type", "unknown")
+        edef = get_entity_def(etype)
+
+        opened, _ = imgui.collapsing_header(
+            f"Entity: {etype}##entinsp", imgui.TREE_NODE_DEFAULT_OPEN)
+        if not opened:
+            return
+
+        # Type + color
+        if edef:
+            r0, g0, b0 = edef.color[0] / 255.0, edef.color[1] / 255.0, edef.color[2] / 255.0
+            imgui.color_button("##einsp_col", r0, g0, b0, 1.0, 0, 14, 14)
+            imgui.same_line()
+            imgui.text_colored(edef.display_name, 0.95, 0.90, 0.75, 1.0)
+        else:
+            imgui.text(etype)
+
+        # ID
+        imgui.text_disabled("ID")
+        imgui.same_line(55)
+        imgui.text(ent.get("id", "?"))
+
+        # Position
+        imgui.columns(2, "##einsp_pos", False)
+        imgui.set_column_width(0, 55)
+        imgui.text_disabled("X")
+        imgui.next_column()
+        imgui.text(f"{ent.get('x', 0):.3f}")
+        imgui.next_column()
+        imgui.text_disabled("Y")
+        imgui.next_column()
+        imgui.text(f"{ent.get('y', 0):.3f}")
+        imgui.columns(1)
+
+        # Angle
+        angle = float(ent.get("angle", 0.0))
+        deg = math.degrees(angle)
+        label = angle_to_label(angle)
+        imgui.text_disabled("Angle")
+        imgui.same_line(55)
+        imgui.text(f"{deg:.0f}\u00b0 ({label})")
+        if edef and edef.directional:
+            imgui.same_line()
+            imgui.text_colored("\u27a4", 0.6, 0.8, 1.0, 1.0)
+
+        # State
+        state = ent.get("state", "default")
+        imgui.text_disabled("State")
+        imgui.same_line(55)
+        imgui.text(state)
+        if edef and len(edef.states) > 1:
+            imgui.same_line()
+            imgui.text_disabled(f"({'/'.join(edef.states)})")
+
+        # Scale (from def)
+        if edef:
+            imgui.text_disabled("Scale")
+            imgui.same_line(55)
+            imgui.text(f"{edef.scale:.2f}")
+
+        imgui.separator()
+
     def _draw_zone_settings(self, zone) -> None:
         if not imgui.collapsing_header("Zone Settings", imgui.TREE_NODE_DEFAULT_OPEN)[0]:
             return
@@ -828,6 +991,12 @@ class PanelsMixin:
                     pname = preset.name if preset else "?"
                     imgui.same_line()
                     imgui.text_disabled(f"  Preset:{pname}")
+                elif ed.tool == "entity":
+                    imgui.same_line()
+                    imgui.text_disabled(f"  Ent:{ed._ent_current_type()}")
+                    if ed._ent_selected is not None:
+                        imgui.same_line()
+                        imgui.text_colored("SEL", 0.3, 0.9, 1.0, 1.0)
 
                 if ed.aimed:
                     imgui.same_line()

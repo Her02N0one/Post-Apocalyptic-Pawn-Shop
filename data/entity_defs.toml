@@ -1,0 +1,141 @@
+# Entity Definitions — rendering & editor placement properties.
+#
+# Each entry defines a placeable entity type.  Only visual/placement
+# data lives here; gameplay logic (ECS components, AI, etc.) is
+# separate and resolved at runtime.
+#
+# Fields:
+#   display_name  — Human-readable label
+#   category      — Grouping for the editor palette
+#   color         — [R, G, B] flat-colour fallback (0-255)
+#   scale         — Height in world units (also drives billboard size)
+#   directional   — Whether the entity has facing-dependent visuals
+#   states        — Visual state keys (texture/animation variants)
+
+[barrel]
+display_name = "Barrel"
+category     = "props"
+color        = [120, 90, 60]
+scale        = 0.5
+directional  = false
+states       = ["default", "exploded"]
+
+[wooden_crate]
+display_name = "Wooden Crate"
+category     = "props"
+color        = [160, 120, 80]
+scale        = 0.6
+directional  = false
+states       = ["default", "broken"]
+
+[old_tv]
+display_name = "Old Television"
+category     = "props"
+color        = [60, 60, 70]
+scale        = 0.4
+directional  = false
+states       = ["default", "static", "off"]
+
+[street_lamp]
+display_name = "Street Lamp"
+category     = "props"
+color        = [200, 200, 150]
+scale        = 1.2
+directional  = false
+states       = ["default", "on", "broken"]
+
+[dumpster]
+display_name = "Dumpster"
+category     = "props"
+color        = [70, 90, 60]
+scale        = 0.7
+directional  = true
+states       = ["default", "open"]
+
+[pine_tree]
+display_name = "Pine Tree"
+category     = "nature"
+color        = [40, 120, 50]
+scale        = 1.2
+directional  = false
+states       = ["default", "burning", "dead"]
+
+[dead_tree]
+display_name = "Dead Tree"
+category     = "nature"
+color        = [100, 80, 55]
+scale        = 1.0
+directional  = false
+states       = ["default"]
+
+[bush]
+display_name = "Bush"
+category     = "nature"
+color        = [50, 100, 40]
+scale        = 0.4
+directional  = false
+states       = ["default"]
+
+[survivor_npc]
+display_name = "Survivor NPC"
+category     = "characters"
+color        = [100, 220, 160]
+scale        = 1.0
+directional  = true
+states       = ["default", "hostile", "dead"]
+
+[guard_npc]
+display_name = "Guard NPC"
+category     = "characters"
+color        = [180, 140, 100]
+scale        = 1.0
+directional  = true
+states       = ["default", "alert", "dead"]
+
+[beast]
+display_name = "Beast"
+category     = "characters"
+color        = [200, 60, 60]
+scale        = 0.8
+directional  = true
+states       = ["default", "aggro", "dead"]
+
+[door_keypad]
+display_name = "Door Keypad"
+category     = "interactive"
+color        = [100, 200, 100]
+scale        = 0.3
+directional  = true
+states       = ["locked", "unlocked", "broken"]
+
+[switch_lever]
+display_name = "Switch / Lever"
+category     = "interactive"
+color        = [180, 180, 80]
+scale        = 0.3
+directional  = true
+states       = ["off", "on"]
+
+[loot_socket]
+display_name = "Loot Socket"
+category     = "gameplay"
+color        = [255, 200, 60]
+scale        = 0.5
+directional  = false
+states       = ["default", "empty"]
+
+[spawn_point]
+display_name = "Spawn Point"
+category     = "gameplay"
+color        = [60, 200, 255]
+scale        = 0.3
+directional  = true
+states       = ["default"]
+
+[trigger_zone]
+display_name = "Trigger Zone"
+category     = "gameplay"
+color        = [255, 100, 255]
+scale        = 0.3
+directional  = false
+states       = ["default", "triggered"]
