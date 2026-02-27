@@ -436,7 +436,7 @@ class RenderingMixin:
         if self.tool == "stamp":
             preset = self._stamp_current()
             pname = preset.name if preset else "(none)"
-            lines.append((f"Model: {pname}", (180, 140, 255)))
+            lines.append((f"Preset: {pname}", (180, 140, 255)))
             mode_str = getattr(self, '_stamp_current_mode', lambda: "replace")()
             lines.append((f"Mode: {mode_str}  (M)", (160, 200, 255)))
             if getattr(self, '_capture_pending', False):

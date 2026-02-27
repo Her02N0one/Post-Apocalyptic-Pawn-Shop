@@ -598,11 +598,19 @@ def _freeze_seg(seg4: list[list]) -> tuple:
 
 
 def _deep_copy_seg(seg4: tuple | list) -> list[list]:
-    """Convert frozen segments back to mutable lists for zone storage."""
-    return [
+    """Convert frozen segments back to mutable lists for zone storage.
+
+    Always returns exactly 4 face lists, padding with empty lists if
+    the source has fewer (guards against malformed TOML).
+    """
+    result = [
         [list(entry) for entry in face]
         for face in seg4
     ]
+    # Ensure exactly 4 faces (N, S, E, W)
+    while len(result) < 4:
+        result.append([])
+    return result[:4]
 
 
 def _parse_seg_field(d: dict, key: str) -> tuple | None:

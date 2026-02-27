@@ -15,6 +15,36 @@ from editor.view_3d.cell_ops import reset_cell
 class SculptMixin:
     """Floor/ceiling sculpting, cell conversion, and upper-wall adjustment."""
 
+    # ── Tile-type sync ─────────────────────────────────────────────
+
+    def _sync_tile_type(self, r: int, c: int) -> None:
+        """Re-derive tile type from geometry after a height change.
+
+        When the floor/ceiling gap opens (>= 0.1) a wall cell becomes
+        open; when it closes (< 0.1) an open cell becomes a wall.
+        This keeps rendering consistent with the sculpted geometry
+        without requiring a manual reset.
+        """
+        zone = self.zone
+        fh = zone.floor_heights[r][c]
+        ch = zone.ceil_heights[r][c]
+        td = tile_def(zone.tiles[r][c])
+        is_wall = td and td.wall
+        gap = ch - fh
+
+        if gap < 0.1 and not is_wall:
+            self._make_wall(r, c)
+        elif gap >= 0.1 and is_wall:
+            # Convert to open without resetting heights —
+            # only change the tile string and clear wall data.
+            zone.tiles[r][c] = self._open_tile
+            if zone.face_textures and len(zone.face_textures) > r:
+                zone.face_textures[r][c] = ["", "", "", ""]
+            if zone.wall_textures and len(zone.wall_textures) > r:
+                zone.wall_textures[r][c] = ""
+            if zone.wall_segments and len(zone.wall_segments) > r:
+                zone.wall_segments[r][c] = [[], [], [], []]
+
     # ── Floor raise / lower ───────────────────────────────────────
 
     def _tool_floor_raise(self) -> None:
@@ -49,6 +79,7 @@ class SculptMixin:
             segs = zone.floor_step_segments[r][c][fi]
             if segs:
                 segs[-1][1] = max(0.0, new_fh)
+        self._sync_tile_type(r, c)
         self.dirty = True
 
     def _tool_floor_lower(self) -> None:
@@ -69,6 +100,7 @@ class SculptMixin:
         zone.floor_heights[r][c] = new_fh
         # Trim / clear floor step segments
         self._trim_floor_segments(r, c, new_fh)
+        self._sync_tile_type(r, c)
         self.dirty = True
 
     # ── Ceiling lower / raise / delete ────────────────────────────
@@ -92,6 +124,7 @@ class SculptMixin:
         self._push_undo()
         self._ensure_face_textures()
         zone.ceil_heights[r][c] = new_ch
+        self._sync_tile_type(r, c)
         self.dirty = True
 
     def _tool_ceiling_raise(self) -> None:
@@ -113,6 +146,7 @@ class SculptMixin:
         # Sky = no ceiling mass = no ceiling step segments
         if new_ch >= SKY_HEIGHT - 0.01:
             self._clear_ceil_segments(r, c)
+        self._sync_tile_type(r, c)
         self.dirty = True
 
     def _tool_ceiling_delete(self) -> None:
@@ -260,6 +294,35 @@ class SculptMixin:
 
     # ── Scroll-extend floor ───────────────────────────────────────
 
+    def _extend_wall_ceiling(self, r: int, c: int, direction: int) -> None:
+        """Scroll on a wall cell: raise/lower ceiling to open or close it.
+
+        Scroll-up raises the ceiling (creating a gap → opens the wall).
+        Scroll-down lowers the ceiling back toward the floor.
+        Tile type is automatically re-derived after the change.
+        """
+        zone = self.zone
+        fh = zone.floor_heights[r][c]
+        ch = zone.ceil_heights[r][c]
+
+        if direction > 0:
+            # Raise ceiling to open the wall
+            new_ch = min(ch + self.snap_y, SKY_HEIGHT)
+        else:
+            # Lower ceiling toward floor
+            min_ch = fh
+            new_ch = max(ch - self.snap_y, min_ch)
+
+        if abs(new_ch - ch) < 0.001:
+            return
+        self._push_undo()
+        self._ensure_face_textures()
+        zone.ceil_heights[r][c] = new_ch
+        if new_ch >= SKY_HEIGHT - 0.01:
+            self._clear_ceil_segments(r, c)
+        self._sync_tile_type(r, c)
+        self.dirty = True
+
     def _extend_floor(self, r: int, c: int, direction: int) -> None:
         """Scroll-extend: raise/lower floor WITHOUT auto-segmenting.
 
@@ -293,6 +356,7 @@ class SculptMixin:
                     segs[-1][1] = max(0.0, new_fh)
         else:
             self._trim_floor_segments(r, c, new_fh)
+        self._sync_tile_type(r, c)
         self.dirty = True
 
     # ── Floor segment cleanup ───────────────────────────────────────

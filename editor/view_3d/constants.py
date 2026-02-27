@@ -68,7 +68,7 @@ TOOL_LABELS = {
     "paint":   "PAINT",
     "segment": "DETAIL",
     "select":  "SELECT",
-    "stamp":   "MODEL",
+    "stamp":   "PRESET",
 }
 TOOL_COLORS = {
     "sculpt":  COL_TOOL_WALL,
@@ -167,7 +167,7 @@ TOOL_HINTS = {
         "keys": "X=floor/ceil  B=exit select",
     },
     "stamp": {
-        "title": "Model  (P=exit)",
+        "title": "Preset  (P=exit)",
         "actions": {
             "any": {
                 "LMB": "Apply preset",
@@ -175,7 +175,7 @@ TOOL_HINTS = {
                 "Scroll": "Cycle presets",
             },
         },
-        "keys": "M=cycle mode  P=exit model",
+        "keys": "M=cycle mode  P=exit preset",
     },
 }
 

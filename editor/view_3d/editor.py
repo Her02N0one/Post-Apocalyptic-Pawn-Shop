@@ -285,6 +285,12 @@ class Zone3DEditor(
 
     # -- Input handling ---------------------------------------------
 
+    def _leave_tool(self, old_tool: str) -> None:
+        """Clean up state when switching away from *old_tool*."""
+        if old_tool == "stamp":
+            self._capture_pending = False
+            self._capture_name = ""
+
     def handle_event(self, event: pygame.event.Event) -> bool:
         """Route a pygame event to the appropriate handler.  Returns True if consumed."""
         if event.type == pygame.KEYDOWN:
@@ -310,6 +316,7 @@ class Zone3DEditor(
             new_tool = TOOL_KEYS[key]
             if self.tool == "select":
                 self._sel_cancel()
+            self._leave_tool(self.tool)
             self.tool = new_tool
             self._prev_tool = new_tool
             return True
@@ -321,6 +328,7 @@ class Zone3DEditor(
                 # Toggle off → return to previous core tool
                 if target == "select":
                     self._sel_cancel()
+                self._leave_tool(self.tool)
                 self.tool = self._prev_tool
             else:
                 # Enter utility mode, remember what we came from
@@ -328,6 +336,7 @@ class Zone3DEditor(
                     self._prev_tool = self.tool
                 if self.tool == "select":
                     self._sel_cancel()
+                self._leave_tool(self.tool)
                 self.tool = target
             return True
 
@@ -335,6 +344,7 @@ class Zone3DEditor(
         if key == pygame.K_TAB:
             if self.tool == "select":
                 self._sel_cancel()
+            self._leave_tool(self.tool)
             idx = TOOLS.index(self.tool) if self.tool in TOOLS else 0
             self.tool = TOOLS[(idx + 1) % len(TOOLS)]
             self._prev_tool = self.tool
@@ -544,7 +554,14 @@ class Zone3DEditor(
             elif part in ("floor", "wall", "ground"):
                 hit = self.aimed
                 if hit:
-                    self._extend_floor(hit.row, hit.col, event.y)
+                    td_obj = tile_def(self.zone.tiles[hit.row][hit.col])
+                    if td_obj and td_obj.wall:
+                        # Wall cells: scroll raises/lowers ceiling to
+                        # open or close the wall instead of moving the
+                        # floor (which is clamped uselessly on walls).
+                        self._extend_wall_ceiling(hit.row, hit.col, event.y)
+                    else:
+                        self._extend_floor(hit.row, hit.col, event.y)
             else:
                 self.snap_idx = (self.snap_idx + event.y) % len(SNAP_Y_OPTIONS)
                 self.snap_y = SNAP_Y_OPTIONS[self.snap_idx]
