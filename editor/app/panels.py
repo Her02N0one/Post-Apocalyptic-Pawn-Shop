@@ -297,7 +297,7 @@ class PanelsMixin:
         # Core tools: 2 rows of 2 (4 tools)
         n_cols = 2
         btn_w = (avail_w - (n_cols - 1) * spacing_x) / n_cols
-        fkey_labels = {0: "F5", 1: "F6", 2: "F7", 3: "F8"}
+        fkey_labels = {0: "F5", 1: "F6", 2: "F7", 3: "F8", 4: "F9"}
         for i, tool_name in enumerate(TOOLS):
             if i % n_cols != 0:
                 imgui.same_line()
@@ -321,11 +321,16 @@ class PanelsMixin:
             else:
                 imgui.pop_style_color(1)
 
-        # Utility mode row (2 buttons)
-        btn_w2 = (avail_w - spacing_x) / 2.0
-        util_keys_label = {"select": "B", "stamp": "P"}
+        # Utility mode buttons (2-column grid)
+        n_util_cols = 2
+        btn_w2 = (avail_w - spacing_x) / float(n_util_cols)
+        _util_key_labels = {
+            "select": "B", "stamp": "P", "light": "L", "slope": "O",
+            "reflect": "I", "layer2": "K", "quad": "H", "portal": "Y",
+            "curve": ";", "fog": ",",
+        }
         for i, tool_name in enumerate(UTIL_TOOLS):
-            if i > 0:
+            if i % n_util_cols != 0:
                 imgui.same_line()
             is_active = ed.tool == tool_name
             r, g, b = [c / 255.0 for c in TOOL_COLORS[tool_name]]
@@ -336,7 +341,8 @@ class PanelsMixin:
                 imgui.push_style_color(imgui.COLOR_TEXT, 1.0, 1.0, 1.0, 1.0)
             else:
                 imgui.push_style_color(imgui.COLOR_TEXT, 0.55, 0.55, 0.60, 1.0)
-            if imgui.button(f"{util_keys_label[tool_name]} {TOOL_LABELS[tool_name]}##{tool_name}", btn_w2, 24):
+            kl = _util_key_labels.get(tool_name, "?")
+            if imgui.button(f"{kl} {TOOL_LABELS[tool_name]}##{tool_name}", btn_w2, 24):
                 if ed.tool == tool_name:
                     if tool_name == "select":
                         ed._sel_cancel()
@@ -663,6 +669,24 @@ class PanelsMixin:
                 and zone.entities):
             self._draw_entity_inspector(zone)
 
+        # Quad inspector (when quad tool active and quad selected)
+        if (self.editor_3d and self.editor_3d.tool == "quad"
+                and self.editor_3d._quad_selected is not None
+                and zone.quads):
+            self._draw_quad_inspector(zone)
+
+        # Portal inspector (when portal tool active and portal selected)
+        if (self.editor_3d and self.editor_3d.tool == "portal"
+                and self.editor_3d._portal_selected is not None
+                and zone.render_portals):
+            self._draw_portal_inspector(zone)
+
+        # Curve inspector (when curve tool active and curve selected)
+        if (self.editor_3d and self.editor_3d.tool == "curve"
+                and self.editor_3d._curve_selected is not None
+                and zone.curves):
+            self._draw_curve_inspector(zone)
+
         # Cell inspector
         if self.editor_3d and self.editor_3d.aimed:
             self._draw_cell_inspector(zone)
@@ -802,8 +826,141 @@ class PanelsMixin:
                 imgui.same_line(55)
                 imgui.text(cur if cur else "\u2014")
 
+        # ── Per-cell property sections ────────────────────────────
+        self._draw_cell_properties(zone, r, c)
+
+    def _draw_cell_properties(self, zone, r: int, c: int) -> None:
+        """Draw per-cell property sections (light, slope, reflect, layer2, fog)."""
+        pw = self.right_panel_w
+
+        # ── Light Level ───────────────────────────────────────────
+        if zone.light_levels and len(zone.light_levels) > r and len(zone.light_levels[r]) > c:
+            ll = zone.light_levels[r][c]
+            if ll < 0.999 or (self.editor_3d and self.editor_3d.tool == "light"):
+                imgui.spacing()
+                imgui.text_disabled("Light")
+                imgui.same_line(55)
+                bright = min(1.0, ll)
+                imgui.text_colored(f"{ll:.2f}", bright, bright, 0.4 + 0.6 * bright, 1.0)
+                if self.editor_3d and self.editor_3d.tool == "light":
+                    imgui.same_line()
+                    imgui.text_disabled(f"step:{self.editor_3d._light_step:.2f}")
+                    imgui.push_item_width(pw - 80)
+                    changed, new_ll = imgui.slider_float(
+                        "##light_slider", ll, 0.0, 1.0, "%.2f")
+                    imgui.pop_item_width()
+                    if changed:
+                        self.editor_3d._push_undo()
+                        zone.light_levels[r][c] = round(new_ll, 3)
+                        self.dirty = True
+
+        # ── Floor Slope ───────────────────────────────────────────
+        has_slope = False
+        if zone.floor_slope_dx and len(zone.floor_slope_dx) > r:
+            dx = zone.floor_slope_dx[r][c]
+            dy = zone.floor_slope_dy[r][c] if zone.floor_slope_dy else 0.0
+            if abs(dx) > 0.001 or abs(dy) > 0.001 or (self.editor_3d and self.editor_3d.tool == "slope"):
+                has_slope = True
+                imgui.spacing()
+                imgui.text_disabled("Slope")
+                imgui.same_line(55)
+                imgui.text(f"dx:{dx:.2f}  dy:{dy:.2f}")
+                if self.editor_3d and self.editor_3d.tool == "slope":
+                    axis = self.editor_3d._slope_axis
+                    imgui.same_line()
+                    imgui.text_colored(f"[{axis}]", 0.5, 0.9, 0.5, 1.0)
+                    imgui.push_item_width(pw - 80)
+                    if axis == "dx":
+                        changed, new_dx = imgui.slider_float(
+                            "##slope_dx", dx, -2.0, 2.0, "%.2f")
+                        if changed:
+                            self.editor_3d._push_undo()
+                            zone.floor_slope_dx[r][c] = round(new_dx, 3)
+                            self.dirty = True
+                    else:
+                        changed, new_dy = imgui.slider_float(
+                            "##slope_dy", dy, -2.0, 2.0, "%.2f")
+                        if changed:
+                            self.editor_3d._push_undo()
+                            zone.floor_slope_dy[r][c] = round(new_dy, 3)
+                            self.dirty = True
+                    imgui.pop_item_width()
+
+        # ── Reflectivity ──────────────────────────────────────────
+        if zone.reflect_map and len(zone.reflect_map) > r and len(zone.reflect_map[r]) > c:
+            rv = zone.reflect_map[r][c]
+            if rv > 0 or (self.editor_3d and self.editor_3d.tool == "reflect"):
+                imgui.spacing()
+                imgui.text_disabled("Reflect")
+                imgui.same_line(55)
+                pct = rv / 255.0
+                imgui.text_colored(f"{rv}", 0.4 + 0.6 * pct, 0.7 + 0.3 * pct, 1.0, 1.0)
+                if self.editor_3d and self.editor_3d.tool == "reflect":
+                    imgui.push_item_width(pw - 80)
+                    changed, new_rv = imgui.slider_int(
+                        "##reflect_slider", rv, 0, 255)
+                    imgui.pop_item_width()
+                    if changed:
+                        self.editor_3d._push_undo()
+                        zone.reflect_map[r][c] = new_rv
+                        self.dirty = True
+
+        # ── Secondary Layer (floor2 / ceil2) ──────────────────────
+        LAYER_NONE = -1000.0
+        has_f2 = (zone.floor2_heights and len(zone.floor2_heights) > r
+                  and zone.floor2_heights[r][c] > LAYER_NONE + 1.0)
+        has_c2 = (zone.ceil2_heights and len(zone.ceil2_heights) > r
+                  and zone.ceil2_heights[r][c] > LAYER_NONE + 1.0)
+        show_l2 = has_f2 or has_c2 or (self.editor_3d and self.editor_3d.tool == "layer2")
+        if show_l2:
+            imgui.spacing()
+            imgui.text_disabled("Layer 2")
+            if has_f2:
+                f2h = zone.floor2_heights[r][c]
+                f2t = zone.floor2_textures[r][c] if zone.floor2_textures else ""
+                imgui.text_disabled("  F2")
+                imgui.same_line(40)
+                imgui.text(f"{f2h:.2f}")
+                if f2t:
+                    imgui.same_line()
+                    imgui.text_disabled(f"({f2t})")
+            if has_c2:
+                c2h = zone.ceil2_heights[r][c]
+                c2t = zone.ceil2_textures[r][c] if zone.ceil2_textures else ""
+                imgui.text_disabled("  C2")
+                imgui.same_line(40)
+                imgui.text(f"{c2h:.2f}")
+                if c2t:
+                    imgui.same_line()
+                    imgui.text_disabled(f"({c2t})")
+            if self.editor_3d and self.editor_3d.tool == "layer2":
+                tgt = self.editor_3d._layer2_target
+                imgui.text_disabled("  Target")
+                imgui.same_line(60)
+                imgui.text_colored(tgt, 0.8, 0.6, 1.0, 1.0)
+
+        # ── Fog ───────────────────────────────────────────────────
+        if hasattr(zone, "fog_density") and zone.fog_density and len(zone.fog_density) > r:
+            fd = zone.fog_density[r][c]
+            if fd > 0.001 or (self.editor_3d and self.editor_3d.tool == "fog"):
+                imgui.spacing()
+                imgui.text_disabled("Fog")
+                imgui.same_line(55)
+                imgui.text(f"{fd:.2f}")
+                if self.editor_3d and self.editor_3d.tool == "fog":
+                    imgui.same_line()
+                    imgui.text_disabled(f"step:{self.editor_3d._fog_step:.2f}")
+                    imgui.push_item_width(pw - 80)
+                    changed, new_fd = imgui.slider_float(
+                        "##fog_slider", fd, 0.0, 1.0, "%.2f")
+                    imgui.pop_item_width()
+                    if changed:
+                        self.editor_3d._push_undo()
+                        zone.fog_density[r][c] = round(new_fd, 3)
+                        self.dirty = True
+
     def _draw_entity_inspector(self, zone) -> None:
-        """Draw inspector for the currently selected entity."""
+        """Draw editable inspector for the currently selected entity."""
         ed = self.editor_3d
         idx = ed._ent_selected
         if idx is None or idx < 0 or idx >= len(zone.entities):
@@ -826,49 +983,300 @@ class PanelsMixin:
         else:
             imgui.text(etype)
 
-        # ID
+        # ID (read-only)
         imgui.text_disabled("ID")
         imgui.same_line(55)
         imgui.text(ent.get("id", "?"))
 
-        # Position
-        imgui.columns(2, "##einsp_pos", False)
-        imgui.set_column_width(0, 55)
-        imgui.text_disabled("X")
-        imgui.next_column()
-        imgui.text(f"{ent.get('x', 0):.3f}")
-        imgui.next_column()
-        imgui.text_disabled("Y")
-        imgui.next_column()
-        imgui.text(f"{ent.get('y', 0):.3f}")
-        imgui.columns(1)
+        # ── Editable Position ──
+        imgui.push_item_width(self.right_panel_w - 80)
 
-        # Angle
+        ex = float(ent.get("x", 0.0))
+        changed_x, new_x = imgui.input_float("X##einsp_x", ex, 0.1, 0.5, "%.3f")
+        if changed_x:
+            ent["x"] = round(max(0.1, min(zone.width - 0.1, new_x)), 3)
+            self.dirty = True
+
+        ey = float(ent.get("y", 0.0))
+        changed_y, new_y = imgui.input_float("Z##einsp_y", ey, 0.1, 0.5, "%.3f")
+        if changed_y:
+            ent["y"] = round(max(0.1, min(zone.height - 0.1, new_y)), 3)
+            self.dirty = True
+
+        # ── Editable Angle ──
         angle = float(ent.get("angle", 0.0))
         deg = math.degrees(angle)
         label = angle_to_label(angle)
-        imgui.text_disabled("Angle")
-        imgui.same_line(55)
-        imgui.text(f"{deg:.0f}\u00b0 ({label})")
+        changed_a, new_deg = imgui.slider_float(
+            f"Angle ({label})##einsp_angle", deg, 0.0, 360.0, "%.0f\u00b0")
+        if changed_a:
+            from core.entity_defs import snap_angle_8dir
+            ent["angle"] = snap_angle_8dir(math.radians(new_deg))
+            self.dirty = True
         if edef and edef.directional:
             imgui.same_line()
             imgui.text_colored("\u27a4", 0.6, 0.8, 1.0, 1.0)
 
-        # State
+        # ── Editable State ──
         state = ent.get("state", "default")
-        imgui.text_disabled("State")
-        imgui.same_line(55)
-        imgui.text(state)
         if edef and len(edef.states) > 1:
-            imgui.same_line()
-            imgui.text_disabled(f"({'/'.join(edef.states)})")
-
-        # Scale (from def)
-        if edef:
-            imgui.text_disabled("Scale")
+            states_list = list(edef.states)
+            try:
+                cur_idx = states_list.index(state)
+            except ValueError:
+                cur_idx = 0
+            changed_s, new_idx = imgui.combo(
+                "State##einsp_state", cur_idx, states_list)
+            if changed_s:
+                ent["state"] = states_list[new_idx]
+                self.dirty = True
+        else:
+            imgui.text_disabled("State")
             imgui.same_line(55)
-            imgui.text(f"{edef.scale:.2f}")
+            imgui.text(state)
 
+        # ── Editable Scale Override ──
+        def_scale = edef.scale if edef else 0.5
+        props = ent.setdefault("properties", {})
+        cur_scale = float(props.get("scale", def_scale))
+        changed_sc, new_scale = imgui.slider_float(
+            "Scale##einsp_scale", cur_scale, 0.1, 3.0, "%.2f")
+        if changed_sc:
+            props["scale"] = round(new_scale, 2)
+            self.dirty = True
+        imgui.same_line()
+        if imgui.small_button("Reset##einsp_scale_reset"):
+            props.pop("scale", None)
+            self.dirty = True
+
+        imgui.pop_item_width()
+
+        # ── Action buttons ──
+        imgui.spacing()
+        if imgui.button("Deselect##einsp_desel"):
+            ed._ent_deselect()
+        imgui.same_line()
+        imgui.push_style_color(imgui.COLOR_BUTTON, 0.6, 0.15, 0.15, 1.0)
+        if imgui.button("Delete##einsp_del"):
+            ed._ent_delete(idx)
+        imgui.pop_style_color()
+
+        imgui.separator()
+
+    def _draw_quad_inspector(self, zone) -> None:
+        """Draw editable inspector for the currently selected quad."""
+        ed = self.editor_3d
+        idx = ed._quad_selected
+        if idx is None or idx < 0 or idx >= len(zone.quads):
+            return
+        q = zone.quads[idx]
+
+        opened, _ = imgui.collapsing_header(
+            f"Quad #{idx}##quadinsp", imgui.TREE_NODE_DEFAULT_OPEN)
+        if not opened:
+            return
+
+        imgui.push_item_width(self.right_panel_w - 80)
+
+        qx = float(q.get("x", 0.0))
+        changed, new_x = imgui.input_float("X##qinsp_x", qx, 0.1, 0.5, "%.3f")
+        if changed:
+            q["x"] = round(max(0.1, min(zone.width - 0.1, new_x)), 3)
+            self.dirty = True
+
+        qz = float(q.get("z", 0.0))
+        changed, new_z = imgui.input_float("Z##qinsp_z", qz, 0.1, 0.5, "%.3f")
+        if changed:
+            q["z"] = round(max(0.1, min(zone.height - 0.1, new_z)), 3)
+            self.dirty = True
+
+        by = float(q.get("base_y", 0.0))
+        changed, new_by = imgui.input_float("Base Y##qinsp_by", by, 0.1, 0.5, "%.3f")
+        if changed:
+            q["base_y"] = round(new_by, 3)
+            self.dirty = True
+
+        w = float(q.get("width", 1.0))
+        changed, new_w = imgui.slider_float("Width##qinsp_w", w, 0.25, 5.0, "%.2f")
+        if changed:
+            q["width"] = round(new_w, 3)
+            self.dirty = True
+
+        h = float(q.get("height", 1.0))
+        changed, new_h = imgui.slider_float("Height##qinsp_h", h, 0.25, 5.0, "%.2f")
+        if changed:
+            q["height"] = round(new_h, 3)
+            self.dirty = True
+
+        angle = float(q.get("angle", 0.0))
+        deg = math.degrees(angle)
+        changed, new_deg = imgui.slider_float("Angle##qinsp_a", deg, 0.0, 360.0, "%.0f\u00b0")
+        if changed:
+            q["angle"] = round(math.radians(new_deg), 4)
+            self.dirty = True
+
+        tex = q.get("texture", "")
+        imgui.text_disabled("Tex")
+        imgui.same_line(55)
+        imgui.text(tex if tex else "\u2014")
+
+        ts = bool(q.get("two_sided", True))
+        changed, new_ts = imgui.checkbox("Two-sided##qinsp_ts", ts)
+        if changed:
+            q["two_sided"] = new_ts
+            self.dirty = True
+
+        col = bool(q.get("collision", False))
+        changed, new_col = imgui.checkbox("Collision##qinsp_col", col)
+        if changed:
+            q["collision"] = new_col
+            self.dirty = True
+
+        imgui.pop_item_width()
+
+        imgui.spacing()
+        if imgui.button("Deselect##qinsp_desel"):
+            ed._quad_deselect()
+        imgui.same_line()
+        imgui.push_style_color(imgui.COLOR_BUTTON, 0.6, 0.15, 0.15, 1.0)
+        if imgui.button("Delete##qinsp_del"):
+            ed._quad_delete(idx)
+        imgui.pop_style_color()
+        imgui.separator()
+
+    def _draw_portal_inspector(self, zone) -> None:
+        """Draw editable inspector for the currently selected render portal."""
+        ed = self.editor_3d
+        idx = ed._portal_selected
+        if idx is None or idx < 0 or idx >= len(zone.render_portals):
+            return
+        p = zone.render_portals[idx]
+
+        opened, _ = imgui.collapsing_header(
+            f"Portal #{idx}##pinsp", imgui.TREE_NODE_DEFAULT_OPEN)
+        if not opened:
+            return
+
+        cell = p.get("cell", [0, 0])
+        face = int(p.get("face", 0))
+        face_names = ["N", "S", "E", "W"]
+        fn = face_names[face] if 0 <= face < 4 else "?"
+        imgui.text_disabled("Source")
+        imgui.same_line(55)
+        imgui.text(f"({cell[0]},{cell[1]}) {fn}")
+
+        imgui.push_item_width(self.right_panel_w - 80)
+
+        dx = float(p.get("dest_x", 0.0))
+        changed, new_dx = imgui.input_float("Dest X##pinsp_dx", dx, 0.5, 1.0, "%.2f")
+        if changed:
+            ed._push_undo()
+            p["dest_x"] = round(new_dx, 2)
+            self.dirty = True
+
+        dy = float(p.get("dest_y", 0.0))
+        changed, new_dy = imgui.input_float("Dest Y##pinsp_dy", dy, 0.5, 1.0, "%.2f")
+        if changed:
+            ed._push_undo()
+            p["dest_y"] = round(new_dy, 2)
+            self.dirty = True
+
+        ao = float(p.get("angle_offset", 0.0))
+        deg = math.degrees(ao)
+        changed, new_deg = imgui.slider_float(
+            "Angle Off##pinsp_ao", deg, -180.0, 180.0, "%.0f\u00b0")
+        if changed:
+            ed._push_undo()
+            p["angle_offset"] = round(math.radians(new_deg), 4)
+            self.dirty = True
+
+        imgui.pop_item_width()
+
+        imgui.spacing()
+        if imgui.button("Deselect##pinsp_desel"):
+            ed._portal_deselect()
+        imgui.same_line()
+        imgui.push_style_color(imgui.COLOR_BUTTON, 0.6, 0.15, 0.15, 1.0)
+        if imgui.button("Delete##pinsp_del"):
+            ed._push_undo()
+            zone.render_portals.pop(idx)
+            ed._portal_selected = None
+            self.dirty = True
+        imgui.pop_style_color()
+        imgui.separator()
+
+    def _draw_curve_inspector(self, zone) -> None:
+        """Draw editable inspector for the currently selected curve."""
+        ed = self.editor_3d
+        idx = ed._curve_selected
+        if idx is None or idx < 0 or idx >= len(zone.curves):
+            return
+        cv = zone.curves[idx]
+
+        opened, _ = imgui.collapsing_header(
+            f"Curve #{idx}##cinsp", imgui.TREE_NODE_DEFAULT_OPEN)
+        if not opened:
+            return
+
+        imgui.push_item_width(self.right_panel_w - 80)
+
+        cx = float(cv.get("cx", 0.0))
+        changed, new_cx = imgui.input_float("CX##cinsp_cx", cx, 0.1, 0.5, "%.3f")
+        if changed:
+            cv["cx"] = round(new_cx, 3)
+            self.dirty = True
+
+        cy = float(cv.get("cy", 0.0))
+        changed, new_cy = imgui.input_float("CY##cinsp_cy", cy, 0.1, 0.5, "%.3f")
+        if changed:
+            cv["cy"] = round(new_cy, 3)
+            self.dirty = True
+
+        rad = float(cv.get("radius", 1.0))
+        changed, new_rad = imgui.slider_float("Radius##cinsp_r", rad, 0.25, 10.0, "%.2f")
+        if changed:
+            cv["radius"] = round(new_rad, 3)
+            self.dirty = True
+
+        a_s = math.degrees(float(cv.get("angle_start", 0.0)))
+        changed, new_as = imgui.slider_float("Arc Start##cinsp_as", a_s, 0.0, 360.0, "%.0f\u00b0")
+        if changed:
+            cv["angle_start"] = round(math.radians(new_as), 4)
+            self.dirty = True
+
+        a_e = math.degrees(float(cv.get("angle_end", 180.0)))
+        changed, new_ae = imgui.slider_float("Arc End##cinsp_ae", a_e, 0.0, 360.0, "%.0f\u00b0")
+        if changed:
+            cv["angle_end"] = round(math.radians(new_ae), 4)
+            self.dirty = True
+
+        hs = float(cv.get("height_scale", 1.0))
+        changed, new_hs = imgui.slider_float("Height##cinsp_h", hs, 0.25, 5.0, "%.2f")
+        if changed:
+            cv["height_scale"] = round(new_hs, 3)
+            self.dirty = True
+
+        by = float(cv.get("base_y", 0.0))
+        changed, new_by = imgui.input_float("Base Y##cinsp_by", by, 0.1, 0.5, "%.3f")
+        if changed:
+            cv["base_y"] = round(new_by, 3)
+            self.dirty = True
+
+        tex = cv.get("texture", "")
+        imgui.text_disabled("Tex")
+        imgui.same_line(55)
+        imgui.text(tex if tex else "\u2014")
+
+        imgui.pop_item_width()
+
+        imgui.spacing()
+        if imgui.button("Deselect##cinsp_desel"):
+            ed._curve_deselect()
+        imgui.same_line()
+        imgui.push_style_color(imgui.COLOR_BUTTON, 0.6, 0.15, 0.15, 1.0)
+        if imgui.button("Delete##cinsp_del"):
+            ed._curve_delete(idx)
+        imgui.pop_style_color()
         imgui.separator()
 
     def _draw_zone_settings(self, zone) -> None:

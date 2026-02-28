@@ -79,7 +79,8 @@ class RaycasterMixin:
             nx, ny = self.px + mdx, self.py + mdy
             if self.noclip:
                 self.px, self.py = nx, ny
-                self.player_fh = self.renderer.floor_height_at(self.px, self.py)
+                self.player_fh = self.renderer.floor_height_at(
+                    self.px, self.py, self.player_fh)
                 return
             if self.renderer.can_step_to(nx, self.py, self.player_fh,
                                          MAX_STEP_UP, HEAD_CLEARANCE):
@@ -87,7 +88,8 @@ class RaycasterMixin:
             if self.renderer.can_step_to(self.px, ny, self.player_fh,
                                          MAX_STEP_UP, HEAD_CLEARANCE):
                 self.py = ny
-            self.player_fh = self.renderer.floor_height_at(self.px, self.py)
+            self.player_fh = self.renderer.floor_height_at(
+                self.px, self.py, self.player_fh)
 
         if abs(dx) > 1e-9 or abs(dy) > 1e-9:
             try_move(dx, dy)

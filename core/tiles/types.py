@@ -147,6 +147,9 @@ class TileDef:
     alt_texture: str = ""
     height_scale: float = 1.0
     v_scale: float = 1.0          # vertical texture scale (0.5 = covers 2 world-units)
+    anim_frames: int = 1          # number of animation frames (1 = static)
+    anim_stride: int = 1          # atlas tile-ID stride between frames
+    anim_ticks: int = 10          # game ticks per animation frame
     category: str = "Terrain"
     sound: str = "stone"
 

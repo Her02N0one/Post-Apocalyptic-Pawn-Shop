@@ -85,7 +85,7 @@ class TestToolSystem:
         assert ed.tool == "stamp"
 
     def test_all_tools_present(self):
-        assert TOOLS == ("sculpt", "paint", "segment", "entity")
+        assert TOOLS == ("sculpt", "paint", "segment", "entity", "box")
 
     def test_display_toggle_keys_moved_to_f8_f9_f10(self):
         ed, z = _make_editor()
@@ -1629,3 +1629,93 @@ class TestSelectToolHeight:
         ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=1)
         ed.handle_event(ev)
         assert ed.tex_idx != old_idx
+
+
+# ═════════════════════════════════════════════════════════════════════
+#  Box tool — placement, selection, deletion, rotation
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestBoxTool:
+    """Verify Box tool operations on zone.boxes."""
+
+    def test_tool_switch_to_box(self):
+        ed, z = _make_editor()
+        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F9)
+        ed.handle_event(ev)
+        assert ed.tool == "box"
+
+    def test_box_place(self):
+        """LMB with 'box' tool places a box in zone.boxes."""
+        ed, z = _make_editor()
+        ed.tool = "box"
+        ed.aimed = _CellHit(t=2.0, col=3, row=3, part="floor", face="top")
+        ed.cam_x, ed.cam_y, ed.cam_z = 3.0, 0.8, 5.0
+        ed.yaw = math.pi * 1.5
+        ed.pitch = -0.3
+        initial_count = len(z.boxes)
+        ed._box_place()
+        assert len(z.boxes) == initial_count + 1
+        b = z.boxes[-1]
+        assert "x" in b and "y" in b and "z" in b
+        assert b["w"] > 0 and b["h"] > 0 and b["d"] > 0
+
+    def test_box_delete(self):
+        """Delete removes the selected box from zone.boxes."""
+        ed, z = _make_editor()
+        ed.tool = "box"
+        z.boxes = [{"x": 3.0, "y": 3.0, "z": 0.0, "w": 1, "h": 1, "d": 1,
+                     "yaw": 0, "textures": {}, "collision": False}]
+        ed._box_selected = 0
+        ed._box_delete()
+        assert len(z.boxes) == 0
+        assert ed._box_selected is None
+
+    def test_box_rotate(self):
+        """Shift+Scroll rotates the selected box."""
+        ed, z = _make_editor()
+        ed.tool = "box"
+        z.boxes = [{"x": 3.0, "y": 3.0, "z": 0.0, "w": 1, "h": 1, "d": 1,
+                     "yaw": 0.0, "textures": {}, "collision": False}]
+        ed._box_selected = 0
+        old_yaw = z.boxes[0]["yaw"]
+        ed._box_rotate(1)
+        assert z.boxes[0]["yaw"] != old_yaw
+
+    def test_box_undo(self):
+        """Undo restores boxes after placement."""
+        ed, z = _make_editor()
+        ed.tool = "box"
+        ed.aimed = _CellHit(t=2.0, col=3, row=3, part="floor", face="top")
+        ed.cam_x, ed.cam_y, ed.cam_z = 3.0, 0.8, 5.0
+        ed.yaw = math.pi * 1.5
+        ed.pitch = -0.3
+        initial = len(z.boxes)
+        ed._box_place()
+        assert len(z.boxes) == initial + 1
+        ed._undo()
+        assert len(z.boxes) == initial
+
+    def test_box_escape_deselects(self):
+        """Escape while a box is selected deselects it."""
+        ed, z = _make_editor()
+        ed.tool = "box"
+        z.boxes = [{"x": 3.0, "y": 3.0, "z": 0.0, "w": 1, "h": 1, "d": 1,
+                     "yaw": 0, "textures": {}, "collision": False}]
+        ed._box_selected = 0
+        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE)
+        ed.handle_event(ev)
+        assert ed._box_selected is None
+
+    def test_box_paint_all_faces(self):
+        """MMB paints all faces of the selected box."""
+        ed, z = _make_editor()
+        ed.tool = "box"
+        z.boxes = [{"x": 3.0, "y": 3.0, "z": 0.0, "w": 1, "h": 1, "d": 1,
+                     "yaw": 0, "textures": {}, "collision": False}]
+        ed._box_selected = 0
+        ed.current_texture = "brick_wall"
+        ed._box_paint_face()
+        tex = z.boxes[0]["textures"]
+        for f in ("N", "S", "E", "W", "top", "bot"):
+            assert tex[f] == "brick_wall"

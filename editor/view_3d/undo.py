@@ -30,6 +30,19 @@ class UndoMixin:
             "light_levels": copy.deepcopy(z.light_levels) if z.light_levels else None,
             "rotations": copy.deepcopy(z.rotations) if z.rotations else None,
             "entities": copy.deepcopy(z.entities) if z.entities else [],
+            "boxes": copy.deepcopy(z.boxes) if z.boxes else [],
+            "quads": copy.deepcopy(z.quads) if z.quads else [],
+            "reflect_map": copy.deepcopy(z.reflect_map) if z.reflect_map else [],
+            "curves": copy.deepcopy(z.curves) if z.curves else [],
+            "floor_slope_dx": copy.deepcopy(z.floor_slope_dx) if z.floor_slope_dx else [],
+            "floor_slope_dy": copy.deepcopy(z.floor_slope_dy) if z.floor_slope_dy else [],
+            "floor2_heights": copy.deepcopy(z.floor2_heights) if z.floor2_heights else [],
+            "ceil2_heights": copy.deepcopy(z.ceil2_heights) if z.ceil2_heights else [],
+            "floor2_textures": copy.deepcopy(z.floor2_textures) if z.floor2_textures else [],
+            "ceil2_textures": copy.deepcopy(z.ceil2_textures) if z.ceil2_textures else [],
+            "fog_density": copy.deepcopy(z.fog_density) if z.fog_density else [],
+            "fog_color": copy.deepcopy(z.fog_color) if z.fog_color else [],
+            "render_portals": copy.deepcopy(z.render_portals) if z.render_portals else [],
         }
 
     def _restore(self, snap: dict) -> None:
@@ -57,6 +70,32 @@ class UndoMixin:
             z.rotations = snap["rotations"]
         if "entities" in snap:
             z.entities = snap["entities"]
+        if "boxes" in snap:
+            z.boxes = snap["boxes"]
+        if "quads" in snap:
+            z.quads = snap["quads"]
+        if "reflect_map" in snap:
+            z.reflect_map = snap["reflect_map"]
+        if "curves" in snap:
+            z.curves = snap["curves"]
+        if "floor_slope_dx" in snap:
+            z.floor_slope_dx = snap["floor_slope_dx"]
+        if "floor_slope_dy" in snap:
+            z.floor_slope_dy = snap["floor_slope_dy"]
+        if "floor2_heights" in snap:
+            z.floor2_heights = snap["floor2_heights"]
+        if "ceil2_heights" in snap:
+            z.ceil2_heights = snap["ceil2_heights"]
+        if "floor2_textures" in snap:
+            z.floor2_textures = snap["floor2_textures"]
+        if "ceil2_textures" in snap:
+            z.ceil2_textures = snap["ceil2_textures"]
+        if "fog_density" in snap:
+            z.fog_density = snap["fog_density"]
+        if "fog_color" in snap:
+            z.fog_color = snap["fog_color"]
+        if "render_portals" in snap:
+            z.render_portals = snap["render_portals"]
         self.dirty = True
 
     def _push_undo(self) -> None:

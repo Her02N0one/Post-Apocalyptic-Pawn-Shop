@@ -67,6 +67,9 @@ def _parse_tile_toml(path: str) -> TileDef | None:
     tex_w = data.get("tex_w", "")
     alt_texture = data.get("alt_texture", "")
     v_scale = float(data.get("v_scale", 1.0))
+    anim_frames = int(data.get("anim_frames", 1))
+    anim_stride = int(data.get("anim_stride", 1))
+    anim_ticks = int(data.get("anim_ticks", 10))
 
     return TileDef(
         id=tile_key,
@@ -81,6 +84,9 @@ def _parse_tile_toml(path: str) -> TileDef | None:
         alt_texture=alt_texture,
         height_scale=height,
         v_scale=v_scale,
+        anim_frames=anim_frames,
+        anim_stride=anim_stride,
+        anim_ticks=anim_ticks,
         category=data.get("category", "Custom"),
         sound=data.get("sound", "stone"),
     )
@@ -145,6 +151,10 @@ def _save_tile_toml(td: TileDef) -> str:
         lines.append(f"height = {td.height_scale}")
     if td.v_scale != 1.0:
         lines.append(f"v_scale = {td.v_scale}")
+    if td.anim_frames > 1:
+        lines.append(f"anim_frames = {td.anim_frames}")
+        lines.append(f"anim_stride = {td.anim_stride}")
+        lines.append(f"anim_ticks = {td.anim_ticks}")
 
     _os.makedirs(_TILES_TOML_DIR, exist_ok=True)
     path = _tile_toml_path(td.id)

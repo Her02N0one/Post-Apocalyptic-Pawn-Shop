@@ -258,3 +258,280 @@ ent_cleanup:
     free(sorted);
     return result;
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════
+ *  Particle System Renderer
+ * ═══════════════════════════════════════════════════════════════════
+ *
+ *  Ticks and renders a batch of particles as small camera-facing
+ *  billboards or single-pixel dots.  Called after render_entities.
+ *
+ * Dict keys:
+ *   fb           : writable buffer uint8[sw*sh*3]
+ *   depth_px     : writable buffer float32[sw*sh]
+ *   fog_lut      : buffer uint8[256]
+ *   atlas        : buffer uint8[num_tiles * ts * ts * 4]
+ *   sw, sh       : int
+ *   tex_size     : int
+ *   num_tiles    : int
+ *   cam_x, cam_y : double
+ *   dir_x, dir_y : double
+ *   plane_x, plane_y : double
+ *   part_data    : writable buffer double[n * 14] — packed per particle:
+ *                    [x, y, z, vx, vy, vz, life, max_life,
+ *                     r, g, b, size, tex_id, flags]
+ *   n_particles  : int
+ *   dt           : double — delta time for ticking
+ *   gravity      : double — downward acceleration (positive = down)
+ *
+ * The function ticks all particles (apply velocity, gravity, decay
+ * lifetime), depth-sorts them, and renders.  Dead particles (life <= 0)
+ * are skipped during rendering but their data is preserved so Python
+ * can detect and reclaim them.
+ *
+ * Returns None.
+ */
+PyObject *
+py_render_particles(PyObject *self, PyObject *dict)
+{
+    int sw, sh, n_parts, tex_size, num_tiles;
+    double cam_x, cam_y, dir_x, dir_y, plane_x, plane_y;
+    double dt, gravity;
+
+    Py_buffer fb_buf    = {0};
+    Py_buffer dp_buf    = {0};
+    Py_buffer fog_buf   = {0};
+    Py_buffer atlas_buf = {0};
+    Py_buffer part_buf  = {0};
+
+    PyObject *result = NULL;
+
+    typedef struct { int idx; double dist; } PSrt;
+    PSrt *sorted = NULL;
+
+    if (!PyDict_Check(dict)) {
+        PyErr_SetString(PyExc_TypeError,
+            "render_particles: argument must be a dict");
+        return NULL;
+    }
+
+    /* ── Scalars ─────────────────────────────────────────────────── */
+    if (dict_get_int(dict, "sw",          &sw))          goto pcl_cleanup;
+    if (dict_get_int(dict, "sh",          &sh))          goto pcl_cleanup;
+    if (dict_get_int(dict, "tex_size",    &tex_size))    goto pcl_cleanup;
+    if (dict_get_int(dict, "num_tiles",   &num_tiles))   goto pcl_cleanup;
+    if (dict_get_int(dict, "n_particles", &n_parts))     goto pcl_cleanup;
+    if (dict_get_double(dict, "cam_x",    &cam_x))      goto pcl_cleanup;
+    if (dict_get_double(dict, "cam_y",    &cam_y))       goto pcl_cleanup;
+    if (dict_get_double(dict, "dir_x",    &dir_x))       goto pcl_cleanup;
+    if (dict_get_double(dict, "dir_y",    &dir_y))       goto pcl_cleanup;
+    if (dict_get_double(dict, "plane_x",  &plane_x))     goto pcl_cleanup;
+    if (dict_get_double(dict, "plane_y",  &plane_y))     goto pcl_cleanup;
+    if (dict_get_double(dict, "dt",       &dt))          goto pcl_cleanup;
+    if (dict_get_double(dict, "gravity",  &gravity))     goto pcl_cleanup;
+
+    /* ── Buffers ─────────────────────────────────────────────────── */
+    if (dict_get_buf(dict, "fb",        &fb_buf,    1)) goto pcl_cleanup;
+    if (dict_get_buf(dict, "depth_px",  &dp_buf,    1)) goto pcl_cleanup;
+    if (dict_get_buf(dict, "fog_lut",   &fog_buf,   0)) goto pcl_cleanup;
+    if (dict_get_buf(dict, "atlas",     &atlas_buf, 0)) goto pcl_cleanup;
+    if (dict_get_buf(dict, "part_data", &part_buf,  1)) goto pcl_cleanup;
+
+    if (n_parts <= 0) {
+        result = Py_None;
+        Py_INCREF(Py_None);
+        goto pcl_cleanup;
+    }
+
+    {
+    uint8_t       *fb       = (uint8_t *)fb_buf.buf;
+    float         *depth_px = (float *)dp_buf.buf;
+    const uint8_t *fog_lt   = (const uint8_t *)fog_buf.buf;
+    const uint8_t *atlas    = (const uint8_t *)atlas_buf.buf;
+    double        *pd       = (double *)part_buf.buf;
+    const int      ts       = tex_size;
+    const int      ts_mask  = ts - 1;
+
+    double inv_det = 1.0 / (plane_x * dir_y - dir_x * plane_y);
+
+    /* ── PHASE A: Tick all particles ─────────────────────────── */
+    for (int i = 0; i < n_parts; i++) {
+        double *p = pd + i * 14;
+        if (p[6] <= 0.0) continue;   /* already dead */
+
+        /* Apply velocity */
+        p[0] += p[3] * dt;   /* x  += vx * dt */
+        p[1] += p[4] * dt;   /* y  += vy * dt */
+        p[2] += p[5] * dt;   /* z  += vz * dt */
+
+        /* Apply gravity (z is up in world, vy is up in 2.5D) */
+        p[5] -= gravity * dt; /* vz -= g * dt */
+
+        /* Decay lifetime */
+        p[6] -= dt;
+
+        /* Damping (slight air friction) */
+        double damp = 1.0 - 0.5 * dt;
+        if (damp < 0.0) damp = 0.0;
+        p[3] *= damp;
+        p[4] *= damp;
+    }
+
+    /* ── PHASE B: Sort living particles far-to-near ──────────── */
+    sorted = (PSrt *)malloc(n_parts * sizeof(PSrt));
+    if (!sorted) {
+        PyErr_NoMemory();
+        goto pcl_cleanup;
+    }
+
+    int n_alive = 0;
+    for (int i = 0; i < n_parts; i++) {
+        if (pd[i * 14 + 6] <= 0.0) continue;  /* dead */
+        double dx = pd[i * 14] - cam_x;
+        double dy = pd[i * 14 + 1] - cam_y;
+        sorted[n_alive].idx  = i;
+        sorted[n_alive].dist = dx * dx + dy * dy;
+        n_alive++;
+    }
+
+    /* Sort descending (far first) */
+    for (int i = 0; i < n_alive - 1; i++) {
+        for (int j = i + 1; j < n_alive; j++) {
+            if (sorted[j].dist > sorted[i].dist) {
+                PSrt tmp = sorted[i];
+                sorted[i] = sorted[j];
+                sorted[j] = tmp;
+            }
+        }
+    }
+
+    /* ── PHASE C: Render ─────────────────────────────────────── */
+    int half_w = sw / 2;
+    int half_h = sh / 2;
+
+    for (int si = 0; si < n_alive; si++) {
+        int pi = sorted[si].idx;
+        double *p = pd + pi * 14;
+
+        double px = p[0];          /* world x */
+        double py_w = p[1];        /* world y (horizontal) */
+        double pz = p[2];          /* world z (vertical/height) */
+        double life = p[6];
+        double max_life = p[7];
+        int pr = clampi((int)p[8],  0, 255);
+        int pg = clampi((int)p[9],  0, 255);
+        int pb = clampi((int)p[10], 0, 255);
+        double psize  = p[11];
+        int ptex      = (int)p[12];
+        /* int pflags = (int)p[13]; */
+
+        /* Life fraction for alpha fade-out */
+        double life_frac = (max_life > 0.0)
+                           ? clampd(life / max_life, 0.0, 1.0)
+                           : 1.0;
+
+        /* Camera-relative transform (2D, same as entities) */
+        double dx = px - cam_x;
+        double dy = py_w - cam_y;
+        double tx = inv_det * (dir_y * dx - dir_x * dy);
+        double ty = inv_det * (-plane_y * dx + plane_x * dy);
+
+        if (ty <= 0.1) continue;  /* behind camera */
+
+        /* Screen X from horizontal offset */
+        int scr_x = (int)(half_w * (1.0 + tx / ty));
+
+        /* Vertical: wall_h is the reference 1-unit-tall column height */
+        double wall_h = (double)sh / ty;
+
+        /* Particle screen size from world size */
+        int spr_h = (int)(wall_h * psize);
+        int spr_w = spr_h;  /* square particles */
+        if (spr_h < 1) spr_h = 1;
+        if (spr_w < 1) spr_w = 1;
+
+        /* Vertical position: pz is height above floor (0.5 = eye level)
+         * Offset from screen center by (cam_h - pz) projected. */
+        int scr_y = half_h + (int)((0.5 - pz) * wall_h);
+
+        /* Alpha from life fraction + distance fog */
+        int fog = fog_val(fog_lt, ty);
+        int alpha = (int)(life_frac * 255.0);
+        /* Combine fog into colour */
+        int cr = (pr * fog) >> 8;
+        int cg = (pg * fog) >> 8;
+        int cb = (pb * fog) >> 8;
+
+        int has_tex = (ptex >= 0 && ptex < num_tiles);
+
+        /* Render as single dot if too small */
+        if (spr_h <= 2 && spr_w <= 2) {
+            if (scr_x >= 0 && scr_x < sw && scr_y >= 0 && scr_y < sh) {
+                if (ty < (double)depth_px[scr_y * sw + scr_x]) {
+                    blend_px(fb, sw, scr_x, scr_y,
+                             cr, cg, cb, alpha);
+                    put_depth(depth_px, sw, scr_x, scr_y, (float)ty);
+                }
+            }
+            continue;
+        }
+
+        /* Render as textured or coloured quad */
+        int x0 = scr_x - spr_w / 2;
+        int y0 = scr_y - spr_h / 2;
+        int cx0 = clampi(x0, 0, sw - 1);
+        int cx1 = clampi(x0 + spr_w - 1, 0, sw - 1);
+        int cy0 = clampi(y0, 0, sh - 1);
+        int cy1 = clampi(y0 + spr_h - 1, 0, sh - 1);
+
+        for (int cx = cx0; cx <= cx1; cx++) {
+            for (int cy = cy0; cy <= cy1; cy++) {
+                if (ty >= (double)depth_px[cy * sw + cx]) continue;
+
+                if (has_tex) {
+                    double u_frac = (double)(cx - x0) / (double)spr_w;
+                    double v_frac = (double)(cy - y0) / (double)spr_h;
+                    int tu = clampi((int)(u_frac * ts), 0, ts_mask);
+                    int tv = clampi((int)(v_frac * ts), 0, ts_mask);
+
+                    int sr, sg, sb, sa;
+                    sample_tex(atlas, ts, ptex, tu, tv,
+                               &sr, &sg, &sb, &sa);
+                    if (sa <= 0) continue;
+
+                    sr = (sr * fog) >> 8;
+                    sg = (sg * fog) >> 8;
+                    sb = (sb * fog) >> 8;
+                    int pa = (sa * alpha) >> 8;
+                    blend_px(fb, sw, cx, cy, sr, sg, sb, pa);
+                } else {
+                    /* Radial falloff: softer edges for non-textured */
+                    double du = (double)(cx - scr_x) / (spr_w * 0.5);
+                    double dv = (double)(cy - scr_y) / (spr_h * 0.5);
+                    double r2 = du * du + dv * dv;
+                    if (r2 > 1.0) continue;  /* circular shape */
+                    int edge_alpha = (int)(alpha * (1.0 - r2));
+                    if (edge_alpha < 1) continue;
+                    blend_px(fb, sw, cx, cy,
+                             cr, cg, cb, edge_alpha);
+                }
+                put_depth(depth_px, sw, cx, cy, (float)ty);
+            }
+        }
+    }
+
+    } /* end scope block */
+
+    result = Py_None;
+    Py_INCREF(Py_None);
+
+pcl_cleanup:
+    if (fb_buf.buf)    PyBuffer_Release(&fb_buf);
+    if (dp_buf.buf)    PyBuffer_Release(&dp_buf);
+    if (fog_buf.buf)   PyBuffer_Release(&fog_buf);
+    if (atlas_buf.buf) PyBuffer_Release(&atlas_buf);
+    if (part_buf.buf)  PyBuffer_Release(&part_buf);
+    free(sorted);
+    return result;
+}

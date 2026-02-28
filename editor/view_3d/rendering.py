@@ -24,7 +24,11 @@ from editor.view_3d.constants import (
     TOOL_LABELS, TOOL_COLORS, TOOL_HINTS,
     COL_TOOL_SELECT,
     COL_TOOL_CEILING,
+    COL_TOOL_LIGHT, COL_TOOL_SLOPE, COL_TOOL_REFLECT,
+    COL_TOOL_LAYER2, COL_TOOL_QUAD, COL_TOOL_PORTAL,
+    COL_TOOL_CURVE, COL_TOOL_FOG,
     HOTBAR_SIZE,
+    FACE_IDX,
 )
 
 
@@ -93,7 +97,18 @@ class RenderingMixin:
         self._draw_cell_boxes(surface, vp, hw, hh, zone, W, H)
         self._draw_surface_markers(surface, vp, hw, hh, zone, W, H)
         self._draw_seg_boundary_rings(surface, vp, hw, hh, zone, W, H)
+        # ── Per-cell tool overlays ──
+        self._draw_light_overlay(surface, vp, hw, hh, zone, W, H)
+        self._draw_slope_arrows(surface, vp, hw, hh, zone, W, H)
+        self._draw_reflect_overlay(surface, vp, hw, hh, zone, W, H)
+        self._draw_layer2_slabs(surface, vp, hw, hh, zone, W, H)
+        self._draw_fog_overlay(surface, vp, hw, hh, zone, W, H)
         self._draw_entities(surface, vp, hw, hh, zone)
+        self._draw_boxes(surface, vp, hw, hh, zone)
+        # ── Discrete object overlays ──
+        self._draw_quads(surface, vp, hw, hh, zone)
+        self._draw_portals(surface, vp, hw, hh, zone)
+        self._draw_curves(surface, vp, hw, hh, zone)
         self._draw_selection_highlight(surface, vp, hw, hh, zone)
         self._draw_face_hl_and_preview(surface, vp, hw, hh, sw, sh)
         self._draw_crosshair(surface, sw, sh)
@@ -115,98 +130,243 @@ class RenderingMixin:
 
     # ── Entity markers ────────────────────────────────────────────
 
-    # Default colour for entity markers (warm amber)
-    _COL_ENT_DEFAULT = (255, 180, 60)
     # Selection highlight colour (bright cyan)
     _COL_ENT_SELECTED = (60, 255, 255)
-    # Marker half-width (world units)
-    _ENT_MARKER_R = 0.15
-    # Marker vertical bar half-height
-    _ENT_MARKER_H = 0.30
+    # Ghost preview colour (translucent white)
+    _COL_ENT_GHOST = (200, 200, 255)
 
     def _draw_entities(self, surface, vp, hw, hh, zone):
-        """Draw diamond-shaped markers at each entity's position."""
+        """Draw solid shaded boxes at each entity's position + ghost preview."""
         if not getattr(self, 'show_entities', True):
             return
         entities = getattr(zone, 'entities', None)
-        if not entities:
-            return
 
-        from core.entity_defs import get_entity_def
-
-        r = self._ENT_MARKER_R
-        L = self._line3d
         selected_idx = getattr(self, '_ent_selected', None)
 
-        for i, ent in enumerate(entities):
-            # Resolve position — new format (x/y) or legacy (position dict)
-            if "x" in ent:
-                ex = float(ent["x"])
-                ez = float(ent["y"])
+        # ── Draw placed entities ──
+        if entities:
+            for i, ent in enumerate(entities):
+                self._draw_one_entity(
+                    surface, vp, hw, hh, zone, ent, i,
+                    is_selected=(selected_idx is not None and i == selected_idx),
+                    ghost=False,
+                )
+
+        # ── Ghost preview (entity tool, nothing selected) ──
+        if (getattr(self, 'tool', '') == 'entity'
+                and selected_idx is None
+                and getattr(self, 'aimed', None) is not None):
+            self._draw_entity_ghost(surface, vp, hw, hh, zone)
+
+    def _draw_entity_ghost(self, surface, vp, hw, hh, zone):
+        """Draw a translucent preview of the entity about to be placed."""
+        from core.entity_defs import get_entity_def
+
+        hit = self.aimed
+        if hit is None:
+            return
+        etype = self._ent_current_type()
+        edef = get_entity_def(etype)
+        if not edef:
+            return
+
+        fx, _fy, fz = self._forward()
+        ox, _, oz = self.cam_x, self.cam_y, self.cam_z
+        wx = ox + fx * hit.t
+        wz = oz + fz * hit.t
+        wx = max(0.1, min(zone.width - 0.1, wx))
+        wz = max(0.1, min(zone.height - 0.1, wz))
+
+        # Build a temporary entity dict for the ghost
+        ghost_ent = {
+            "type": etype,
+            "x": wx,
+            "y": wz,
+            "angle": 0.0,
+            "state": "default",
+        }
+        self._draw_one_entity(
+            surface, vp, hw, hh, zone, ghost_ent, -1,
+            is_selected=False, ghost=True,
+        )
+
+    def _draw_one_entity(self, surface, vp, hw, hh, zone, ent, idx,
+                         is_selected=False, ghost=False):
+        """Draw a single entity as a solid shaded box with direction indicator."""
+        from core.entity_defs import get_entity_def
+
+        # Resolve position
+        if "x" in ent:
+            ex = float(ent["x"])
+            ez = float(ent["y"])
+        else:
+            pos = ent.get("position")
+            if not pos:
+                return
+            ex = float(pos.get("x", 0))
+            ez = float(pos.get("y", 0))
+
+        # Floor height at entity cell
+        ci = max(0, min(zone.width - 1, int(ex)))
+        ri = max(0, min(zone.height - 1, int(ez)))
+        fh = zone.floor_heights[ri][ci] if zone.floor_heights else 0.0
+
+        # Resolve entity def + scale
+        edef = get_entity_def(ent.get("type", ""))
+        if edef:
+            col = edef.color
+            def_scale = edef.scale
+        else:
+            spr = ent.get("sprite", {})
+            color = spr.get("color")
+            if color and len(color) >= 3:
+                col = (int(color[0]), int(color[1]), int(color[2]))
             else:
-                pos = ent.get("position")
-                if not pos:
-                    continue
-                ex = float(pos.get("x", 0))
-                ez = float(pos.get("y", 0))
+                col = (255, 180, 60)
+            def_scale = 0.5
 
-            # Resolve floor height at entity cell
-            ci = max(0, min(zone.width - 1, int(ex)))
-            ri = max(0, min(zone.height - 1, int(ez)))
-            fh = zone.floor_heights[ri][ci] if zone.floor_heights else 0.0
+        # Per-entity scale override (from properties)
+        scale = float(ent.get("properties", {}).get("scale", def_scale))
+        half_w = max(scale * 0.22, 0.08)
+        height = scale
 
-            # Resolve colour from entity_defs, sprite data, or default
-            edef = get_entity_def(ent.get("type", ""))
-            if edef:
-                col = edef.color
-                scale = edef.scale
-            else:
-                spr = ent.get("sprite", {})
-                color = spr.get("color")
-                if color and len(color) >= 3:
-                    col = (int(color[0]), int(color[1]), int(color[2]))
-                else:
-                    col = self._COL_ENT_DEFAULT
-                scale = 0.5
+        # Override visuals for selection / ghost
+        if ghost:
+            col = self._COL_ENT_GHOST
+            alpha = 100
+        elif is_selected:
+            alpha = 255
+        else:
+            alpha = 200
 
-            # Override colour + width for selected entity
-            is_sel = (selected_idx is not None and i == selected_idx)
-            draw_col = self._COL_ENT_SELECTED if is_sel else col
-            lw = 3 if is_sel else 2
-            mh = scale * 0.5
+        edge_col = self._COL_ENT_SELECTED if is_selected else None
 
-            ey = fh  # base Y = floor height
+        # Draw the filled box body
+        self._filled_box(
+            surface, vp, hw, hh,
+            ex - half_w, fh, ez - half_w,
+            ex + half_w, fh + height, ez + half_w,
+            base_color=col,
+            edge_color=edge_col if is_selected else (
+                min(255, col[0] + 40),
+                min(255, col[1] + 40),
+                min(255, col[2] + 40),
+            ),
+            edge_width=3 if is_selected else 1,
+            alpha=alpha,
+        )
 
-            # Horizontal diamond (X-Z plane) at floor level
-            L(surface, vp, hw, hh, ex - r, ey, ez, ex, ey, ez - r, draw_col, lw)
-            L(surface, vp, hw, hh, ex, ey, ez - r, ex + r, ey, ez, draw_col, lw)
-            L(surface, vp, hw, hh, ex + r, ey, ez, ex, ey, ez + r, draw_col, lw)
-            L(surface, vp, hw, hh, ex, ey, ez + r, ex - r, ey, ez, draw_col, lw)
+        # Direction indicator line for directional entities
+        if edef and edef.directional:
+            angle = float(ent.get("angle", 0.0))
+            dx = math.cos(angle) * half_w * 3.0
+            dz = -math.sin(angle) * half_w * 3.0
+            mid_y = fh + height * 0.5
+            dir_col = self._COL_ENT_SELECTED if is_selected else (
+                min(255, col[0] + 80),
+                min(255, col[1] + 80),
+                min(255, col[2] + 80),
+            )
+            self._line3d(surface, vp, hw, hh,
+                         ex, mid_y, ez,
+                         ex + dx, mid_y, ez + dz,
+                         dir_col, 3 if is_selected else 2)
+            # Arrow head
+            perp_x = -dz * 0.3
+            perp_z = dx * 0.3
+            tip_x = ex + dx
+            tip_z = ez + dz
+            self._line3d(surface, vp, hw, hh,
+                         tip_x, mid_y, tip_z,
+                         tip_x - dx * 0.3 + perp_x, mid_y,
+                         tip_z - dz * 0.3 + perp_z,
+                         dir_col, 2)
+            self._line3d(surface, vp, hw, hh,
+                         tip_x, mid_y, tip_z,
+                         tip_x - dx * 0.3 - perp_x, mid_y,
+                         tip_z - dz * 0.3 - perp_z,
+                         dir_col, 2)
 
-            # Vertical bar from floor to marker height
-            top = ey + mh * 2
-            L(surface, vp, hw, hh, ex, ey, ez, ex, top, ez, draw_col, lw)
+        # Label — entity type name rendered at screen position above the box
+        if not ghost:
+            from editor.view_3d.math3d import _project
+            sp = _project(vp, ex, fh + height + 0.12, ez, hw, hh)
+            if sp is not None:
+                sx, sy = int(sp[0]), int(sp[1])
+                sw2, sh2 = int(hw * 2), int(hh * 2)
+                if 0 <= sx < sw2 and 0 <= sy < sh2:
+                    label = ent.get("type", "?")
+                    font = _get_font(11)
+                    txt = font.render(label, True,
+                                      self._COL_ENT_SELECTED if is_selected
+                                      else (220, 220, 220))
+                    surface.blit(txt, (sx - txt.get_width() // 2, sy - 14))
 
-            # Top diamond
-            L(surface, vp, hw, hh, ex - r, top, ez, ex, top, ez - r, draw_col, lw)
-            L(surface, vp, hw, hh, ex, top, ez - r, ex + r, top, ez, draw_col, lw)
-            L(surface, vp, hw, hh, ex + r, top, ez, ex, top, ez + r, draw_col, lw)
-            L(surface, vp, hw, hh, ex, top, ez + r, ex - r, top, ez, draw_col, lw)
+    # ── Freeform box markers ──────────────────────────────────────
 
-            # Vertical edges connecting top and bottom diamonds
-            L(surface, vp, hw, hh, ex - r, ey, ez, ex - r, top, ez, draw_col, 1)
-            L(surface, vp, hw, hh, ex + r, ey, ez, ex + r, top, ez, draw_col, 1)
-            L(surface, vp, hw, hh, ex, ey, ez - r, ex, top, ez - r, draw_col, 1)
-            L(surface, vp, hw, hh, ex, ey, ez + r, ex, top, ez + r, draw_col, 1)
+    _COL_BOX_SELECTED = (255, 200, 60)
+    _COL_BOX_GHOST = (255, 210, 140)
 
-            # Facing direction line for directional entities
-            if edef and edef.directional:
-                angle = float(ent.get("angle", 0.0))
-                dx = math.cos(angle) * r * 2.5
-                dz = -math.sin(angle) * r * 2.5  # -sin: Z is flipped in 3D
-                mid_y = ey + mh
-                L(surface, vp, hw, hh,
-                  ex, mid_y, ez, ex + dx, mid_y, ez + dz, draw_col, 2)
+    def _draw_boxes(self, surface, vp, hw, hh, zone):
+        """Draw freeform boxes as rotated shaded boxes + ghost preview."""
+        boxes = getattr(zone, 'boxes', None)
+        selected_idx = getattr(self, '_box_selected', None)
+
+        if boxes:
+            for i, b in enumerate(boxes):
+                bx = float(b.get("x", 0))
+                bz = float(b.get("y", 0))
+                base_y = float(b.get("z", 0))
+                w_ = float(b.get("w", 1))
+                h_ = float(b.get("h", 1))
+                d_ = float(b.get("d", 1))
+                yaw = float(b.get("yaw", 0))
+
+                is_sel = (selected_idx is not None and i == selected_idx)
+                col = self._COL_BOX_SELECTED if is_sel else (200, 160, 80)
+                edge = self._COL_BOX_SELECTED if is_sel else (160, 130, 60)
+
+                self._filled_rotated_box(
+                    surface, vp, hw, hh,
+                    bx, bz, w_, h_, d_, base_y, yaw,
+                    base_color=col,
+                    edge_color=edge,
+                    edge_width=3 if is_sel else 1,
+                    alpha=255 if is_sel else 180,
+                )
+
+        # Ghost preview (box tool, nothing selected)
+        if (getattr(self, 'tool', '') == 'box'
+                and selected_idx is None
+                and getattr(self, 'aimed', None) is not None):
+            self._draw_box_ghost(surface, vp, hw, hh, zone)
+
+    def _draw_box_ghost(self, surface, vp, hw, hh, zone):
+        """Draw a translucent preview of the box about to be placed."""
+        hit = self.aimed
+        if hit is None:
+            return
+        fx, _, fz = self._forward()
+        ox, _, oz = self.cam_x, self.cam_y, self.cam_z
+        wx = ox + fx * hit.t
+        wz = oz + fz * hit.t
+        wx = max(0.1, min(zone.width - 0.1, wx))
+        wz = max(0.1, min(zone.height - 0.1, wz))
+
+        ci = max(0, min(zone.width - 1, int(wx)))
+        ri = max(0, min(zone.height - 1, int(wz)))
+        fh = zone.floor_heights[ri][ci] if zone.floor_heights else 0.0
+
+        self._filled_rotated_box(
+            surface, vp, hw, hh,
+            wx, wz,
+            self._box_w, self._box_h, self._box_d,
+            fh, self._box_yaw,
+            base_color=self._COL_BOX_GHOST,
+            edge_color=(255, 240, 180),
+            edge_width=1,
+            alpha=80,
+        )
 
     def _draw_cell_boxes(self, surface, vp, hw, hh, zone, W, H):
         aimed = self.aimed
@@ -310,6 +470,480 @@ class RenderingMixin:
         _draw_seg_edges(zone.wall_segments)
         _draw_seg_edges(zone.floor_step_segments)
         _draw_seg_edges(zone.ceil_step_segments)
+
+    # ── Per-cell tool overlays ────────────────────────────────────
+
+    def _draw_light_overlay(self, surface, vp, hw, hh, zone, W, H):
+        """Draw tinted floor quads showing light levels (active in light tool or when data exists)."""
+        if self.tool != "light":
+            return
+        ll = zone.light_levels
+        if not ll:
+            return
+        from core.tiles import tile_def as _td
+        aimed = self.aimed
+        for r in range(H):
+            for c in range(W):
+                v = ll[r][c]
+                if abs(v - 1.0) < 0.01:
+                    continue  # fully lit, skip
+                td = _td(zone.tiles[r][c])
+                if td and td.wall:
+                    continue
+                fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
+                # Darkness overlay: stronger alpha for darker cells
+                darkness = 1.0 - v
+                alpha = int(darkness * 120)
+                if alpha < 5:
+                    continue
+                is_aim = (aimed and aimed.row == r and aimed.col == c)
+                col = COL_TOOL_LIGHT if is_aim else (40, 30, 10)
+                a = min(160, alpha + 40) if is_aim else alpha
+                self._filled_box(surface, vp, hw, hh,
+                                 float(c), fh, float(r),
+                                 c + 1.0, fh + 0.02, r + 1.0,
+                                 col, COL_TOOL_LIGHT if is_aim else None,
+                                 2 if is_aim else 1, alpha=a)
+
+    def _draw_slope_arrows(self, surface, vp, hw, hh, zone, W, H):
+        """Draw directional arrows on cells with non-zero slope."""
+        if self.tool != "slope":
+            return
+        sdx = zone.floor_slope_dx
+        sdy = zone.floor_slope_dy
+        if not sdx and not sdy:
+            return
+        from core.tiles import tile_def as _td
+        aimed = self.aimed
+        axis = getattr(self, '_slope_axis', 'dx')
+        for r in range(H):
+            for c in range(W):
+                dx = sdx[r][c] if sdx else 0.0
+                dy = sdy[r][c] if sdy else 0.0
+                if abs(dx) < 0.01 and abs(dy) < 0.01:
+                    continue
+                td = _td(zone.tiles[r][c])
+                if td and td.wall:
+                    continue
+                fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
+                cx_w = c + 0.5
+                cz_w = r + 0.5
+                # Arrow from center in slope direction
+                is_aim = (aimed and aimed.row == r and aimed.col == c)
+                col = COL_TOOL_SLOPE if is_aim else (140, 160, 80)
+                w = 3 if is_aim else 2
+                mag = (dx * dx + dy * dy) ** 0.5
+                arrow_len = min(0.4, mag * 0.3)
+                if mag > 0.01:
+                    ndx = dx / mag
+                    ndy = dy / mag
+                else:
+                    continue
+                tx = cx_w + ndx * arrow_len
+                tz = cz_w + ndy * arrow_len
+                ty = fh + mag * 0.15
+                self._line3d(surface, vp, hw, hh,
+                             cx_w, fh + 0.02, cz_w,
+                             tx, ty + 0.02, tz, col, w)
+                # Arrowhead
+                perp_x = -ndy * 0.08
+                perp_z = ndx * 0.08
+                self._line3d(surface, vp, hw, hh,
+                             tx, ty + 0.02, tz,
+                             tx - ndx * 0.1 + perp_x, ty, tz - ndy * 0.1 + perp_z,
+                             col, w)
+                self._line3d(surface, vp, hw, hh,
+                             tx, ty + 0.02, tz,
+                             tx - ndx * 0.1 - perp_x, ty, tz - ndy * 0.1 - perp_z,
+                             col, w)
+        # Draw axis indicator on aimed cell
+        if aimed:
+            fh = zone.floor_heights[aimed.row][aimed.col] if zone.floor_heights else 0.0
+            cx_w = aimed.col + 0.5
+            cz_w = aimed.row + 0.5
+            if axis == "dx":
+                self._line3d(surface, vp, hw, hh,
+                             cx_w - 0.3, fh + 0.04, cz_w,
+                             cx_w + 0.3, fh + 0.04, cz_w,
+                             (255, 255, 150), 2)
+            else:
+                self._line3d(surface, vp, hw, hh,
+                             cx_w, fh + 0.04, cz_w - 0.3,
+                             cx_w, fh + 0.04, cz_w + 0.3,
+                             (255, 255, 150), 2)
+
+    def _draw_reflect_overlay(self, surface, vp, hw, hh, zone, W, H):
+        """Draw blue-tinted floor quads showing reflectivity."""
+        if self.tool != "reflect":
+            return
+        rm = zone.reflect_map
+        if not rm:
+            return
+        from core.tiles import tile_def as _td
+        aimed = self.aimed
+        for r in range(H):
+            for c in range(W):
+                v = rm[r][c]
+                if v < 1:
+                    continue
+                td = _td(zone.tiles[r][c])
+                if td and td.wall:
+                    continue
+                fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
+                alpha = int(v / 255.0 * 100) + 20
+                is_aim = (aimed and aimed.row == r and aimed.col == c)
+                col = COL_TOOL_REFLECT
+                a = min(180, alpha + 40) if is_aim else alpha
+                self._filled_box(surface, vp, hw, hh,
+                                 float(c), fh, float(r),
+                                 c + 1.0, fh + 0.02, r + 1.0,
+                                 col, col if is_aim else None,
+                                 2 if is_aim else 1, alpha=a)
+
+    def _draw_layer2_slabs(self, surface, vp, hw, hh, zone, W, H):
+        """Draw secondary floor/ceiling surfaces as wireframe rectangles."""
+        if self.tool != "layer2":
+            return
+        f2 = getattr(zone, 'floor2_heights', None)
+        c2 = getattr(zone, 'ceil2_heights', None)
+        if not f2 and not c2:
+            return
+        from editor.view_3d.tools_layer2 import LAYER_NONE
+        aimed = self.aimed
+        target = getattr(self, '_layer2_target', 'floor2')
+        for r in range(H):
+            for c in range(W):
+                is_aim = (aimed and aimed.row == r and aimed.col == c)
+                # Floor2
+                if f2:
+                    fv = f2[r][c]
+                    if fv > LAYER_NONE + 1.0:
+                        col = COL_TOOL_LAYER2 if (is_aim and target == "floor2") else (160, 120, 200)
+                        w = 3 if is_aim else 2
+                        self._filled_box(surface, vp, hw, hh,
+                                         float(c), fv, float(r),
+                                         c + 1.0, fv + 0.04, r + 1.0,
+                                         col, col, w, alpha=80 if is_aim else 50)
+                # Ceil2
+                if c2:
+                    cv = c2[r][c]
+                    if cv > LAYER_NONE + 1.0:
+                        col = (180, 140, 240) if (is_aim and target == "ceil2") else (130, 100, 180)
+                        w = 3 if is_aim else 2
+                        self._filled_box(surface, vp, hw, hh,
+                                         float(c), cv - 0.04, float(r),
+                                         c + 1.0, cv, r + 1.0,
+                                         col, col, w, alpha=80 if is_aim else 50)
+
+    def _draw_fog_overlay(self, surface, vp, hw, hh, zone, W, H):
+        """Draw semi-transparent volumes showing fog density."""
+        if self.tool != "fog":
+            return
+        fd = zone.fog_density
+        if not fd:
+            return
+        from core.tiles import tile_def as _td
+        aimed = self.aimed
+        for r in range(H):
+            for c in range(W):
+                v = fd[r][c]
+                if v < 0.01:
+                    continue
+                td = _td(zone.tiles[r][c])
+                if td and td.wall:
+                    continue
+                fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
+                ch = zone.ceil_heights[r][c] if zone.ceil_heights else 1.0
+                alpha = int(v * 60) + 10
+                is_aim = (aimed and aimed.row == r and aimed.col == c)
+                col = COL_TOOL_FOG
+                a = min(120, alpha + 30) if is_aim else alpha
+                self._filled_box(surface, vp, hw, hh,
+                                 float(c) + 0.05, fh + 0.01, float(r) + 0.05,
+                                 c + 0.95, ch - 0.01, r + 0.95,
+                                 col, col if is_aim else None,
+                                 2 if is_aim else 1, alpha=a)
+
+    # ── Discrete object overlays ──────────────────────────────────
+
+    def _draw_quads(self, surface, vp, hw, hh, zone):
+        """Draw all quads as vertical rectangles + ghost preview."""
+        quads = getattr(zone, 'quads', None)
+        selected = getattr(self, '_quad_selected', None)
+        if quads:
+            for i, q in enumerate(quads):
+                qx = float(q.get("x", 0.0))
+                qz = float(q.get("z", 0.0))
+                by = float(q.get("base_y", 0.0))
+                w = float(q.get("width", 1.0))
+                h = float(q.get("height", 1.0))
+                angle = float(q.get("angle", 0.0))
+                is_sel = (selected is not None and i == selected)
+
+                # Compute two endpoints of the quad plane
+                cos_a = math.cos(angle)
+                sin_a = math.sin(angle)
+                hw2 = w * 0.5
+                x0 = qx - cos_a * hw2
+                z0 = qz + sin_a * hw2
+                x1 = qx + cos_a * hw2
+                z1 = qz - sin_a * hw2
+
+                col = COL_TOOL_QUAD if is_sel else (200, 110, 140)
+                ew = 3 if is_sel else 1
+                # Bottom edge
+                self._line3d(surface, vp, hw, hh, x0, by, z0, x1, by, z1, col, ew)
+                # Top edge
+                self._line3d(surface, vp, hw, hh, x0, by + h, z0, x1, by + h, z1, col, ew)
+                # Left edge
+                self._line3d(surface, vp, hw, hh, x0, by, z0, x0, by + h, z0, col, ew)
+                # Right edge
+                self._line3d(surface, vp, hw, hh, x1, by, z1, x1, by + h, z1, col, ew)
+                # Diagonal cross for visibility
+                if is_sel:
+                    self._line3d(surface, vp, hw, hh, x0, by, z0, x1, by + h, z1, col, 1)
+
+        # Ghost preview
+        if (getattr(self, 'tool', '') == 'quad'
+                and selected is None
+                and getattr(self, 'aimed', None) is not None):
+            self._draw_quad_ghost(surface, vp, hw, hh, zone)
+
+    def _draw_quad_ghost(self, surface, vp, hw, hh, zone):
+        """Draw translucent preview of quad about to be placed."""
+        hit = self.aimed
+        if hit is None:
+            return
+        fx, _, fz = self._forward()
+        ox, _, oz = self.cam_x, self.cam_y, self.cam_z
+        wx = ox + fx * hit.t
+        wz = oz + fz * hit.t
+        wx = max(0.1, min(zone.width - 0.1, wx))
+        wz = max(0.1, min(zone.height - 0.1, wz))
+        ci = max(0, min(zone.width - 1, int(wx)))
+        ri = max(0, min(zone.height - 1, int(wz)))
+        fh = zone.floor_heights[ri][ci] if zone.floor_heights else 0.0
+
+        w = getattr(self, '_quad_width', 1.0)
+        h = getattr(self, '_quad_height', 1.0)
+        yaw = getattr(self, '_quad_yaw', 0.0)
+        cos_a = math.cos(yaw)
+        sin_a = math.sin(yaw)
+        hw2 = w * 0.5
+        x0 = wx - cos_a * hw2
+        z0 = wz + sin_a * hw2
+        x1 = wx + cos_a * hw2
+        z1 = wz - sin_a * hw2
+
+        ghost_col = (255, 180, 210)
+        self._line3d(surface, vp, hw, hh, x0, fh, z0, x1, fh, z1, ghost_col, 1)
+        self._line3d(surface, vp, hw, hh, x0, fh + h, z0, x1, fh + h, z1, ghost_col, 1)
+        self._line3d(surface, vp, hw, hh, x0, fh, z0, x0, fh + h, z0, ghost_col, 1)
+        self._line3d(surface, vp, hw, hh, x1, fh, z1, x1, fh + h, z1, ghost_col, 1)
+
+    def _draw_portals(self, surface, vp, hw, hh, zone):
+        """Draw portal face markers and destination lines."""
+        portals = getattr(zone, 'render_portals', None)
+        if not portals:
+            return
+        selected = getattr(self, '_portal_selected', None)
+        _face_offsets = {
+            0: (0.0, 0.5, "north"),   # N face: z=r, x spans c..c+1
+            1: (0.0, 0.5, "south"),   # S face: z=r+1
+            2: (0.5, 0.0, "east"),    # E face: x=c+1
+            3: (0.5, 0.0, "west"),    # W face: x=c
+        }
+        _face_corners = {
+            0: lambda c, r, fh, ch: [(c, fh, r), (c+1, fh, r), (c+1, ch, r), (c, ch, r)],
+            1: lambda c, r, fh, ch: [(c+1, fh, r+1), (c, fh, r+1), (c, ch, r+1), (c+1, ch, r+1)],
+            2: lambda c, r, fh, ch: [(c+1, fh, r), (c+1, fh, r+1), (c+1, ch, r+1), (c+1, ch, r)],
+            3: lambda c, r, fh, ch: [(c, fh, r+1), (c, fh, r), (c, ch, r), (c, ch, r+1)],
+        }
+
+        for i, p in enumerate(portals):
+            cell = p.get("cell", [0, 0])
+            face = int(p.get("face", 0))
+            r, c = int(cell[0]), int(cell[1])
+            if r < 0 or r >= zone.height or c < 0 or c >= zone.width:
+                continue
+            fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
+            ch = zone.ceil_heights[r][c] if zone.ceil_heights else 1.0
+
+            is_sel = (selected is not None and i == selected)
+            col = COL_TOOL_PORTAL if is_sel else (60, 200, 180)
+            ew = 3 if is_sel else 2
+
+            # Draw portal face outline
+            corners_fn = _face_corners.get(face)
+            if corners_fn:
+                corners = corners_fn(c, r, fh, ch)
+                for ci2 in range(4):
+                    cj = (ci2 + 1) % 4
+                    self._line3d(surface, vp, hw, hh,
+                                 *corners[ci2], *corners[cj], col, ew)
+                # Fill with translucent colour
+                poly = _project_poly(vp, corners, hw, hh)
+                if poly is not None:
+                    xs = [pt[0] for pt in poly]
+                    ys = [pt[1] for pt in poly]
+                    sw2, sh2 = int(hw * 2), int(hh * 2)
+                    if not (max(xs) < -50 or min(xs) > sw2 + 50
+                            or max(ys) < -50 or min(ys) > sh2 + 50):
+                        try:
+                            min_x = max(0, min(xs))
+                            min_y = max(0, min(ys))
+                            max_x = min(sw2, max(xs))
+                            max_y = min(sh2, max(ys))
+                            tw = max_x - min_x + 1
+                            th = max_y - min_y + 1
+                            if tw > 0 and th > 0:
+                                tmp = pygame.Surface((tw, th), pygame.SRCALPHA)
+                                off = [(px - min_x, py - min_y) for px, py in poly]
+                                fill_a = 80 if is_sel else 40
+                                pygame.draw.polygon(tmp, (*col, fill_a), off)
+                                surface.blit(tmp, (min_x, min_y))
+                        except (ValueError, OverflowError):
+                            pass
+
+            # Destination line for selected portal
+            if is_sel:
+                dx = float(p.get("dest_x", c + 0.5))
+                dy = float(p.get("dest_y", r + 0.5))
+                mid_y = (fh + ch) * 0.5
+                face_cx = c + 0.5
+                face_cz = r + 0.5
+                if face == 0:
+                    face_cz = float(r)
+                elif face == 1:
+                    face_cz = float(r + 1)
+                elif face == 2:
+                    face_cx = float(c + 1)
+                elif face == 3:
+                    face_cx = float(c)
+                self._line3d(surface, vp, hw, hh,
+                             face_cx, mid_y, face_cz,
+                             dx, mid_y, dy,
+                             (255, 255, 100), 2)
+                # Destination marker
+                self._line3d(surface, vp, hw, hh,
+                             dx - 0.1, mid_y - 0.1, dy,
+                             dx + 0.1, mid_y + 0.1, dy,
+                             (255, 255, 100), 2)
+                self._line3d(surface, vp, hw, hh,
+                             dx, mid_y - 0.1, dy - 0.1,
+                             dx, mid_y + 0.1, dy + 0.1,
+                             (255, 255, 100), 2)
+
+    def _draw_curves(self, surface, vp, hw, hh, zone):
+        """Draw all curves as arc wireframes + ghost preview."""
+        curves = getattr(zone, 'curves', None)
+        selected = getattr(self, '_curve_selected', None)
+        N_SAMPLES = 16  # arc sample count
+
+        if curves:
+            for i, cv in enumerate(curves):
+                cx = float(cv.get("cx", 0.0))
+                cy = float(cv.get("cy", 0.0))
+                rad = float(cv.get("radius", 1.0))
+                a0 = float(cv.get("angle_start", 0.0))
+                a1 = float(cv.get("angle_end", math.pi))
+                hs = float(cv.get("height_scale", 1.0))
+                by = float(cv.get("base_y", 0.0))
+
+                is_sel = (selected is not None and i == selected)
+                col = COL_TOOL_CURVE if is_sel else (200, 160, 80)
+                ew = 3 if is_sel else 1
+
+                # Sample arc points
+                pts = []
+                for s in range(N_SAMPLES + 1):
+                    t = s / N_SAMPLES
+                    a = a0 + (a1 - a0) * t
+                    px = cx + rad * math.cos(a)
+                    pz = cy + rad * math.sin(a)
+                    pts.append((px, pz))
+
+                # Bottom arc
+                for j in range(len(pts) - 1):
+                    self._line3d(surface, vp, hw, hh,
+                                 pts[j][0], by, pts[j][1],
+                                 pts[j+1][0], by, pts[j+1][1],
+                                 col, ew)
+                # Top arc
+                top_y = by + hs
+                for j in range(len(pts) - 1):
+                    self._line3d(surface, vp, hw, hh,
+                                 pts[j][0], top_y, pts[j][1],
+                                 pts[j+1][0], top_y, pts[j+1][1],
+                                 col, ew)
+                # Vertical edges (at endpoints and a few samples)
+                for j in (0, N_SAMPLES // 4, N_SAMPLES // 2,
+                          3 * N_SAMPLES // 4, N_SAMPLES):
+                    if j < len(pts):
+                        self._line3d(surface, vp, hw, hh,
+                                     pts[j][0], by, pts[j][1],
+                                     pts[j][0], top_y, pts[j][1],
+                                     col, ew)
+
+                # Centre marker for selected
+                if is_sel:
+                    mid_y = by + hs * 0.5
+                    self._line3d(surface, vp, hw, hh,
+                                 cx - 0.1, mid_y, cy,
+                                 cx + 0.1, mid_y, cy,
+                                 (255, 255, 200), 2)
+                    self._line3d(surface, vp, hw, hh,
+                                 cx, mid_y, cy - 0.1,
+                                 cx, mid_y, cy + 0.1,
+                                 (255, 255, 200), 2)
+
+        # Ghost preview
+        if (getattr(self, 'tool', '') == 'curve'
+                and selected is None
+                and getattr(self, 'aimed', None) is not None):
+            self._draw_curve_ghost(surface, vp, hw, hh, zone, N_SAMPLES)
+
+    def _draw_curve_ghost(self, surface, vp, hw, hh, zone, n_samples):
+        """Draw translucent preview of curve about to be placed."""
+        hit = self.aimed
+        if hit is None:
+            return
+        fx, _, fz = self._forward()
+        ox, _, oz = self.cam_x, self.cam_y, self.cam_z
+        wx = ox + fx * hit.t
+        wz = oz + fz * hit.t
+        wx = max(0.1, min(zone.width - 0.1, wx))
+        wz = max(0.1, min(zone.height - 0.1, wz))
+        ci = max(0, min(zone.width - 1, int(wx)))
+        ri = max(0, min(zone.height - 1, int(wz)))
+        fh = zone.floor_heights[ri][ci] if zone.floor_heights else 0.0
+
+        rad = getattr(self, '_curve_radius', 1.0)
+        ghost_col = (220, 190, 130)
+        a0 = 0.0
+        a1 = math.pi
+        pts = []
+        for s in range(n_samples + 1):
+            t = s / n_samples
+            a = a0 + (a1 - a0) * t
+            px = wx + rad * math.cos(a)
+            pz = wz + rad * math.sin(a)
+            pts.append((px, pz))
+        for j in range(len(pts) - 1):
+            self._line3d(surface, vp, hw, hh,
+                         pts[j][0], fh, pts[j][1],
+                         pts[j+1][0], fh, pts[j+1][1],
+                         ghost_col, 1)
+            self._line3d(surface, vp, hw, hh,
+                         pts[j][0], fh + 1.0, pts[j][1],
+                         pts[j+1][0], fh + 1.0, pts[j+1][1],
+                         ghost_col, 1)
+        for j in (0, n_samples):
+            if j < len(pts):
+                self._line3d(surface, vp, hw, hh,
+                             pts[j][0], fh, pts[j][1],
+                             pts[j][0], fh + 1.0, pts[j][1],
+                             ghost_col, 1)
 
     def _draw_face_hl_and_preview(self, surface, vp, hw, hh, sw, sh):
         aimed = self.aimed
@@ -551,6 +1185,44 @@ class RenderingMixin:
                 lines.append(("CAPTURE NAME:", (255, 220, 80)))
                 lines.append((f"> {cap_name}_", (255, 255, 200)))
 
+        # ── New tool HUD info ─────────────────────────────────────
+        if self.tool == "light":
+            step = getattr(self, '_light_step', 0.1)
+            lines.append((f"Step: {step:.2f}", COL_TOOL_LIGHT))
+        elif self.tool == "slope":
+            axis = getattr(self, '_slope_axis', 'dx')
+            step = getattr(self, '_slope_step', 0.25)
+            lines.append((f"Axis: {axis}  (X)", COL_TOOL_SLOPE))
+            lines.append((f"Step: {step:.2f}", COL_TOOL_SLOPE))
+        elif self.tool == "reflect":
+            step = getattr(self, '_reflect_step', 32)
+            lines.append((f"Step: {step}", COL_TOOL_REFLECT))
+        elif self.tool == "layer2":
+            tgt = getattr(self, '_layer2_target', 'floor2')
+            lines.append((f"Target: {tgt}  (X)", COL_TOOL_LAYER2))
+        elif self.tool == "quad":
+            sel = getattr(self, '_quad_selected', None)
+            if sel is not None:
+                lines.append((f"Quad #{sel} selected", COL_TOOL_QUAD))
+            else:
+                w = getattr(self, '_quad_width', 1.0)
+                h = getattr(self, '_quad_height', 1.0)
+                lines.append((f"Size: {w:.1f}x{h:.1f}", COL_TOOL_QUAD))
+        elif self.tool == "portal":
+            sel = getattr(self, '_portal_selected', None)
+            if sel is not None:
+                lines.append((f"Portal #{sel} selected", COL_TOOL_PORTAL))
+        elif self.tool == "curve":
+            sel = getattr(self, '_curve_selected', None)
+            if sel is not None:
+                lines.append((f"Curve #{sel} selected", COL_TOOL_CURVE))
+            else:
+                rad = getattr(self, '_curve_radius', 1.0)
+                lines.append((f"Radius: {rad:.2f}", COL_TOOL_CURVE))
+        elif self.tool == "fog":
+            step = getattr(self, '_fog_step', 0.1)
+            lines.append((f"Step: {step:.2f}", COL_TOOL_FOG))
+
         hit = self.aimed
         if hit:
             zone = self.zone
@@ -602,6 +1274,35 @@ class RenderingMixin:
                                 lines.append(
                                     (f" Y: {seg_bot:.2f}..{seg_top_val:.2f}",
                                      (180, 180, 180)))
+
+            # Tool-specific cell data
+            if self.tool == "light":
+                ll = zone.light_levels
+                lv = ll[r][c] if ll and r < len(ll) and c < len(ll[r]) else 1.0
+                lines.append((f"Light: {lv:.2f}", COL_TOOL_LIGHT))
+            elif self.tool == "slope":
+                sdx = zone.floor_slope_dx
+                sdy = zone.floor_slope_dy
+                dx_v = sdx[r][c] if sdx and r < len(sdx) and c < len(sdx[r]) else 0.0
+                dy_v = sdy[r][c] if sdy and r < len(sdy) and c < len(sdy[r]) else 0.0
+                lines.append((f"Slope: dx={dx_v:.2f} dy={dy_v:.2f}", COL_TOOL_SLOPE))
+            elif self.tool == "reflect":
+                rm = zone.reflect_map
+                rv = rm[r][c] if rm and r < len(rm) and c < len(rm[r]) else 0
+                lines.append((f"Reflect: {rv}", COL_TOOL_REFLECT))
+            elif self.tool == "layer2":
+                from editor.view_3d.tools_layer2 import LAYER_NONE as _LN
+                f2 = getattr(zone, 'floor2_heights', None)
+                c2h = getattr(zone, 'ceil2_heights', None)
+                fv = f2[r][c] if f2 and r < len(f2) and c < len(f2[r]) else _LN
+                cv = c2h[r][c] if c2h and r < len(c2h) and c < len(c2h[r]) else _LN
+                f_str = f"{fv:.2f}" if fv > _LN + 1 else "\u2014"
+                c_str = f"{cv:.2f}" if cv > _LN + 1 else "\u2014"
+                lines.append((f"Floor2: {f_str}  Ceil2: {c_str}", COL_TOOL_LAYER2))
+            elif self.tool == "fog":
+                fd = zone.fog_density
+                fv = fd[r][c] if fd and r < len(fd) and c < len(fd[r]) else 0.0
+                lines.append((f"Fog: {fv:.2f}", COL_TOOL_FOG))
 
         max_w = max((font.size(t)[0] for t, _ in lines if t), default=80)
         bg_h = len(lines) * lh + pad * 2

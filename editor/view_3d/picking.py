@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from editor.view_3d.math3d import FAR_CLIP
@@ -109,3 +110,43 @@ class _CellHit:
     part: str      # "wall", "floor", "ceiling"
     face: str      # "west","east","north","south","top","bot","ground"
     hit_y: float = 0.0  # world-space Y coordinate of the hit point
+
+
+def _ray_vs_obb(
+    ox: float, oy: float, oz: float,
+    dx: float, dy: float, dz: float,
+    bx: float, bz: float, base_y: float,
+    w: float, h: float, d: float,
+    yaw: float,
+) -> tuple[float, str] | None:
+    """Intersect a ray with an oriented bounding box (yaw rotation only).
+
+    *bx, bz* -- world centre of the box (X, Z).
+    *base_y* -- bottom Y.
+    *w, d* -- full width (local-X) and depth (local-Z).
+    *h* -- full height (Y).
+    *yaw* -- rotation angle in radians around the Y axis.
+
+    Returns ``(t, face)`` for the nearest hit, or ``None``.
+    Face names: ``'west','east','bot','top','north','south'``.
+    """
+    cos_y = math.cos(yaw)
+    sin_y = math.sin(yaw)
+
+    # Transform ray into box-local space (rotate around box centre).
+    rel_ox = ox - bx
+    rel_oz = oz - bz
+    loc_ox =  rel_ox * cos_y + rel_oz * sin_y
+    loc_oz = -rel_ox * sin_y + rel_oz * cos_y
+    loc_dx =  dx * cos_y + dz * sin_y
+    loc_dz = -dx * sin_y + dz * cos_y
+
+    # AABB in local space: [-hw, hw] × [base_y, base_y+h] × [-hd, hd]
+    hw = w * 0.5
+    hd = d * 0.5
+    return _ray_vs_aabb(
+        loc_ox, oy, loc_oz,
+        loc_dx, dy, loc_dz,
+        -hw, base_y, -hd,
+        hw, base_y + h, hd,
+    )

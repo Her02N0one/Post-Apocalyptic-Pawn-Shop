@@ -21,14 +21,20 @@ from setuptools import setup, Extension
 
 # Optimisation flags for the C extensions
 _extra_compile = []
+_extra_link = []
 if platform.system() != "Windows":
-    _extra_compile = ["-O2", "-ffast-math"]
+    _extra_compile = ["-O2", "-ffast-math", "-fopenmp"]
+    _extra_link = ["-fopenmp"]
+else:
+    _extra_compile = ["/openmp"]
+    _extra_link = []
 
 ext_cast = Extension(
     "engine._fast_cast",
     sources=["engine/_fast_cast.c"],
     language="c",
     extra_compile_args=_extra_compile,
+    extra_link_args=_extra_link,
 )
 
 ext_walls = Extension(
@@ -36,6 +42,7 @@ ext_walls = Extension(
     sources=["engine/_fast_walls.c"],
     language="c",
     extra_compile_args=_extra_compile,
+    extra_link_args=_extra_link,
 )
 
 ext_ray_render = Extension(
@@ -47,6 +54,7 @@ ext_ray_render = Extension(
     ],
     language="c",
     extra_compile_args=_extra_compile,
+    extra_link_args=_extra_link,
 )
 
 setup(

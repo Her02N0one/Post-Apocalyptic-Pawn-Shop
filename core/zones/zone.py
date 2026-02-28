@@ -98,6 +98,37 @@ class Zone:
     upper_wall_height: list[list[float]] = field(default_factory=list)
     # Free-form wall segments (fences, partitions, diagonal walls)
     overlay_walls: list[OverlayWall] = field(default_factory=list)
+    # Two-sided quads (fences, barricades, thin decals).
+    # Each entry: dict with keys cell, pos, angle, width, height,
+    # base_y, texture, collision, two_sided.
+    quads: list[dict[str, Any]] = field(default_factory=list)
+    # Each entry: dict with keys x, y, z, w, h, d, yaw, textures, collision.
+    boxes: list[dict[str, Any]] = field(default_factory=list)
+    # Per-cell floor reflectivity (0=none, 1–255 = reflection opacity).
+    reflect_map: list[list[int]] = field(default_factory=list)
+    # Curved / cylindrical wall arcs.
+    # Each entry: dict with keys cx, cy, radius, angle_start, angle_end,
+    # height_scale, base_y, texture, flags.
+    curves: list[dict[str, Any]] = field(default_factory=list)
+    # Per-cell floor slope: slope_dx[r][c] and slope_dy[r][c] represent
+    # height change per unit in X and Y directions across the cell.
+    # The centre of the cell is at fheight[r][c]; edges differ by ±0.5*slope.
+    floor_slope_dx: list[list[float]] = field(default_factory=list)
+    floor_slope_dy: list[list[float]] = field(default_factory=list)
+    # ── Multi-layer floor/ceiling (secondary layer per cell) ────
+    # -1000.0 sentinel = no secondary surface at this cell.
+    floor2_heights: list[list[float]] = field(default_factory=list)
+    ceil2_heights: list[list[float]] = field(default_factory=list)
+    floor2_textures: list[list[str]] = field(default_factory=list)
+    ceil2_textures: list[list[str]] = field(default_factory=list)
+    # ── Per-cell fog volume (density + colour) ─────────────────
+    # fog_density[r][c] = 0.0..1.0, fog_color[r][c] = (R,G,B) 0–255.
+    fog_density: list[list[float]] = field(default_factory=list)
+    fog_color: list[list[tuple]] = field(default_factory=list)
+    # ── Portal rendering (same-zone non-Euclidean geometry) ─────
+    # Each entry: dict with keys cell (row,col), face (0..3),
+    # dest_x, dest_y, angle_offset (radians, 0 = no rotation).
+    render_portals: list[dict[str, Any]] = field(default_factory=list)
     # Compiled numpy arrays (populated when loaded from .zone binary).
     # Dict keys: navi_grid, floor_z, ceil_z, textures, light_levels.
     # None when the Zone was created in-memory (e.g. by the editor).
@@ -248,6 +279,19 @@ class Zone:
             ceil_step_segments=_grid_seg_or_default("ceil_step_segments", H, W),
             upper_wall_height=_grid_or_default("upper_wall_height", 0.0, H, W),
             overlay_walls=overlay_walls,
+            quads=data.get("quads", []),
+            boxes=data.get("boxes", []),
+            reflect_map=_grid_or_default("reflect_map", 0, H, W),
+            curves=data.get("curves", []),
+            floor_slope_dx=_grid_or_default("floor_slope_dx", 0.0, H, W),
+            floor_slope_dy=_grid_or_default("floor_slope_dy", 0.0, H, W),
+            floor2_heights=_grid_or_default("floor2_heights", -1000.0, H, W),
+            ceil2_heights=_grid_or_default("ceil2_heights", -1000.0, H, W),
+            floor2_textures=_grid_or_default("floor2_textures", "", H, W),
+            ceil2_textures=_grid_or_default("ceil2_textures", "", H, W),
+            fog_density=_grid_or_default("fog_density", 0.0, H, W),
+            fog_color=data.get("fog_color", [[(128, 128, 128)] * W for _ in range(H)]),
+            render_portals=data.get("render_portals", []),
             compiled=compiled,
         )
 

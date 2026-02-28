@@ -224,3 +224,21 @@ def alt_tex_lut() -> list[int]:
                 out[i] = alt_id
     return out
 
+
+def anim_lut() -> list[int]:
+    """Build animated-texture LUT: 4 ints per tile.
+
+    Layout per tile: ``[base_id, n_frames, stride, ticks_per_frame]``.
+    For static tiles ``n_frames == 1`` and the resolver is a no-op.
+    """
+    n = max(len(_INT_REV), 1)
+    lut: list[int] = []
+    for i in range(n):
+        key = _INT_REV.get(i)
+        td = TILE_REGISTRY.get(key) if key else None
+        if td and getattr(td, "anim_frames", 1) > 1:
+            lut.extend([i, td.anim_frames, td.anim_stride, td.anim_ticks])
+        else:
+            lut.extend([i, 1, 1, 1])
+    return lut
+

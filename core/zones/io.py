@@ -178,6 +178,19 @@ def save_binary_zone(
                 "floor_step_segments": zone.floor_step_segments,
                 "ceil_step_segments": zone.ceil_step_segments,
                 "upper_wall_height": zone.upper_wall_height,
+                "boxes": zone.boxes,
+                "quads": zone.quads,
+                "reflect_map": zone.reflect_map,
+                "curves": zone.curves,
+                "floor_slope_dx": zone.floor_slope_dx,
+                "floor_slope_dy": zone.floor_slope_dy,
+                "floor2_heights": zone.floor2_heights,
+                "ceil2_heights": zone.ceil2_heights,
+                "floor2_textures": zone.floor2_textures,
+                "ceil2_textures": zone.ceil2_textures,
+                "fog_density": zone.fog_density,
+                "fog_color": zone.fog_color,
+                "render_portals": zone.render_portals,
             }
             enty_bytes = msgpack.packb(enty_payload, use_bin_type=True)
             _write_chunk(f, CHUNK_ENTY, enty_bytes)
@@ -346,6 +359,19 @@ def load_binary_zone(
                     result["floor_step_segments"] = enty.get("floor_step_segments", [])
                     result["ceil_step_segments"] = enty.get("ceil_step_segments", [])
                     result["upper_wall_height"] = enty.get("upper_wall_height", [])
+                    result["boxes"] = enty.get("boxes", [])
+                    result["quads"] = enty.get("quads", [])
+                    result["reflect_map"] = enty.get("reflect_map", [])
+                    result["curves"] = enty.get("curves", [])
+                    result["floor_slope_dx"] = enty.get("floor_slope_dx", [])
+                    result["floor_slope_dy"] = enty.get("floor_slope_dy", [])
+                    result["floor2_heights"] = enty.get("floor2_heights", [])
+                    result["ceil2_heights"] = enty.get("ceil2_heights", [])
+                    result["floor2_textures"] = enty.get("floor2_textures", [])
+                    result["ceil2_textures"] = enty.get("ceil2_textures", [])
+                    result["fog_density"] = enty.get("fog_density", [])
+                    result["fog_color"] = enty.get("fog_color", [])
+                    result["render_portals"] = enty.get("render_portals", [])
 
                 # -- Unknown chunk — skip ---------------------------
                 else:
@@ -377,6 +403,19 @@ def load_binary_zone(
             result.setdefault("floor_step_segments", [])
             result.setdefault("ceil_step_segments", [])
             result.setdefault("upper_wall_height", [])
+            result.setdefault("boxes", [])
+            result.setdefault("quads", [])
+            result.setdefault("reflect_map", [])
+            result.setdefault("curves", [])
+            result.setdefault("floor_slope_dx", [])
+            result.setdefault("floor_slope_dy", [])
+            result.setdefault("floor2_heights", [])
+            result.setdefault("ceil2_heights", [])
+            result.setdefault("floor2_textures", [])
+            result.setdefault("ceil2_textures", [])
+            result.setdefault("fog_density", [])
+            result.setdefault("fog_color", [])
+            result.setdefault("render_portals", [])
 
             return result
 

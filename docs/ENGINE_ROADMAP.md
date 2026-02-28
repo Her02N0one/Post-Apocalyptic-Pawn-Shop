@@ -7,7 +7,7 @@
 
 ## Phase 1 — Transparency & Two-Sided Quads
 
-### 1. RGBA Atlas + Alpha Compositing
+### 1. RGBA Atlas + Alpha Compositing ✅
 
 **What:** The texture atlas is currently RGB (3 bytes per texel).  Add a
 fourth alpha channel so textures can contain transparent regions — glass
@@ -30,7 +30,7 @@ extra channel from PNG source images.
 
 ---
 
-### 2. Ray-Continues-After-Hit for Transparent Walls
+### 2. Ray-Continues-After-Hit for Transparent Walls ✅
 
 **What:** The DDA loop (`PHASE 1`) currently breaks on the first solid
 wall.  For glass, fences, and other see-through materials the ray must
@@ -51,7 +51,7 @@ all deferred hits far-to-near and draw them with alpha blending.
 
 ---
 
-### 3. Two-Sided Quad Intersection (Thin Decals & Fences)
+### 3. Two-Sided Quad Intersection (Thin Decals & Fences) ✅
 
 **What:** A new geometry type: arbitrary-angle line segments within cells.
 Not axis-aligned like thin walls — free rotation for fences, barricades,
@@ -85,7 +85,7 @@ in the 3D editor.
 
 ## Phase 2 — Entity Billboards
 
-### 4. Complete Per-Pixel Depth Buffer Writes
+### 4. Complete Per-Pixel Depth Buffer Writes ✅
 
 **What:** `depth_px[sw * sh]` exists but floors and ceilings only write
 depth in the step-wall paths.  Every rendered floor pixel, ceiling pixel,
@@ -100,7 +100,7 @@ the standard flat-floor path.
 
 ---
 
-### 5. Multi-Facing Sprite Support in `render_entities`
+### 5. Multi-Facing Sprite Support in `render_entities` ✅
 
 **What:** Currently each entity has one `tex_id`.  Radial billboards need
 the renderer to select from N textures based on the angle between camera
@@ -125,7 +125,7 @@ normalise to `[0, 2π)`, then `tex_id = base_tex + anim_offset + (int)(relative_
 
 ---
 
-### 6. Static Billboard Entity Placement in Editor
+### 6. Static Billboard Entity Placement in Editor ✅
 
 **What:** Entities need a world-space position (not grid-locked), rendered
 as camera-facing quads in the 3D editor view.  
@@ -143,7 +143,7 @@ game session instantiates them with full ECS components via `spawner.py`.
 
 ## Phase 3 — Lighting
 
-### 7. Point Light Accumulation Buffer
+### 7. Point Light Accumulation Buffer ✅
 
 **What:** The current `light_grid` is per-cell (Doom-style sector
 lighting).  Point lights need per-pixel contributions.
@@ -165,7 +165,7 @@ multiplier, then apply after texture sampling.
 
 ---
 
-### 8. Shadow Casting from Lights
+### 8. Shadow Casting from Lights ✅
 
 **What:** After computing light contributions, determine visibility between
 each lit pixel and its light sources.
@@ -183,7 +183,7 @@ only when geometry changes).  The per-pixel lookup is a single bit test.
 
 ## Phase 4 — Freeform Geometry
 
-### 9. Freeform Box Ray Intersection
+### 9. Freeform Box Ray Intersection ✅
 
 **What:** Sub-grid rotatable boxes — furniture, crates, counters, shelves
 that aren't confined to the tile grid.
@@ -212,7 +212,7 @@ AABB overlaps cells along its path.
 
 ---
 
-### 10. Box Placement & Rotation Tool in Editor
+### 10. Box Placement & Rotation Tool in Editor ✅
 
 **What:** 3D editor tool for placing, sizing, and rotating freeform boxes.
 
@@ -230,7 +230,7 @@ matrix before projection.
 
 ## Phase 5 — Architecture & Performance
 
-### 11. Argument Struct Refactor
+### 11. Argument Struct Refactor ✅
 
 **What:** `py_render_frame` currently takes **40+ positional arguments**
 through `PyArg_ParseTuple` — one of the longest format strings in any
@@ -254,7 +254,7 @@ item format string.
 
 ---
 
-### 12. Threaded Column Rendering
+### 12. Threaded Column Rendering ✅
 
 **What:** Each column's DDA walk and floor/ceiling sweep is independent.
 Split columns across N worker threads.
@@ -273,7 +273,7 @@ thread's deferred hits independently (they don't overlap in screen space).
 
 ## Phase 6 — Visual Quality
 
-### 13. Skybox / Environment Map Rendering
+### 13. Skybox / Environment Map Rendering ✅
 
 **What:** Replace the hardcoded linear gradient in `fill_background` with a
 cylindrical panoramic texture.  For each pixel above the horizon not
@@ -292,7 +292,7 @@ ceilings with painted murals.
 
 ---
 
-### 14. Animated Texture Support (Texture Ticking)
+### 14. Animated Texture Support (Texture Ticking) ✅
 
 **What:** Every texture is currently static.  Add a frame-offset mechanism.
 
@@ -315,7 +315,7 @@ lookup.
 
 ---
 
-### 15. Floor/Ceiling Bump Mapping (Fake Normal via Offset Sampling)
+### 15. Floor/Ceiling Bump Mapping (Fake Normal via Offset Sampling) ✅
 
 **What:** Flat floors look flat.  Fake bump lighting by sampling a
 grayscale height-map and computing a pseudo-normal.
@@ -336,7 +336,7 @@ grain.
 
 ---
 
-### 16. Mirrored / Reflective Surfaces
+### 16. Mirrored / Reflective Surfaces ✅
 
 **What:** Puddles, polished floors, glass.  After the primary render, for
 floor pixels marked as reflective, cast a second upward ray through the
@@ -356,7 +356,7 @@ reflective cells and using half-resolution sampling.
 
 ---
 
-### 17. Decal Overlay Pass (Projected Textures)
+### 17. Decal Overlay Pass (Projected Textures) ✅
 
 **What:** Blood splatters, cracks, footprints, graffiti — non-grid-aligned
 detail on existing surfaces.
@@ -377,7 +377,7 @@ painted arrows, warning signs, tire tracks.
 
 ---
 
-### 18. Curved / Cylindrical Wall Segments
+### 18. Curved / Cylindrical Wall Segments ✅
 
 **What:** Arc-shaped walls defined by `(center_x, center_y, radius,
 angle_start, angle_end, height, texture)`.
@@ -395,7 +395,7 @@ barricades.  Currently these require stairstepping dozens of wall tiles.
 
 ---
 
-### 19. Per-Column Vertical FOV / Lens Distortion
+### 19. Per-Column Vertical FOV / Lens Distortion ✅
 
 **What:** A per-column vertical scale modifier `v_scale[x]` that stretches
 or compresses wall height for that column.
@@ -413,7 +413,7 @@ and ceiling rendering.  The LUT is computed Python-side and passed as a
 
 ---
 
-### 20. Multi-Layer Floor/Ceiling (Catwalks, Bridges, Pits)
+### 20. ✅ Multi-Layer Floor/Ceiling (Catwalks, Bridges, Pits)
 
 **What:** Each cell currently has exactly one floor height and one ceiling
 height.  For multi-story structures — catwalks over pits, bridges over
@@ -444,7 +444,7 @@ into multi-story Build/Duke3D territory.
 
 ## Phase 7 — Additional Features
 
-### 21. Particle System (C-side Billboard Batch)
+### 21. Particle System (C-side Billboard Batch) ✅
 
 **What:** Dust, sparks, smoke, rain, shell casings, blood mist.  Hundreds
 of tiny billboards that spawn, move, fade, and die each frame.
@@ -465,7 +465,7 @@ loops.  Python overhead per particle would kill framerate.
 
 ---
 
-### 22. Fog Volumes (Per-Cell Fog Density & Color)
+### 22. Fog Volumes (Per-Cell Fog Density & Color) ✅
 
 **What:** Currently fog is global — one exponential curve via `fog_lut`.
 Add per-cell fog density and color so you can have thick smoke in one room,
@@ -488,7 +488,7 @@ clouds after explosions.
 
 ---
 
-### 23. Slope / Ramp Floors
+### 23. Slope / Ramp Floors ✅
 
 **What:** Floors currently step between discrete heights — there's no
 continuous slope.  Add per-cell slope data:
@@ -511,7 +511,7 @@ post-apocalyptic architecture.
 
 ---
 
-### 24. Screen-Space Ambient Occlusion (SSAO) Post-Pass
+### 24. Screen-Space Ambient Occlusion (SSAO) Post-Pass ✅
 
 **What:** After the full render, darken pixels in concave regions (corners,
 wall bases, under overhangs) using the depth buffer.
@@ -535,7 +535,7 @@ Gate behind a quality flag.
 
 ---
 
-### 25. Portal Rendering (Non-Euclidean Geometry)
+### 25. ✅ Portal Rendering (Non-Euclidean Geometry)
 
 **What:** When a ray hits a portal surface, instead of drawing a wall
 texture, **teleport** the ray to the portal's destination and continue
@@ -585,23 +585,23 @@ larger rooms, horror hallways, "bigger on the inside" buildings.
  2  Continue-through transparent walls ✅ 1            Medium  Medium
  3  Two-sided quad intersection         1, 2         Medium  Large
  5  Multi-facing sprites  ✅            4            Low     Medium
- 6  Entity placement in editor          5            Low     Medium
-14  Animated textures                   —            Low     Small
-13  Skybox                              —            Low     Medium
- 7  Point light accumulation            4            Medium  Large
+ 6  Entity placement in editor  ✅      5            Low     Medium
+14  Animated textures  ✅                —            Low     Small
+13  Skybox  ✅                           —            Low     Medium
+ 7  Point light accumulation  ✅         —            Medium  Large
  8  Shadow casting                      7            High    Large
-22  Fog volumes                         —            Low     Medium
-12  Threaded column rendering           11           Medium  Medium
-15  Bump mapping                        7            Medium  Medium
-17  Decal overlay pass                  1, 4         Medium  Large
+22  Fog volumes  ✅                      —            Low     Medium
+12  Threaded column rendering  ✅       11           Medium  Medium
+15  Bump mapping  ✅                    —            Medium  Medium
+17  Decal overlay pass  ✅               —            Medium  Large
  9  Freeform box ray intersection       11, 4        High    Large
 10  Box placement editor tool           9            Medium  Large
-21  Particle system                     1, 4         Medium  Medium
+21  Particle system  ✅                  1, 4         Medium  Medium
 16  Reflective surfaces                 4            High    Large
 23  Slope / ramp floors                 —            High    Large
 18  Curved walls                        —            High    Large
-19  Lens distortion                     —            Low     Small
-24  SSAO post-pass                      4            Medium  Medium
+19  Lens distortion  ✅                  —            Low     Small
+24  SSAO post-pass  ✅                   4            Medium  Medium
 20  Multi-layer floor/ceiling           11           High    X-Large
 25  Portal rendering                    11, 20       High    X-Large
 ```

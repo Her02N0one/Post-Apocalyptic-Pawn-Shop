@@ -53,6 +53,15 @@ COL_TOOL_PAINT   = (200, 120, 220)
 COL_TOOL_SEGMENT = (255, 180, 60)
 COL_TOOL_SELECT  = (255, 220, 100)
 COL_TOOL_ENTITY  = (60, 200, 255)
+COL_TOOL_BOX     = (255, 180, 60)
+COL_TOOL_LIGHT   = (255, 240, 120)
+COL_TOOL_SLOPE   = (180, 200, 100)
+COL_TOOL_REFLECT = (120, 200, 255)
+COL_TOOL_LAYER2  = (200, 160, 255)
+COL_TOOL_QUAD    = (255, 140, 180)
+COL_TOOL_PORTAL  = (80, 255, 220)
+COL_TOOL_CURVE   = (255, 200, 100)
+COL_TOOL_FOG     = (160, 160, 200)
 COL_FACE_HL      = (255, 255, 255, 90)  # face highlight overlay alpha
 
 # ─── Tool definitions ─────────────────────────────────────────────
@@ -60,8 +69,9 @@ COL_FACE_HL      = (255, 255, 255, 90)  # face highlight overlay alpha
 COL_TOOL_STAMP   = (180, 140, 255)
 
 # Core tools (F-keys / Tab) + utility modes (letter keys)
-TOOLS = ("sculpt", "paint", "segment", "entity")
-UTIL_TOOLS = ("select", "stamp")
+TOOLS = ("sculpt", "paint", "segment", "entity", "box")
+UTIL_TOOLS = ("select", "stamp", "light", "slope", "reflect",
+              "layer2", "quad", "portal", "curve", "fog")
 ALL_TOOLS = TOOLS + UTIL_TOOLS
 
 TOOL_LABELS = {
@@ -69,16 +79,34 @@ TOOL_LABELS = {
     "paint":   "PAINT",
     "segment": "DETAIL",
     "entity":  "ENTITY",
+    "box":     "BOX",
     "select":  "SELECT",
     "stamp":   "PRESET",
+    "light":   "LIGHT",
+    "slope":   "SLOPE",
+    "reflect": "REFLECT",
+    "layer2":  "LAYER 2",
+    "quad":    "QUAD",
+    "portal":  "PORTAL",
+    "curve":   "CURVE",
+    "fog":     "FOG",
 }
 TOOL_COLORS = {
     "sculpt":  COL_TOOL_WALL,
     "paint":   COL_TOOL_PAINT,
     "segment": COL_TOOL_SEGMENT,
     "entity":  COL_TOOL_ENTITY,
+    "box":     COL_TOOL_BOX,
     "select":  COL_TOOL_SELECT,
     "stamp":   COL_TOOL_STAMP,
+    "light":   COL_TOOL_LIGHT,
+    "slope":   COL_TOOL_SLOPE,
+    "reflect": COL_TOOL_REFLECT,
+    "layer2":  COL_TOOL_LAYER2,
+    "quad":    COL_TOOL_QUAD,
+    "portal":  COL_TOOL_PORTAL,
+    "curve":   COL_TOOL_CURVE,
+    "fog":     COL_TOOL_FOG,
 }
 # F-key → core tool
 TOOL_KEYS = {
@@ -86,11 +114,20 @@ TOOL_KEYS = {
     pygame.K_F6: "paint",
     pygame.K_F7: "segment",
     pygame.K_F8: "entity",
+    pygame.K_F9: "box",
 }
 # Letter key → utility mode (toggles in/out)
 UTIL_KEYS = {
     pygame.K_b: "select",
     pygame.K_p: "stamp",
+    pygame.K_l: "light",
+    pygame.K_o: "slope",
+    pygame.K_i: "reflect",
+    pygame.K_k: "layer2",
+    pygame.K_h: "quad",
+    pygame.K_y: "portal",
+    pygame.K_SEMICOLON: "curve",
+    pygame.K_COMMA: "fog",
 }
 # Hotbar: 10 texture quick-access slots (keys 1-0)
 HOTBAR_SIZE = 10
@@ -185,13 +222,135 @@ TOOL_HINTS = {
         "title": "Entity",
         "actions": {
             "any": {
-                "LMB": "Place / select / move",
-                "RMB": "Delete / deselect",
+                "LMB": "Place / select entity",
+                "LMB(sel)": "Move selected",
+                "RMB": "Deselect / delete aimed",
                 "Scroll": "Cycle entity type",
                 "Sh+Scrl": "Rotate selected",
             },
         },
         "keys": "Del=delete  T=cycle state  Esc=deselect",
+    },
+    "box": {
+        "title": "Box",
+        "actions": {
+            "any": {
+                "LMB": "Place / select box",
+                "LMB(sel)": "Move selected",
+                "RMB": "Deselect / delete aimed",
+                "Scroll": "Cycle texture",
+                "Sh+Scrl": "Rotate / stack",
+                "Ct+Scrl": "Adjust height",
+            },
+        },
+        "keys": "Del=delete  Esc=deselect  MMB=paint all faces",
+    },
+    "light": {
+        "title": "Light  (L=exit)",
+        "actions": {
+            "any": {
+                "LMB": "Increase light",
+                "Sh+LMB": "Full bright",
+                "RMB": "Decrease light",
+                "Sh+RMB": "Full dark",
+                "Scroll": "Adjust step",
+                "MMB": "Eyedropper",
+            },
+        },
+        "keys": "L=exit light",
+    },
+    "slope": {
+        "title": "Slope  (O=exit)",
+        "actions": {
+            "any": {
+                "LMB": "Increase slope",
+                "Sh+LMB": "Reset flat",
+                "RMB": "Decrease slope",
+                "Scroll": "Adjust step",
+            },
+        },
+        "keys": "X=toggle dx/dy  O=exit slope",
+    },
+    "reflect": {
+        "title": "Reflect  (I=exit)",
+        "actions": {
+            "any": {
+                "LMB": "Increase reflectivity",
+                "Sh+LMB": "Full mirror (255)",
+                "RMB": "Decrease reflectivity",
+                "Sh+RMB": "No reflection (0)",
+                "Scroll": "Adjust step",
+                "MMB": "Eyedropper",
+            },
+        },
+        "keys": "I=exit reflect",
+    },
+    "layer2": {
+        "title": "Layer 2  (K=exit)",
+        "actions": {
+            "any": {
+                "LMB": "Raise floor2",
+                "Sh+LMB": "Raise ceil2",
+                "Ct+LMB": "Remove layer 2",
+                "RMB": "Lower floor2",
+                "Sh+RMB": "Lower ceil2",
+                "Scroll": "Cycle texture",
+            },
+        },
+        "keys": "X=floor2/ceil2  K=exit layer2",
+    },
+    "quad": {
+        "title": "Quad  (H=exit)",
+        "actions": {
+            "any": {
+                "LMB": "Place / select quad",
+                "LMB(sel)": "Move selected",
+                "RMB": "Deselect / delete",
+                "Scroll": "Cycle texture",
+                "Sh+Scrl": "Rotate (15\u00b0)",
+                "Ct+Scrl": "Adjust width",
+            },
+        },
+        "keys": "Del=delete  Esc=deselect  MMB=toggle 2-sided",
+    },
+    "portal": {
+        "title": "Portal  (Y=exit)",
+        "actions": {
+            "any": {
+                "LMB": "Place portal on face",
+                "RMB": "Delete portal",
+                "Scroll": "Cycle portals",
+            },
+        },
+        "keys": "Edit dest in inspector  Y=exit portal",
+    },
+    "curve": {
+        "title": "Curve  (;=exit)",
+        "actions": {
+            "any": {
+                "LMB": "Place / select curve",
+                "LMB(sel)": "Move selected",
+                "RMB": "Deselect / delete",
+                "Scroll": "Adjust radius",
+                "Sh+Scrl": "Arc start angle",
+                "Ct+Scrl": "Arc end angle",
+            },
+        },
+        "keys": "Del=delete  Esc=deselect  MMB=paint texture",
+    },
+    "fog": {
+        "title": "Fog  (,=exit)",
+        "actions": {
+            "any": {
+                "LMB": "Increase fog density",
+                "Sh+LMB": "Max density",
+                "RMB": "Decrease fog density",
+                "Sh+RMB": "Clear fog",
+                "Scroll": "Adjust step",
+                "MMB": "Eyedropper",
+            },
+        },
+        "keys": ",=exit fog",
     },
 }
 

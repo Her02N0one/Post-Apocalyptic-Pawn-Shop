@@ -77,7 +77,9 @@ class EntityMixin:
         for i, ent in enumerate(zone.entities):
             ex, ez = self._ent_world_pos(ent)
             edef = get_entity_def(ent.get("type", ""))
-            s = edef.scale if edef else 0.5
+            def_s = edef.scale if edef else 0.5
+            # Use per-entity scale override if present
+            s = float(ent.get("properties", {}).get("scale", def_s))
             half = max(s * 0.25, 0.15)  # half-width of bounding box
 
             # Floor height at entity cell
@@ -147,7 +149,9 @@ class EntityMixin:
             "properties": {},
         }
         zone.entities.append(ent)
-        self._ent_selected = len(zone.entities) - 1
+        # Don't auto-select after placing — keeps us in placement mode
+        # so the user can rapidly place multiple entities.
+        self._ent_selected = None
         self.dirty = True
 
     # ── Selection ─────────────────────────────────────────────────

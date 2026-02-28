@@ -56,6 +56,15 @@ from editor.view_3d.constants import (  # noqa: F401
     COL_TOOL_PAINT, COL_TOOL_SEGMENT,
     COL_TOOL_SELECT,
     COL_TOOL_STAMP,
+    COL_TOOL_BOX,
+    COL_TOOL_LIGHT,
+    COL_TOOL_SLOPE,
+    COL_TOOL_REFLECT,
+    COL_TOOL_LAYER2,
+    COL_TOOL_QUAD,
+    COL_TOOL_PORTAL,
+    COL_TOOL_CURVE,
+    COL_TOOL_FOG,
     COL_FACE_HL,
     TOOLS, UTIL_TOOLS, ALL_TOOLS,
     TOOL_LABELS, TOOL_COLORS, TOOL_KEYS, UTIL_KEYS,
@@ -78,6 +87,15 @@ from editor.view_3d.tools_select import SelectMixin
 from editor.view_3d.tools_segment import SegmentMixin
 from editor.view_3d.tools_stamp import StampMixin
 from editor.view_3d.tools_entity import EntityMixin
+from editor.view_3d.tools_box import BoxMixin
+from editor.view_3d.tools_light import LightMixin
+from editor.view_3d.tools_slope import SlopeMixin
+from editor.view_3d.tools_reflect import ReflectMixin
+from editor.view_3d.tools_layer2 import Layer2Mixin
+from editor.view_3d.tools_quad import QuadMixin
+from editor.view_3d.tools_portal import PortalMixin
+from editor.view_3d.tools_curve import CurveMixin
+from editor.view_3d.tools_fog import FogMixin
 from editor.view_3d.save import SaveMixin
 from editor.view_3d.primitives import DrawPrimitivesMixin
 from editor.view_3d.rendering import RenderingMixin
@@ -98,6 +116,15 @@ class Zone3DEditor(
     SegmentMixin,
     StampMixin,
     EntityMixin,
+    BoxMixin,
+    LightMixin,
+    SlopeMixin,
+    ReflectMixin,
+    Layer2Mixin,
+    QuadMixin,
+    PortalMixin,
+    CurveMixin,
+    FogMixin,
     GeometryMixin,
     UndoMixin,
     SaveMixin,
@@ -296,6 +323,14 @@ class Zone3DEditor(
             self._capture_name = ""
         if old_tool == "entity":
             self._ent_deselect()
+        if old_tool == "box":
+            self._box_deselect()
+        if old_tool == "quad":
+            self._quad_deselect()
+        if old_tool == "portal":
+            self._portal_deselect()
+        if old_tool == "curve":
+            self._curve_deselect()
 
     def handle_event(self, event: pygame.event.Event) -> bool:
         """Route a pygame event to the appropriate handler.  Returns True if consumed."""
@@ -396,6 +431,15 @@ class Zone3DEditor(
             if self.tool == "entity" and self._ent_selected is not None:
                 self._ent_delete()
                 return True
+            if self.tool == "box" and self._box_selected is not None:
+                self._box_delete()
+                return True
+            if self.tool == "quad" and self._quad_selected is not None:
+                self._quad_delete()
+                return True
+            if self.tool == "curve" and self._curve_selected is not None:
+                self._curve_delete()
+                return True
             return self._clear_cell()
 
         # Cycle snap grid
@@ -414,6 +458,18 @@ class Zone3DEditor(
             if self.tool == "entity" and self._ent_selected is not None:
                 self._ent_deselect()
                 return True
+            if self.tool == "box" and self._box_selected is not None:
+                self._box_deselect()
+                return True
+            if self.tool == "quad" and self._quad_selected is not None:
+                self._quad_deselect()
+                return True
+            if self.tool == "curve" and self._curve_selected is not None:
+                self._curve_deselect()
+                return True
+            if self.tool == "portal" and self._portal_selected is not None:
+                self._portal_deselect()
+                return True
             if self.tool == "select" and (self._sel_start is not None or self._sel_end is not None):
                 self._sel_cancel()
                 return True
@@ -428,6 +484,14 @@ class Zone3DEditor(
         # Toggle ceiling mode in select tool
         if key == pygame.K_x and self.tool == "select":
             self._sel_toggle_ceiling_mode()
+            return True
+        # Toggle slope axis
+        if key == pygame.K_x and self.tool == "slope":
+            self._slope_toggle_axis()
+            return True
+        # Toggle layer2 target (floor2/ceil2)
+        if key == pygame.K_x and self.tool == "layer2":
+            self._layer2_toggle_target()
             return True
 
         # Undo / redo
@@ -535,16 +599,129 @@ class Zone3DEditor(
             aimed_ent = self._ent_find_aimed()
             if btn == 1:
                 if aimed_ent is not None:
+                    # Click on an entity → select it
                     self._ent_select(aimed_ent)
                 elif self._ent_selected is not None:
+                    # Click on ground with selection → move it there
                     self._ent_move_to_aimed()
                 else:
+                    # Click on ground with nothing selected → place new
                     self._ent_place()
             elif btn == 3:
-                if aimed_ent is not None:
-                    self._ent_delete(aimed_ent)
-                elif self._ent_selected is not None:
+                if self._ent_selected is not None:
+                    # RMB while selected → deselect (no accidental delete)
                     self._ent_deselect()
+                elif aimed_ent is not None:
+                    # RMB on entity with nothing selected → quick-delete
+                    self._ent_delete(aimed_ent)
+            return True
+
+        if tool == "box":
+            aimed_box = self._box_find_aimed()
+            if btn == 1:
+                if aimed_box is not None:
+                    self._box_select(aimed_box)
+                elif self._box_selected is not None:
+                    self._box_move_to_aimed()
+                else:
+                    self._box_place()
+            elif btn == 2:
+                # MMB = paint all faces of selected box
+                if self._box_selected is not None:
+                    self._box_paint_face()
+            elif btn == 3:
+                if self._box_selected is not None:
+                    self._box_deselect()
+                elif aimed_box is not None:
+                    self._box_delete(aimed_box)
+            return True
+
+        # ── New utility tools ─────────────────────────────────────
+
+        if tool == "light":
+            if btn == 1:
+                self._light_increase(shift)
+            elif btn == 3:
+                self._light_decrease(shift)
+            elif btn == 2:
+                self._light_pick()
+            return True
+
+        if tool == "slope":
+            if btn == 1:
+                self._slope_increase(shift)
+            elif btn == 3:
+                self._slope_decrease()
+            return True
+
+        if tool == "reflect":
+            if btn == 1:
+                self._reflect_increase(shift)
+            elif btn == 3:
+                self._reflect_decrease(shift)
+            elif btn == 2:
+                self._reflect_pick()
+            return True
+
+        if tool == "layer2":
+            if btn == 1:
+                self._layer2_raise(shift, ctrl)
+            elif btn == 3:
+                self._layer2_lower(shift)
+            elif btn == 2:
+                self._layer2_paint()
+            return True
+
+        if tool == "quad":
+            aimed_quad = self._quad_find_aimed()
+            if btn == 1:
+                if aimed_quad is not None:
+                    self._quad_select(aimed_quad)
+                elif self._quad_selected is not None:
+                    self._quad_move_to_aimed()
+                else:
+                    self._quad_place()
+            elif btn == 2:
+                self._quad_toggle_twosided()
+            elif btn == 3:
+                if self._quad_selected is not None:
+                    self._quad_deselect()
+                elif aimed_quad is not None:
+                    self._quad_delete(aimed_quad)
+            return True
+
+        if tool == "portal":
+            if btn == 1:
+                self._portal_place()
+            elif btn == 3:
+                self._portal_delete()
+            return True
+
+        if tool == "curve":
+            aimed_curve = self._curve_find_aimed()
+            if btn == 1:
+                if aimed_curve is not None:
+                    self._curve_select(aimed_curve)
+                elif self._curve_selected is not None:
+                    self._curve_move_to_aimed()
+                else:
+                    self._curve_place()
+            elif btn == 2:
+                self._curve_paint()
+            elif btn == 3:
+                if self._curve_selected is not None:
+                    self._curve_deselect()
+                elif aimed_curve is not None:
+                    self._curve_delete(aimed_curve)
+            return True
+
+        if tool == "fog":
+            if btn == 1:
+                self._fog_increase(shift)
+            elif btn == 3:
+                self._fog_decrease(shift)
+            elif btn == 2:
+                self._fog_pick()
             return True
 
         return False
@@ -578,6 +755,81 @@ class Zone3DEditor(
                 self._ent_rotate(event.y)
             else:
                 self._ent_cycle_palette(event.y)
+            return True
+
+        if tool == "box":
+            shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
+            ctrl = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
+            if shift and self._box_selected is not None:
+                self._box_rotate(event.y)
+            elif shift:
+                self._box_stack_scroll(event.y)
+            elif ctrl:
+                self._box_adjust_size(event.y, "h")
+            else:
+                # Cycle texture palette
+                palette = _ensure_palette()
+                if palette:
+                    self.tex_idx = (self.tex_idx + event.y) % len(palette)
+                    self.current_texture = palette[self.tex_idx]
+                    self.hotbar[self.hotbar_slot] = self.current_texture
+            return True
+
+        # ── New utility tool scroll handling ──────────────────────
+
+        if tool == "light":
+            self._light_adjust_step(event.y)
+            return True
+
+        if tool == "slope":
+            self._slope_adjust_step(event.y)
+            return True
+
+        if tool == "reflect":
+            self._reflect_adjust_step(event.y)
+            return True
+
+        if tool == "layer2":
+            # Scroll cycles texture palette for painting secondary layer
+            palette = _ensure_palette()
+            if palette:
+                self.tex_idx = (self.tex_idx + event.y) % len(palette)
+                self.current_texture = palette[self.tex_idx]
+                self.hotbar[self.hotbar_slot] = self.current_texture
+            return True
+
+        if tool == "quad":
+            shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
+            ctrl = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
+            if shift and self._quad_selected is not None:
+                self._quad_rotate(event.y)
+            elif ctrl:
+                self._quad_adjust_size(event.y)
+            else:
+                palette = _ensure_palette()
+                if palette:
+                    self.tex_idx = (self.tex_idx + event.y) % len(palette)
+                    self.current_texture = palette[self.tex_idx]
+                    self.hotbar[self.hotbar_slot] = self.current_texture
+            return True
+
+        if tool == "portal":
+            self._portal_cycle(event.y)
+            return True
+
+        if tool == "curve":
+            shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
+            ctrl = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
+            if shift:
+                self._curve_adjust_angle_start(event.y)
+            elif ctrl:
+                self._curve_adjust_angle_end(event.y)
+            else:
+                self._curve_adjust_radius(event.y)
+            return True
+
+        if tool == "fog":
+            self._fog_adjust_step(event.y)
             return True
 
         if tool == "select":
