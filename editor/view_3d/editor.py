@@ -444,6 +444,16 @@ class Zone3DEditor(
 
         # Cycle snap grid
         if key == pygame.K_g:
+            if self.tool == "quad":
+                # Cycle quad snap: 0.25 → 0.5 → 1.0 → 0.0 (off) → 0.25
+                _QUAD_SNAPS = [0.25, 0.5, 1.0, 0.0]
+                cur = getattr(self, '_quad_snap', 0.25)
+                try:
+                    idx = _QUAD_SNAPS.index(cur)
+                except ValueError:
+                    idx = -1
+                self._quad_snap = _QUAD_SNAPS[(idx + 1) % len(_QUAD_SNAPS)]
+                return True
             self.snap_idx = (self.snap_idx + 1) % len(SNAP_Y_OPTIONS)
             self.snap_y = SNAP_Y_OPTIONS[self.snap_idx]
             return True

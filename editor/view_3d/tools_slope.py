@@ -17,7 +17,7 @@ class SlopeMixin:
     """Per-cell floor slope editing."""
 
     _slope_axis: str = "dx"    # "dx" or "dy"
-    _slope_step: float = 0.25
+    _slope_step: float = 0.5
 
     def _slope_ensure_grids(self) -> None:
         """Ensure floor_slope_dx and floor_slope_dy are correctly sized."""

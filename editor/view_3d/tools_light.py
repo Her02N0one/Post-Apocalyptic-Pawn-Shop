@@ -1,12 +1,13 @@
 """editor/view_3d/tools_light.py — Per-cell light-level painting for Zone3DEditor.
 
-Paint light levels on individual cells.
+Paint light levels on individual cells.  Since cells default to full
+bright (1.0), LMB *decreases* light (paints shadow) and RMB *increases*.
 
 Actions (when tool == "light"):
-  LMB          Increase light level at aimed cell (by light_step)
-  RMB          Decrease light level at aimed cell
-  Shift+LMB    Set to full bright (1.0)
-  Shift+RMB    Set to dark (0.0)
+  LMB          Decrease light level at aimed cell (paint shadow)
+  RMB          Increase light level at aimed cell (brighten)
+  Shift+LMB    Set to dark (0.0)
+  Shift+RMB    Set to full bright (1.0)
   Scroll       Adjust light_step (0.05 increments, range 0.05–0.5)
   MMB          Eyedropper — pick current light level from aimed cell
 """
@@ -17,7 +18,7 @@ from __future__ import annotations
 class LightMixin:
     """Per-cell ambient light level painting."""
 
-    _light_step: float = 0.1
+    _light_step: float = 0.25
 
     def _light_ensure_grid(self) -> None:
         """Ensure zone.light_levels is correctly sized."""
@@ -30,23 +31,7 @@ class LightMixin:
                 z.light_levels[r] = [1.0] * W
 
     def _light_increase(self, shift: bool = False) -> None:
-        """LMB: increase light at aimed cell."""
-        hit = self.aimed
-        if not hit:
-            return
-        self._light_ensure_grid()
-        zone = self.zone
-        r, c = hit.row, hit.col
-        old = zone.light_levels[r][c]
-        new = 1.0 if shift else min(1.0, old + self._light_step)
-        if abs(new - old) < 0.001:
-            return
-        self._push_undo()
-        zone.light_levels[r][c] = round(new, 3)
-        self.dirty = True
-
-    def _light_decrease(self, shift: bool = False) -> None:
-        """RMB: decrease light at aimed cell."""
+        """LMB: *decrease* light (paint shadow).  Shift = full dark."""
         hit = self.aimed
         if not hit:
             return
@@ -55,6 +40,22 @@ class LightMixin:
         r, c = hit.row, hit.col
         old = zone.light_levels[r][c]
         new = 0.0 if shift else max(0.0, old - self._light_step)
+        if abs(new - old) < 0.001:
+            return
+        self._push_undo()
+        zone.light_levels[r][c] = round(new, 3)
+        self.dirty = True
+
+    def _light_decrease(self, shift: bool = False) -> None:
+        """RMB: *increase* light (brighten).  Shift = full bright."""
+        hit = self.aimed
+        if not hit:
+            return
+        self._light_ensure_grid()
+        zone = self.zone
+        r, c = hit.row, hit.col
+        old = zone.light_levels[r][c]
+        new = 1.0 if shift else min(1.0, old + self._light_step)
         if abs(new - old) < 0.001:
             return
         self._push_undo()

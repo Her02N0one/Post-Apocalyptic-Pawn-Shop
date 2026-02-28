@@ -249,10 +249,10 @@ TOOL_HINTS = {
         "title": "Light  (L=exit)",
         "actions": {
             "any": {
-                "LMB": "Increase light",
-                "Sh+LMB": "Full bright",
-                "RMB": "Decrease light",
-                "Sh+RMB": "Full dark",
+                "LMB": "Darken cell",
+                "Sh+LMB": "Full dark",
+                "RMB": "Brighten cell",
+                "Sh+RMB": "Full bright",
                 "Scroll": "Adjust step",
                 "MMB": "Eyedropper",
             },

@@ -33,6 +33,7 @@ class QuadMixin:
     _quad_height: float = _DEFAULT_HEIGHT
     _quad_yaw: float = 0.0
     _quad_selected: int | None = None
+    _quad_snap: float = 0.25  # grid snap increment (0 = disabled)
 
     # ── Picking ───────────────────────────────────────────────────
 
@@ -90,6 +91,14 @@ class QuadMixin:
         wz = oz + fz * hit.t
         wx = max(0.1, min(zone.width - 0.1, wx))
         wz = max(0.1, min(zone.height - 0.1, wz))
+
+        # Apply grid snap
+        snap = self._quad_snap
+        if snap > 0:
+            wx = round(wx / snap) * snap
+            wz = round(wz / snap) * snap
+            wx = max(0.1, min(zone.width - 0.1, wx))
+            wz = max(0.1, min(zone.height - 0.1, wz))
 
         ri = max(0, min(zone.height - 1, int(wz)))
         ci = max(0, min(zone.width - 1, int(wx)))
@@ -157,6 +166,14 @@ class QuadMixin:
         wz = oz + fz * hit.t
         wx = max(0.1, min(zone.width - 0.1, wx))
         wz = max(0.1, min(zone.height - 0.1, wz))
+
+        # Apply grid snap
+        snap = self._quad_snap
+        if snap > 0:
+            wx = round(wx / snap) * snap
+            wz = round(wz / snap) * snap
+            wx = max(0.1, min(zone.width - 0.1, wx))
+            wz = max(0.1, min(zone.height - 0.1, wz))
 
         self._push_undo()
         zone.quads[idx]["x"] = round(wx, 3)

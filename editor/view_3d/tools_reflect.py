@@ -17,7 +17,7 @@ from __future__ import annotations
 class ReflectMixin:
     """Per-cell floor reflectivity painting."""
 
-    _reflect_step: int = 32
+    _reflect_step: int = 128
 
     def _reflect_ensure_grid(self) -> None:
         """Ensure zone.reflect_map is correctly sized."""

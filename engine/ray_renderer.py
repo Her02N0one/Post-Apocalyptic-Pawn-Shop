@@ -212,15 +212,27 @@ class RayRenderer:
         self._fog_buf = build_fog_lut(ambient, dn)
 
         # ── Floor / ceiling heights (flat float64) ──
-        if compiled and _HAS_NUMPY and "floor_z" in compiled:
+        # Always use the live Python lists so editor edits show up.
+        # Fall back to compiled numpy arrays only when lists are absent.
+        fh_rows = zone.floor_heights
+        ch_rows = zone.ceil_heights
+        if (fh_rows and len(fh_rows) == zone.height
+                and len(fh_rows[0]) == zone.width):
+            self._fh_buf = array.array(
+                "d", [h for row in fh_rows for h in row]
+            ).tobytes()
+            self._ch_buf = array.array(
+                "d", [h for row in ch_rows for h in row]
+            ).tobytes()
+        elif compiled and _HAS_NUMPY and "floor_z" in compiled:
             self._fh_buf = compiled["floor_z"].astype(np.float64).tobytes()
             self._ch_buf = compiled["ceil_z"].astype(np.float64).tobytes()
         else:
             self._fh_buf = array.array(
-                "d", [h for row in zone.floor_heights for h in row]
+                "d", [0.0] * (zone.width * zone.height)
             ).tobytes()
             self._ch_buf = array.array(
-                "d", [h for row in zone.ceil_heights for h in row]
+                "d", [1.0] * (zone.width * zone.height)
             ).tobytes()
 
         # ── Floor / ceiling texture overrides (flat int32, -1 = use tile) ──
@@ -254,16 +266,19 @@ class RayRenderer:
         self._alt_tex_buf = array.array("i", at_list[:num_tiles]).tobytes()
 
         # ── Per-cell spatial lighting (float64 flat grid) ──
-        if (compiled and _HAS_NUMPY
+        # Always prefer the live Python lists so editor paint shows up.
+        ll = zone.light_levels
+        if ll and len(ll) == zone.height:
+            self._light_buf = array.array(
+                "d", [v for row in ll for v in row]
+            ).tobytes()
+        elif (compiled and _HAS_NUMPY
                 and "light_levels" in compiled):
             self._light_buf = compiled["light_levels"].astype(
                 np.float64).tobytes()
         else:
-            ll = zone.light_levels
-            if not ll or len(ll) != zone.height:
-                ll = [[1.0] * zone.width for _ in range(zone.height)]
             self._light_buf = array.array(
-                "d", [v for row in ll for v in row]
+                "d", [1.0] * (zone.width * zone.height)
             ).tobytes()
 
         # ── Transparent wall LUT (for see-through tile walls) ──
@@ -1555,7 +1570,14 @@ class RayRenderer:
     def update_zone(
         self, zone: Zone, atlas: TextureAtlas, dn: float = 1.0
     ) -> None:
-        """Rebuild all buffers for a new zone."""
+        """Rebuild all buffers for a new zone.
+
+        Clears the zone's ``compiled`` cache so the renderer always
+        picks up the live Python attributes (floor_heights, light_levels,
+        etc.) that the editor may have modified.
+        """
+        if hasattr(zone, "compiled"):
+            zone.compiled = None
         self._build_buffers(zone, atlas, dn)
 
     def update_fog(self, dn: float) -> None:

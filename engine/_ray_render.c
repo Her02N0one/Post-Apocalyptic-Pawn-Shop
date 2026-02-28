@@ -831,10 +831,11 @@ py_render_frame(PyObject *self, PyObject *dict)
     /* ══════════════════════════════════════════════════════════════
      *  PHASE 1 — WALLS  (DDA with half/transparent/thin/tall support)
      * ══════════════════════════════════════════════════════════════ */
+    int x;
 #ifdef _OPENMP
     #pragma omp parallel for schedule(dynamic, 8)
 #endif
-    for (int x = 0; x < sw; x++) {
+    for (x = 0; x < sw; x++) {
         double cam_coord = 2.0 * x / (double)sw - 1.0;
         double rdx = dir_x + plane_x * cam_coord;
         double rdy = dir_y + plane_y * cam_coord;
@@ -1950,24 +1951,38 @@ py_render_frame(PyObject *self, PyObject *dict)
                     }
 
                     /* Per-cell slope: interpolate height within cell.
-                     * Tier match uses base height; slope is visual only.
-                     * slope_data layout: [dx0, dy0, dx1, dy1, ...]      */
+                     * Tier match uses base height; slope raises the
+                     * floor surface geometrically.
+                     * slope_data layout: [dx0, dy0, dx1, dy1, ...]
+                     *
+                     * Fractional coords use [0,1) so the base height
+                     * is the low corner and the slope raises toward
+                     * the opposite corner — no "underground" dip.   */
                     double slope_off = 0.0;
+                    int y_draw = y;
                     if (slope_data) {
                         double sdx = slope_data[ci * 2];
                         double sdy = slope_data[ci * 2 + 1];
                         if (sdx != 0.0 || sdy != 0.0) {
-                            double fx = ffx - cx - 0.5;
-                            double fy = ffy - cy - 0.5;
+                            double fx = ffx - cx;   /* 0.0 … 1.0 */
+                            double fy = ffy - cy;
                             slope_off = sdx * fx + sdy * fy;
                             cell_fh += slope_off;
+                            /* Perspective-correct screen Y for the
+                             * sloped height at this ray distance.  */
+                            double dh_eff = CAM_H - cell_fh;
+                            if (dh_eff < 0.01) continue; /* above cam */
+                            double p_new = dh_eff * (double)sh / ft_rd[t];
+                            y_draw = half + (int)p_new;
+                            if (y_draw < 0 || y_draw >= sh)
+                                continue;
                         }
                     }
 
                     /* Depth check: skip if existing pixel is closer
                      * than this floor surface (step walls win when
                      * they are nearer). */
-                    if (depth_px[y * sw + x] <= (float)ft_rd[t])
+                    if (depth_px[y_draw * sw + x] <= (float)ft_rd[t])
                         break;
 
                     int tid = tiles[ci];
@@ -1994,6 +2009,21 @@ py_render_frame(PyObject *self, PyObject *dict)
                         r = (r * 210) >> 8;
                         g = (g * 210) >> 8;
                         b = (b * 210) >> 8;
+                    }
+
+                    /* Slope shading: simulate directional light on sloped
+                     * floor surfaces.  slope_off varies across the cell
+                     * (positive on the "high" side, negative on the "low"),
+                     * so multiplying by a shading factor produces a visible
+                     * per-pixel brightness gradient — dark on one edge,
+                     * bright on the other — that reads as a ramp.         */
+                    if (slope_off != 0.0) {
+                        double shade = 1.0 + slope_off * 0.8;
+                        if (shade < 0.4) shade = 0.4;
+                        if (shade > 1.6) shade = 1.6;
+                        r = clampi((int)(r * shade), 0, 255);
+                        g = clampi((int)(g * shade), 0, 255);
+                        b = clampi((int)(b * shade), 0, 255);
                     }
 
                     if (cell_fh > 0.01) {
@@ -2045,7 +2075,7 @@ py_render_frame(PyObject *self, PyObject *dict)
 
                     /* ── Reflective floor blend ─────────────────── */
                     if (reflect_flags && reflect_flags[ci] > 0) {
-                        int y_ref = 2 * half - y;
+                        int y_ref = 2 * half - y_draw;
                         if (y_ref >= 0 && y_ref < half) {
                             int ref_off = (y_ref * sw + x) * 3;
                             int rr = fb[ref_off];
@@ -2059,8 +2089,25 @@ py_render_frame(PyObject *self, PyObject *dict)
                         }
                     }
 
-                    put_px(fb, sw, x, y, r, g, b);
-                    put_depth(depth_px, sw, x, y, (float)ft_rd[t]);
+                    /* Write pixel at displaced position.  Cap gap-fill
+                     * to at most 2 rows to prevent overdraw perf cliff
+                     * on steep slopes near the camera.                */
+                    {
+                        int y_lo = y_draw < y ? y_draw : y;
+                        int y_hi = y_draw > y ? y_draw : y;
+                        if (y_hi - y_lo > 2) {
+                            y_lo = y_draw;
+                            y_hi = y_draw;
+                        }
+                        if (y_lo < 0) y_lo = 0;
+                        if (y_hi >= sh) y_hi = sh - 1;
+                        for (int yy = y_lo; yy <= y_hi; yy++) {
+                            if (depth_px[yy * sw + x] > (float)ft_rd[t]) {
+                                put_px(fb, sw, x, yy, r, g, b);
+                                put_depth(depth_px, sw, x, yy, (float)ft_rd[t]);
+                            }
+                        }
+                    }
                     break;
                 }
 

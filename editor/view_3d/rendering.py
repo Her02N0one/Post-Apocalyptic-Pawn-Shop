@@ -493,12 +493,12 @@ class RenderingMixin:
                 fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
                 # Darkness overlay: stronger alpha for darker cells
                 darkness = 1.0 - v
-                alpha = int(darkness * 120)
-                if alpha < 5:
+                alpha = int(darkness * 180) + 20
+                if alpha < 10:
                     continue
                 is_aim = (aimed and aimed.row == r and aimed.col == c)
                 col = COL_TOOL_LIGHT if is_aim else (40, 30, 10)
-                a = min(160, alpha + 40) if is_aim else alpha
+                a = min(220, alpha + 50) if is_aim else alpha
                 self._filled_box(surface, vp, hw, hh,
                                  float(c), fh, float(r),
                                  c + 1.0, fh + 0.02, r + 1.0,
@@ -506,7 +506,7 @@ class RenderingMixin:
                                  2 if is_aim else 1, alpha=a)
 
     def _draw_slope_arrows(self, surface, vp, hw, hh, zone, W, H):
-        """Draw directional arrows on cells with non-zero slope."""
+        """Draw tilted floor planes and directional arrows on cells with non-zero slope."""
         if self.tool != "slope":
             return
         sdx = zone.floor_slope_dx
@@ -526,12 +526,38 @@ class RenderingMixin:
                 if td and td.wall:
                     continue
                 fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
+                is_aim = (aimed and aimed.row == r and aimed.col == c)
+
+                # Draw tilted floor plane showing actual slope
+                # Corner heights: h(x,z) = fh + dx*(x-0.5) + dy*(z-0.5)
+                h00 = fh + dx * -0.5 + dy * -0.5  # (c, r) corner
+                h10 = fh + dx *  0.5 + dy * -0.5  # (c+1, r) corner
+                h11 = fh + dx *  0.5 + dy *  0.5  # (c+1, r+1) corner
+                h01 = fh + dx * -0.5 + dy *  0.5  # (c, r+1) corner
+
+                plane_col = COL_TOOL_SLOPE if is_aim else (160, 190, 90)
+                pw = 3 if is_aim else 2
+                # Draw the tilted quad as 4 edges
+                self._line3d(surface, vp, hw, hh,
+                             float(c), h00 + 0.03, float(r),
+                             c + 1.0, h10 + 0.03, float(r), plane_col, pw)
+                self._line3d(surface, vp, hw, hh,
+                             c + 1.0, h10 + 0.03, float(r),
+                             c + 1.0, h11 + 0.03, r + 1.0, plane_col, pw)
+                self._line3d(surface, vp, hw, hh,
+                             c + 1.0, h11 + 0.03, r + 1.0,
+                             float(c), h01 + 0.03, r + 1.0, plane_col, pw)
+                self._line3d(surface, vp, hw, hh,
+                             float(c), h01 + 0.03, r + 1.0,
+                             float(c), h00 + 0.03, float(r), plane_col, pw)
+                # Diagonal for clarity
+                self._line3d(surface, vp, hw, hh,
+                             float(c), h00 + 0.03, float(r),
+                             c + 1.0, h11 + 0.03, r + 1.0, plane_col, 1)
+
+                # Arrow from center in slope direction
                 cx_w = c + 0.5
                 cz_w = r + 0.5
-                # Arrow from center in slope direction
-                is_aim = (aimed and aimed.row == r and aimed.col == c)
-                col = COL_TOOL_SLOPE if is_aim else (140, 160, 80)
-                w = 3 if is_aim else 2
                 mag = (dx * dx + dy * dy) ** 0.5
                 arrow_len = min(0.4, mag * 0.3)
                 if mag > 0.01:
@@ -539,23 +565,25 @@ class RenderingMixin:
                     ndy = dy / mag
                 else:
                     continue
+                arrow_col = (255, 255, 100) if is_aim else (200, 220, 100)
+                aw = 3 if is_aim else 2
                 tx = cx_w + ndx * arrow_len
                 tz = cz_w + ndy * arrow_len
                 ty = fh + mag * 0.15
                 self._line3d(surface, vp, hw, hh,
-                             cx_w, fh + 0.02, cz_w,
-                             tx, ty + 0.02, tz, col, w)
+                             cx_w, fh + 0.05, cz_w,
+                             tx, ty + 0.05, tz, arrow_col, aw)
                 # Arrowhead
-                perp_x = -ndy * 0.08
-                perp_z = ndx * 0.08
+                perp_x = -ndy * 0.10
+                perp_z = ndx * 0.10
                 self._line3d(surface, vp, hw, hh,
-                             tx, ty + 0.02, tz,
-                             tx - ndx * 0.1 + perp_x, ty, tz - ndy * 0.1 + perp_z,
-                             col, w)
+                             tx, ty + 0.05, tz,
+                             tx - ndx * 0.12 + perp_x, ty, tz - ndy * 0.12 + perp_z,
+                             arrow_col, aw)
                 self._line3d(surface, vp, hw, hh,
-                             tx, ty + 0.02, tz,
-                             tx - ndx * 0.1 - perp_x, ty, tz - ndy * 0.1 - perp_z,
-                             col, w)
+                             tx, ty + 0.05, tz,
+                             tx - ndx * 0.12 - perp_x, ty, tz - ndy * 0.12 - perp_z,
+                             arrow_col, aw)
         # Draw axis indicator on aimed cell
         if aimed:
             fh = zone.floor_heights[aimed.row][aimed.col] if zone.floor_heights else 0.0
@@ -563,14 +591,14 @@ class RenderingMixin:
             cz_w = aimed.row + 0.5
             if axis == "dx":
                 self._line3d(surface, vp, hw, hh,
-                             cx_w - 0.3, fh + 0.04, cz_w,
-                             cx_w + 0.3, fh + 0.04, cz_w,
-                             (255, 255, 150), 2)
+                             cx_w - 0.35, fh + 0.06, cz_w,
+                             cx_w + 0.35, fh + 0.06, cz_w,
+                             (255, 255, 150), 3)
             else:
                 self._line3d(surface, vp, hw, hh,
-                             cx_w, fh + 0.04, cz_w - 0.3,
-                             cx_w, fh + 0.04, cz_w + 0.3,
-                             (255, 255, 150), 2)
+                             cx_w, fh + 0.06, cz_w - 0.35,
+                             cx_w, fh + 0.06, cz_w + 0.35,
+                             (255, 255, 150), 3)
 
     def _draw_reflect_overlay(self, surface, vp, hw, hh, zone, W, H):
         """Draw blue-tinted floor quads showing reflectivity."""
@@ -590,10 +618,10 @@ class RenderingMixin:
                 if td and td.wall:
                     continue
                 fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
-                alpha = int(v / 255.0 * 100) + 20
+                alpha = int(v / 255.0 * 160) + 40
                 is_aim = (aimed and aimed.row == r and aimed.col == c)
                 col = COL_TOOL_REFLECT
-                a = min(180, alpha + 40) if is_aim else alpha
+                a = min(220, alpha + 50) if is_aim else alpha
                 self._filled_box(surface, vp, hw, hh,
                                  float(c), fh, float(r),
                                  c + 1.0, fh + 0.02, r + 1.0,
@@ -654,10 +682,10 @@ class RenderingMixin:
                     continue
                 fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
                 ch = zone.ceil_heights[r][c] if zone.ceil_heights else 1.0
-                alpha = int(v * 60) + 10
+                alpha = int(v * 140) + 30
                 is_aim = (aimed and aimed.row == r and aimed.col == c)
                 col = COL_TOOL_FOG
-                a = min(120, alpha + 30) if is_aim else alpha
+                a = min(200, alpha + 50) if is_aim else alpha
                 self._filled_box(surface, vp, hw, hh,
                                  float(c) + 0.05, fh + 0.01, float(r) + 0.05,
                                  c + 0.95, ch - 0.01, r + 0.95,
@@ -690,7 +718,7 @@ class RenderingMixin:
                 z1 = qz - sin_a * hw2
 
                 col = COL_TOOL_QUAD if is_sel else (200, 110, 140)
-                ew = 3 if is_sel else 1
+                ew = 3 if is_sel else 2
                 # Bottom edge
                 self._line3d(surface, vp, hw, hh, x0, by, z0, x1, by, z1, col, ew)
                 # Top edge
@@ -699,9 +727,9 @@ class RenderingMixin:
                 self._line3d(surface, vp, hw, hh, x0, by, z0, x0, by + h, z0, col, ew)
                 # Right edge
                 self._line3d(surface, vp, hw, hh, x1, by, z1, x1, by + h, z1, col, ew)
-                # Diagonal cross for visibility
-                if is_sel:
-                    self._line3d(surface, vp, hw, hh, x0, by, z0, x1, by + h, z1, col, 1)
+                # Diagonal cross for visibility (always, not just selected)
+                self._line3d(surface, vp, hw, hh, x0, by, z0, x1, by + h, z1, col, 1)
+                self._line3d(surface, vp, hw, hh, x1, by, z1, x0, by + h, z0, col, 1)
 
         # Ghost preview
         if (getattr(self, 'tool', '') == 'quad'
@@ -720,6 +748,15 @@ class RenderingMixin:
         wz = oz + fz * hit.t
         wx = max(0.1, min(zone.width - 0.1, wx))
         wz = max(0.1, min(zone.height - 0.1, wz))
+
+        # Apply snap if enabled
+        snap = getattr(self, '_quad_snap', 0.25)
+        if snap > 0:
+            wx = round(wx / snap) * snap
+            wz = round(wz / snap) * snap
+            wx = max(0.1, min(zone.width - 0.1, wx))
+            wz = max(0.1, min(zone.height - 0.1, wz))
+
         ci = max(0, min(zone.width - 1, int(wx)))
         ri = max(0, min(zone.height - 1, int(wz)))
         fh = zone.floor_heights[ri][ci] if zone.floor_heights else 0.0
@@ -736,10 +773,13 @@ class RenderingMixin:
         z1 = wz - sin_a * hw2
 
         ghost_col = (255, 180, 210)
-        self._line3d(surface, vp, hw, hh, x0, fh, z0, x1, fh, z1, ghost_col, 1)
-        self._line3d(surface, vp, hw, hh, x0, fh + h, z0, x1, fh + h, z1, ghost_col, 1)
-        self._line3d(surface, vp, hw, hh, x0, fh, z0, x0, fh + h, z0, ghost_col, 1)
-        self._line3d(surface, vp, hw, hh, x1, fh, z1, x1, fh + h, z1, ghost_col, 1)
+        self._line3d(surface, vp, hw, hh, x0, fh, z0, x1, fh, z1, ghost_col, 2)
+        self._line3d(surface, vp, hw, hh, x0, fh + h, z0, x1, fh + h, z1, ghost_col, 2)
+        self._line3d(surface, vp, hw, hh, x0, fh, z0, x0, fh + h, z0, ghost_col, 2)
+        self._line3d(surface, vp, hw, hh, x1, fh, z1, x1, fh + h, z1, ghost_col, 2)
+        # Diagonal cross
+        self._line3d(surface, vp, hw, hh, x0, fh, z0, x1, fh + h, z1, ghost_col, 1)
+        self._line3d(surface, vp, hw, hh, x1, fh, z1, x0, fh + h, z0, ghost_col, 1)
 
     def _draw_portals(self, surface, vp, hw, hh, zone):
         """Draw portal face markers and destination lines."""
@@ -1202,6 +1242,9 @@ class RenderingMixin:
             lines.append((f"Target: {tgt}  (X)", COL_TOOL_LAYER2))
         elif self.tool == "quad":
             sel = getattr(self, '_quad_selected', None)
+            snap = getattr(self, '_quad_snap', 0.25)
+            snap_str = f"{snap:.2f}" if snap > 0 else "OFF"
+            lines.append((f"Snap: {snap_str}  (G)", COL_TOOL_QUAD))
             if sel is not None:
                 lines.append((f"Quad #{sel} selected", COL_TOOL_QUAD))
             else:
@@ -1563,15 +1606,20 @@ class RenderingMixin:
                 ft = zone.face_textures[r][c]
                 tex = ft[0] or ft[1] or ft[2] or ft[3]
                 if tex:
-                    return self._tile_color(tex)
-            if zone.wall_textures and zone.wall_textures[r][c]:
-                return self._tile_color(zone.wall_textures[r][c])
-            return self._tile_color(zone.tiles[r][c])
+                    col = self._tile_color(tex)
+                else:
+                    col = self._tile_color(zone.tiles[r][c])
+            elif zone.wall_textures and zone.wall_textures[r][c]:
+                col = self._tile_color(zone.wall_textures[r][c])
+            else:
+                col = self._tile_color(zone.tiles[r][c])
         elif part == "floor":
-            return self._tile_color(self._resolve_floor_tex(r, c))
+            col = self._tile_color(self._resolve_floor_tex(r, c))
         elif part == "ceiling":
-            return self._tile_color(self._resolve_ceil_tex(r, c))
-        return COL_WALL_DEF
+            col = self._tile_color(self._resolve_ceil_tex(r, c))
+        else:
+            col = COL_WALL_DEF
+        return self._apply_cell_effects(col, r, c, part)
 
     def _get_face_colors(self, r: int, c: int, part: str
                          ) -> list[tuple[int, int, int]]:
@@ -1625,6 +1673,10 @@ class RenderingMixin:
             else:
                 cols[fdef_idx] = base
 
+        # Apply light, fog, and reflect effects to every face colour
+        ae = self._apply_cell_effects
+        cols = [ae(fc, r, c, part) for fc in cols]
+
         return cols
 
     @staticmethod
@@ -1642,6 +1694,49 @@ class RenderingMixin:
                 best_tex = stex
             prev_top = ytop
         return best_tex
+
+    def _apply_cell_effects(
+        self, col: tuple[int, int, int], r: int, c: int, part: str,
+    ) -> tuple[int, int, int]:
+        """Tint a cell colour by light level, fog density, and reflectivity."""
+        zone = self.zone
+        cr, cg, cb = col
+
+        # ── Light level (darken when < 1.0) ──
+        ll = zone.light_levels
+        if ll and r < len(ll) and c < len(ll[r]):
+            lv = ll[r][c]
+            if lv < 0.99:
+                cr = int(cr * lv)
+                cg = int(cg * lv)
+                cb = int(cb * lv)
+
+        # ── Fog density (blend toward grey fog colour) ──
+        fd = getattr(zone, 'fog_density', None)
+        if fd and r < len(fd) and c < len(fd[r]):
+            fv = fd[r][c]
+            if fv > 0.01:
+                fc = (128, 128, 128)  # default fog colour
+                fco = getattr(zone, 'fog_color', None)
+                if fco and r < len(fco) and c < len(fco[r]):
+                    fc = fco[r][c]
+                t = min(fv, 1.0) * 0.6  # blend strength
+                cr = int(cr * (1.0 - t) + fc[0] * t)
+                cg = int(cg * (1.0 - t) + fc[1] * t)
+                cb = int(cb * (1.0 - t) + fc[2] * t)
+
+        # ── Reflectivity (blue-ish tint on floor faces) ──
+        if part == "floor":
+            rm = getattr(zone, 'reflect_map', None)
+            if rm and r < len(rm) and c < len(rm[r]):
+                rv = rm[r][c]
+                if rv > 0:
+                    t = (rv / 255.0) * 0.35
+                    cr = int(cr * (1.0 - t))
+                    cg = int(cg * (1.0 - t) + 60 * t)
+                    cb = int(cb * (1.0 - t) + 200 * t)
+
+        return (max(0, min(255, cr)), max(0, min(255, cg)), max(0, min(255, cb)))
 
     @staticmethod
     def _tile_color(texture: str) -> tuple[int, int, int]:
