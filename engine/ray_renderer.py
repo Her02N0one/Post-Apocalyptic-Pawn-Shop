@@ -1001,12 +1001,23 @@ class RayRenderer:
 
         # Default unset step faces of non-wall tiles to "dirt" so
         # floor height transitions don't show grass on vertical faces.
+        # Slope cells are skipped — their risers use the cell's face
+        # texture (via resolve_face_tex fallback) instead.
         _tdef = tile_def
         dirt_id = _s2i("dirt")
+        _sdx = getattr(zone, "floor_slope_dx", [])
+        _sdy = getattr(zone, "floor_slope_dy", [])
         for r in range(H):
             for c in range(W):
                 td_c = _tdef(zone.tiles[r][c])
                 if td_c and td_c.wall:
+                    continue
+                # Slope cells: keep -1 so risers use face texture
+                if (_sdx and _sdy
+                        and r < len(_sdx) and c < len(_sdx[r])
+                        and r < len(_sdy) and c < len(_sdy[r])
+                        and (abs(_sdx[r][c]) > 0.001
+                             or abs(_sdy[r][c]) > 0.001)):
                     continue
                 base = (r * W + c) * 4
                 for fi in range(4):

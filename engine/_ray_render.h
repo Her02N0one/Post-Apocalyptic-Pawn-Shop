@@ -32,7 +32,7 @@
 
 /* Height-tier constants for multi-tier floor/ceiling rendering */
 #define TIER_TOL       0.05   /* height tolerance for tier matching  */
-#define MAX_FLOOR_TIERS 32    /* max unique floor heights            */
+#define MAX_FLOOR_TIERS 64    /* max unique floor heights            */
 #define LAYER_NONE     -1000.0 /* sentinel: no secondary layer       */
 
 /* Portal rendering constants */
@@ -110,7 +110,7 @@ typedef struct {
     int    ssx, ssy;   /* DDA step directions                      */
 } StepWallHit;
 
-#define MAX_STEP_HITS 32
+#define MAX_STEP_HITS 64
 
 /* ═══════════════════════════════════════════════════════════════════
  *  Inline helpers

@@ -946,7 +946,99 @@ py_render_frame(PyObject *self, PyObject *dict)
                 if (step_len < 0.0) step_len = 0.0;
                 fog_accum += fog_den[cur_ci] * step_len;
             }
+            double cell_entry_bp = prev_bp;
             prev_bp = bp;
+
+            /* ── Internal stair risers for the cell we just left ─── */
+            /* When prev_ci is a slope cell with discrete steps, find
+             * where internal step boundaries cross the ray within
+             * that cell and emit step-wall hits so Phase 2A renders
+             * the visible riser faces.                                */
+            if (slope_div && slope_data
+                && prev_ci >= 0 && prev_ci < map_size
+                && slope_div[prev_ci] >= 2
+                && n_fstep[x] < MAX_STEP_HITS) {
+                int sdi = prev_ci;
+                double sdx_c = slope_data[sdi * 2];
+                double sdy_c = slope_data[sdi * 2 + 1];
+                if (sdx_c != 0.0 || sdy_c != 0.0) {
+                    int ndiv = slope_div[sdi];
+                    double sbase = fheight[sdi];
+                    double s_lo  = (sdx_c < 0 ? sdx_c : 0)
+                                 + (sdy_c < 0 ? sdy_c : 0);
+                    double s_rng = fabs(sdx_c) + fabs(sdy_c);
+                    if (s_rng > 0.001) {
+                        double s_step = s_rng / ndiv;
+                        int pc = sdi % map_w;
+                        int pr = sdi / map_w;
+                        /* raw(t) = sdx_c*(cam_x+t*rdx - pc)
+                         *        + sdy_c*(cam_y+t*rdy - pr)
+                         *        = raw0 + t * d_raw            */
+                        double raw0  = sdx_c * (cam_x - pc)
+                                     + sdy_c * (cam_y - pr);
+                        double d_raw = sdx_c * rdx + sdy_c * rdy;
+                        if (fabs(d_raw) > 1e-10) {
+                            double raw_e = raw0 + cell_entry_bp * d_raw;
+                            double raw_x = raw0 + bp * d_raw;
+                            double t_e = (raw_e - s_lo) / s_rng;
+                            double t_x = (raw_x - s_lo) / s_rng;
+                            if (t_e < 0.0) t_e = 0.0;
+                            if (t_e > 0.9999) t_e = 0.9999;
+                            if (t_x < 0.0) t_x = 0.0;
+                            if (t_x > 0.9999) t_x = 0.9999;
+                            int step_entry = (int)(t_e * ndiv);
+                            int step_exit  = (int)(t_x * ndiv);
+                            if (step_entry != step_exit) {
+                                int dir = step_exit > step_entry ? 1 : -1;
+                                int riser_sd  = fabs(sdx_c) >= fabs(sdy_c) ? 0 : 1;
+                                int riser_ssx = sdx_c > 0 ?  1 : -1;
+                                int riser_ssy = sdy_c > 0 ?  1 : -1;
+                                for (int st = step_entry;
+                                     st != step_exit
+                                     && n_fstep[x] < MAX_STEP_HITS;
+                                     st += dir) {
+                                    int bnd = dir > 0 ? (st + 1) : st;
+                                    double raw_b = s_lo
+                                        + (double)bnd / ndiv * s_rng;
+                                    double param = (raw_b - raw0) / d_raw;
+                                    if (param <= cell_entry_bp + 0.001
+                                        || param >= bp - 0.001)
+                                        continue;
+                                    double wx = cam_x + param * rdx;
+                                    double wy = cam_y + param * rdy;
+                                    double wf;
+                                    if (riser_sd == 0)
+                                        wf = wy - floor(wy);
+                                    else
+                                        wf = wx - floor(wx);
+                                    int lo_s = dir > 0 ? st : (st - 1);
+                                    int hi_s = bnd;
+                                    double lo_h = sbase + s_lo
+                                                + lo_s * s_step;
+                                    double hi_h = sbase + s_lo
+                                                + hi_s * s_step;
+                                    if (lo_h > hi_h) {
+                                        double tmp = lo_h;
+                                        lo_h = hi_h; hi_h = tmp;
+                                    }
+                                    StepWallHit *swh = &fstep_hits[
+                                        x * MAX_STEP_HITS
+                                        + n_fstep[x]++];
+                                    swh->perp      = param;
+                                    swh->wall_frac = wf;
+                                    swh->pfh       = lo_h;
+                                    swh->cfh       = hi_h;
+                                    swh->pci       = sdi;
+                                    swh->ci        = sdi;
+                                    swh->sd        = riser_sd;
+                                    swh->ssx       = riser_ssx;
+                                    swh->ssy       = riser_ssy;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             if (!cell_solid[cur_ci]) {
                 /* ── Non-solid cell ────────────────────────────── */
@@ -1904,7 +1996,9 @@ py_render_frame(PyObject *self, PyObject *dict)
             }
         }
 
-        /* Slope stair step heights: add N discrete levels per slope cell */
+        /* Slope stair step heights: add N discrete levels per slope cell.
+         * Distance-gated: only nearby cells (within 10 units) contribute
+         * individual step heights to avoid tier explosion on large maps. */
         if (slope_data && slope_div) {
             for (int ci = 0; ci < map_size && n_floor_tiers < MAX_FLOOR_TIERS; ci++) {
                 int div = slope_div[ci];
@@ -1912,6 +2006,11 @@ py_render_frame(PyObject *self, PyObject *dict)
                 double sdx = slope_data[ci * 2];
                 double sdy = slope_data[ci * 2 + 1];
                 if (sdx == 0.0 && sdy == 0.0) continue;
+                /* Distance gate: skip cells far from camera */
+                int cr = ci / map_w, cc = ci % map_w;
+                double dcx = (cc + 0.5) - cam_x;
+                double dcy = (cr + 0.5) - cam_y;
+                if (dcx * dcx + dcy * dcy > 100.0) continue; /* 10 units */
                 double base = fheight[ci];
                 double lo = (sdx < 0 ? sdx : 0) + (sdy < 0 ? sdy : 0);
                 double rng = fabs(sdx) + fabs(sdy);
