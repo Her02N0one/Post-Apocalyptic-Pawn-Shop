@@ -73,6 +73,10 @@ class Session(TransitionMixin, WorldTickerMixin):
         self.floor_textures: list[list[str]] = []
         self.ceil_textures: list[list[str]] = []
 
+        # Layer-2 (secondary) floor/ceiling heights
+        self.floor2_heights: list[list[float]] = []
+        self.ceil2_heights: list[list[float]] = []
+
         # uid → zone descriptor dict (for rebuilding transient components)
         self._descriptor_index: dict[str, dict[str, Any]] = {}
 
@@ -215,6 +219,8 @@ class Session(TransitionMixin, WorldTickerMixin):
         self.ceil_heights = zd.ceil_heights
         self.floor_textures = zd.floor_textures
         self.ceil_textures = zd.ceil_textures
+        self.floor2_heights = getattr(zd, 'floor2_heights', [])
+        self.ceil2_heights = getattr(zd, 'ceil2_heights', [])
         self._cache_descriptors_from_list(zd.entities)
         self._build_portal_map(zd)
         return zd

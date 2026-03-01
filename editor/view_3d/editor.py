@@ -58,7 +58,6 @@ from editor.view_3d.constants import (  # noqa: F401
     COL_TOOL_STAMP,
     COL_TOOL_BOX,
     COL_TOOL_LIGHT,
-    COL_TOOL_SLOPE,
     COL_TOOL_REFLECT,
     COL_TOOL_LAYER2,
     COL_TOOL_QUAD,
@@ -89,7 +88,6 @@ from editor.view_3d.tools_stamp import StampMixin
 from editor.view_3d.tools_entity import EntityMixin
 from editor.view_3d.tools_box import BoxMixin
 from editor.view_3d.tools_light import LightMixin
-from editor.view_3d.tools_slope import SlopeMixin
 from editor.view_3d.tools_reflect import ReflectMixin
 from editor.view_3d.tools_layer2 import Layer2Mixin
 from editor.view_3d.tools_quad import QuadMixin
@@ -118,7 +116,6 @@ class Zone3DEditor(
     EntityMixin,
     BoxMixin,
     LightMixin,
-    SlopeMixin,
     ReflectMixin,
     Layer2Mixin,
     QuadMixin,
@@ -167,6 +164,9 @@ class Zone3DEditor(
 
         # Continuous paint state
         self._lmb_held: bool = False
+
+        # Layer 2 sub-mode (integrated into sculpt)
+        self._sculpt_layer2: bool = False
 
         # Selection state (for select tool)
         self._sel_start: tuple[int, int] | None = None
@@ -418,11 +418,9 @@ class Zone3DEditor(
                     return self._reset_floor()
             return False
 
-        # Toggle ceiling target (C — was T, now C is free from fly-down)
-        if key == pygame.K_c:
-            if self.tool == "sculpt" and self.aimed:
-                return self._toggle_ceiling()
-            return False
+        # Toggle ceiling (T key — C is now fly-down)
+        if key == pygame.K_t and self.tool == "sculpt" and self.aimed:
+            return self._toggle_ceiling()
 
         # Delete / Backspace — select-tool batch delete takes priority
         if key in (pygame.K_DELETE, pygame.K_BACKSPACE):
@@ -495,9 +493,9 @@ class Zone3DEditor(
         if key == pygame.K_x and self.tool == "select":
             self._sel_toggle_ceiling_mode()
             return True
-        # Toggle layer2 target (floor2/ceil2)
-        if key == pygame.K_x and self.tool == "layer2":
-            self._layer2_toggle_target()
+        # Toggle layer2 sub-mode in sculpt tool
+        if key == pygame.K_x and self.tool == "sculpt":
+            self._sculpt_layer2 = not self._sculpt_layer2
             return True
 
         # Undo / redo
@@ -550,7 +548,13 @@ class Zone3DEditor(
 
         if tool == "sculpt":
             if btn == 2:
-                self._paint()
+                self._pick_texture()  # universal eyedropper
+            elif self._sculpt_layer2:
+                # Layer 2 sub-mode
+                if btn == 1:
+                    self._layer2_raise(shift, ctrl)
+                elif btn == 3:
+                    self._layer2_lower(shift)
             elif part in ("floor", "wall", "ground"):
                 if btn == 1:
                     self._tool_floor_raise()
@@ -653,13 +657,6 @@ class Zone3DEditor(
                 self._light_pick()
             return True
 
-        if tool == "slope":
-            if btn == 1:
-                self._slope_increase(shift)
-            elif btn == 3:
-                self._slope_decrease(shift)
-            return True
-
         if tool == "reflect":
             if btn == 1:
                 self._reflect_increase(shift)
@@ -667,15 +664,6 @@ class Zone3DEditor(
                 self._reflect_decrease(shift)
             elif btn == 2:
                 self._reflect_pick()
-            return True
-
-        if tool == "layer2":
-            if btn == 1:
-                self._layer2_raise(shift, ctrl)
-            elif btn == 3:
-                self._layer2_lower(shift)
-            elif btn == 2:
-                self._layer2_paint()
             return True
 
         if tool == "quad":
@@ -728,6 +716,11 @@ class Zone3DEditor(
                 self._fog_decrease(shift)
             elif btn == 2:
                 self._fog_pick()
+            return True
+
+        # ── Universal eyedropper fallback: MMB picks texture in any tool ──
+        if btn == 2:
+            self._pick_texture()
             return True
 
         return False
@@ -787,21 +780,8 @@ class Zone3DEditor(
             self._light_adjust_step(event.y)
             return True
 
-        if tool == "slope":
-            self._slope_adjust_step(event.y)
-            return True
-
         if tool == "reflect":
             self._reflect_adjust_step(event.y)
-            return True
-
-        if tool == "layer2":
-            # Scroll cycles texture palette for painting secondary layer
-            palette = _ensure_palette()
-            if palette:
-                self.tex_idx = (self.tex_idx + event.y) % len(palette)
-                self.current_texture = palette[self.tex_idx]
-                self.hotbar[self.hotbar_slot] = self.current_texture
             return True
 
         if tool == "quad":
@@ -853,6 +833,14 @@ class Zone3DEditor(
 
         if tool == "sculpt":
             shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
+            # Layer 2 sub-mode: scroll cycles texture palette
+            if self._sculpt_layer2:
+                palette = _ensure_palette()
+                if palette:
+                    self.tex_idx = (self.tex_idx + event.y) % len(palette)
+                    self.current_texture = palette[self.tex_idx]
+                    self.hotbar[self.hotbar_slot] = self.current_texture
+                return True
             part = self.aimed.part if self.aimed else None
             if shift:
                 # Shift+Scroll: fine-adjust snap (half steps)
@@ -900,16 +888,14 @@ class Zone3DEditor(
         if keys[pygame.K_e]:
             self.yaw += KB_TURN_SPEED * dt
 
-        ctrl_held = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
-
         dx, dy, dz = wasd_3d(
             self.yaw, self.pitch,
             forward=keys[pygame.K_w],
-            backward=keys[pygame.K_s] and not ctrl_held,
+            backward=keys[pygame.K_s],
             strafe_left=keys[pygame.K_a],
             strafe_right=keys[pygame.K_d],
             up=keys[pygame.K_SPACE],
-            down=ctrl_held,
+            down=keys[pygame.K_c],
             speed=speed,
             dt=dt,
         )

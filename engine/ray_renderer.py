@@ -1619,7 +1619,12 @@ class RayRenderer:
                 # ── Check layer-2 floor surface ──
                 if has_layer2:
                     step2 = fh2 - current_fh
-                    gap2 = ch1 - fh2  # primary ceiling is above layer-2
+                    # Headroom above layer-2: if fh2 is above the primary
+                    # ceiling, there is open sky — headroom is unlimited.
+                    if ch1 > fh2:
+                        gap2 = ch1 - fh2
+                    else:
+                        gap2 = 10.0  # above primary ceiling → open sky
                     if (-max_step_down <= step2 <= max_step_up
                             and gap2 >= head_clearance):
                         found_valid = True

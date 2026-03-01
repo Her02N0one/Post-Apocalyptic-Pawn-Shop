@@ -70,8 +70,8 @@ COL_TOOL_STAMP   = (180, 140, 255)
 
 # Core tools (F-keys / Tab) + utility modes (letter keys)
 TOOLS = ("sculpt", "paint", "segment", "entity", "box")
-UTIL_TOOLS = ("select", "stamp", "light", "slope", "reflect",
-              "layer2", "quad", "portal", "curve", "fog")
+UTIL_TOOLS = ("select", "stamp", "light", "reflect",
+              "quad", "portal", "curve", "fog")
 ALL_TOOLS = TOOLS + UTIL_TOOLS
 
 TOOL_LABELS = {
@@ -83,9 +83,7 @@ TOOL_LABELS = {
     "select":  "SELECT",
     "stamp":   "PRESET",
     "light":   "LIGHT",
-    "slope":   "SLOPE",
     "reflect": "REFLECT",
-    "layer2":  "LAYER 2",
     "quad":    "QUAD",
     "portal":  "PORTAL",
     "curve":   "CURVE",
@@ -100,9 +98,7 @@ TOOL_COLORS = {
     "select":  COL_TOOL_SELECT,
     "stamp":   COL_TOOL_STAMP,
     "light":   COL_TOOL_LIGHT,
-    "slope":   COL_TOOL_SLOPE,
     "reflect": COL_TOOL_REFLECT,
-    "layer2":  COL_TOOL_LAYER2,
     "quad":    COL_TOOL_QUAD,
     "portal":  COL_TOOL_PORTAL,
     "curve":   COL_TOOL_CURVE,
@@ -121,9 +117,7 @@ UTIL_KEYS = {
     pygame.K_b: "select",
     pygame.K_p: "stamp",
     pygame.K_l: "light",
-    pygame.K_o: "slope",
     pygame.K_i: "reflect",
-    pygame.K_k: "layer2",
     pygame.K_h: "quad",
     pygame.K_y: "portal",
     pygame.K_SEMICOLON: "curve",
@@ -152,11 +146,19 @@ TOOL_HINTS = {
                 "Scroll": "Upper wall",
                 "Sh+Scrl": "Snap grid",
             },
+            "layer2": {
+                "LMB": "Raise floor2",
+                "Sh+LMB": "Raise ceil2",
+                "Ct+LMB": "Remove layer 2",
+                "RMB": "Lower floor2",
+                "Sh+RMB": "Lower ceil2",
+                "Scroll": "Cycle texture",
+            },
             "none": {
                 "LMB": "Aim at surface",
             },
         },
-        "keys": "C=ceil  R=reset  Del=clear  G=snap  V=walls",
+        "keys": "T=ceil  R=reset  Del=clear  G=snap  V=walls  X=layer2",
     },
     "paint": {
         "title": "Paint",
@@ -259,19 +261,6 @@ TOOL_HINTS = {
         },
         "keys": "L=exit light",
     },
-    "slope": {
-        "title": "Slope  (O=exit)",
-        "actions": {
-            "any": {
-                "LMB": "Ramp toward camera",
-                "Sh+LMB": "Steepen slope",
-                "RMB": "Flatten",
-                "Sh+RMB": "Reduce slope",
-                "Scroll": "Adjust step",
-            },
-        },
-        "keys": "O=exit slope",
-    },
     "reflect": {
         "title": "Reflect  (I=exit)",
         "actions": {
@@ -285,20 +274,6 @@ TOOL_HINTS = {
             },
         },
         "keys": "I=exit reflect",
-    },
-    "layer2": {
-        "title": "Layer 2  (K=exit)",
-        "actions": {
-            "any": {
-                "LMB": "Raise floor2",
-                "Sh+LMB": "Raise ceil2",
-                "Ct+LMB": "Remove layer 2",
-                "RMB": "Lower floor2",
-                "Sh+RMB": "Lower ceil2",
-                "Scroll": "Cycle texture",
-            },
-        },
-        "keys": "X=floor2/ceil2  K=exit layer2",
     },
     "quad": {
         "title": "Quad  (H=exit)",

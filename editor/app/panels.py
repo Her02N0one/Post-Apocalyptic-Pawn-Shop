@@ -325,8 +325,8 @@ class PanelsMixin:
         n_util_cols = 2
         btn_w2 = (avail_w - spacing_x) / float(n_util_cols)
         _util_key_labels = {
-            "select": "B", "stamp": "P", "light": "L", "slope": "O",
-            "reflect": "I", "layer2": "K", "quad": "H", "portal": "Y",
+            "select": "B", "stamp": "P", "light": "L",
+            "reflect": "I", "quad": "H", "portal": "Y",
             "curve": ";", "fog": ",",
         }
         for i, tool_name in enumerate(UTIL_TOOLS):
@@ -854,38 +854,6 @@ class PanelsMixin:
                         zone.light_levels[r][c] = round(new_ll, 3)
                         self.dirty = True
 
-        # ── Floor Slope ───────────────────────────────────────────
-        has_slope = False
-        if zone.floor_slope_dx and len(zone.floor_slope_dx) > r:
-            dx = zone.floor_slope_dx[r][c]
-            dy = zone.floor_slope_dy[r][c] if zone.floor_slope_dy else 0.0
-            if abs(dx) > 0.001 or abs(dy) > 0.001 or (self.editor_3d and self.editor_3d.tool == "slope"):
-                has_slope = True
-                imgui.spacing()
-                imgui.text_disabled("Slope")
-                imgui.same_line(55)
-                imgui.text(f"dx:{dx:.2f}  dy:{dy:.2f}")
-                if self.editor_3d and self.editor_3d.tool == "slope":
-                    axis = self.editor_3d._slope_axis
-                    imgui.same_line()
-                    imgui.text_colored(f"[{axis}]", 0.5, 0.9, 0.5, 1.0)
-                    imgui.push_item_width(pw - 80)
-                    if axis == "dx":
-                        changed, new_dx = imgui.slider_float(
-                            "##slope_dx", dx, -2.0, 2.0, "%.2f")
-                        if changed:
-                            self.editor_3d._push_undo()
-                            zone.floor_slope_dx[r][c] = round(new_dx, 3)
-                            self.dirty = True
-                    else:
-                        changed, new_dy = imgui.slider_float(
-                            "##slope_dy", dy, -2.0, 2.0, "%.2f")
-                        if changed:
-                            self.editor_3d._push_undo()
-                            zone.floor_slope_dy[r][c] = round(new_dy, 3)
-                            self.dirty = True
-                    imgui.pop_item_width()
-
         # ── Reflectivity ──────────────────────────────────────────
         if zone.reflect_map and len(zone.reflect_map) > r and len(zone.reflect_map[r]) > c:
             rv = zone.reflect_map[r][c]
@@ -911,7 +879,7 @@ class PanelsMixin:
                   and zone.floor2_heights[r][c] > LAYER_NONE + 1.0)
         has_c2 = (zone.ceil2_heights and len(zone.ceil2_heights) > r
                   and zone.ceil2_heights[r][c] > LAYER_NONE + 1.0)
-        show_l2 = has_f2 or has_c2 or (self.editor_3d and self.editor_3d.tool == "layer2")
+        show_l2 = has_f2 or has_c2 or (self.editor_3d and getattr(self.editor_3d, '_sculpt_layer2', False))
         if show_l2:
             imgui.spacing()
             imgui.text_disabled("Layer 2")
@@ -933,7 +901,7 @@ class PanelsMixin:
                 if c2t:
                     imgui.same_line()
                     imgui.text_disabled(f"({c2t})")
-            if self.editor_3d and self.editor_3d.tool == "layer2":
+            if self.editor_3d and getattr(self.editor_3d, '_sculpt_layer2', False):
                 tgt = self.editor_3d._layer2_target
                 imgui.text_disabled("  Target")
                 imgui.same_line(60)

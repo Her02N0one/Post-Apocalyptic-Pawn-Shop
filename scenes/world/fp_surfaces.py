@@ -40,6 +40,7 @@ def draw_floor_ceiling(
     *,
     floor_heights: list[list[float]] | None = None,
     ceil_heights: list[list[float]] | None = None,
+    cam_h: float = 0.5,
 ) -> None:
     """Per-row textured floor with checkerboard + gradient ceiling.
 
@@ -97,7 +98,7 @@ def draw_floor_ceiling(
     _tan_h = math.tan(fov * 0.5)
     plane_x = -_sin_a * _tan_h
     plane_y = _cos_a * _tan_h
-    half_sh = sh * 0.5
+    half_sh = cam_h * sh  # camera height drives floor distance
 
     _dflt = (50, 50, 45)
     _solid_ints = solid_int_set()

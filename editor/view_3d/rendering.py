@@ -24,7 +24,7 @@ from editor.view_3d.constants import (
     TOOL_LABELS, TOOL_COLORS, TOOL_HINTS,
     COL_TOOL_SELECT,
     COL_TOOL_CEILING,
-    COL_TOOL_LIGHT, COL_TOOL_SLOPE, COL_TOOL_REFLECT,
+    COL_TOOL_LIGHT, COL_TOOL_REFLECT,
     COL_TOOL_LAYER2, COL_TOOL_QUAD, COL_TOOL_PORTAL,
     COL_TOOL_CURVE, COL_TOOL_FOG,
     HOTBAR_SIZE,
@@ -99,7 +99,6 @@ class RenderingMixin:
         self._draw_seg_boundary_rings(surface, vp, hw, hh, zone, W, H)
         # ── Per-cell tool overlays ──
         self._draw_light_overlay(surface, vp, hw, hh, zone, W, H)
-        self._draw_slope_arrows(surface, vp, hw, hh, zone, W, H)
         self._draw_reflect_overlay(surface, vp, hw, hh, zone, W, H)
         self._draw_layer2_slabs(surface, vp, hw, hh, zone, W, H)
         self._draw_fog_overlay(surface, vp, hw, hh, zone, W, H)
@@ -505,107 +504,6 @@ class RenderingMixin:
                                  col, COL_TOOL_LIGHT if is_aim else None,
                                  2 if is_aim else 1, alpha=a)
 
-    def _draw_slope_arrows(self, surface, vp, hw, hh, zone, W, H):
-        """Draw tilted floor planes and directional arrows on cells with non-zero slope."""
-        if self.tool != "slope":
-            return
-        sdx = zone.floor_slope_dx
-        sdy = zone.floor_slope_dy
-        if not sdx and not sdy:
-            return
-        from core.tiles import tile_def as _td
-        aimed = self.aimed
-        axis = getattr(self, '_slope_axis', 'dx')
-        for r in range(H):
-            for c in range(W):
-                dx = sdx[r][c] if sdx else 0.0
-                dy = sdy[r][c] if sdy else 0.0
-                if abs(dx) < 0.01 and abs(dy) < 0.01:
-                    continue
-                td = _td(zone.tiles[r][c])
-                if td and td.wall:
-                    continue
-                fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
-                is_aim = (aimed and aimed.row == r and aimed.col == c)
-
-                # Draw tilted floor plane matching C renderer [0,1) model:
-                # fh is the base corner (col, row); slope rises toward
-                # the opposite corner — no underground dip.
-                h00 = fh                  # (c,   r)   corner
-                h10 = fh + dx             # (c+1, r)   corner
-                h11 = fh + dx + dy        # (c+1, r+1) corner
-                h01 = fh + dy             # (c,   r+1) corner
-
-                plane_col = COL_TOOL_SLOPE if is_aim else (160, 190, 90)
-                pw = 3 if is_aim else 2
-                # Draw the tilted quad as 4 edges (+0.05 clears the floor slab)
-                self._line3d(surface, vp, hw, hh,
-                             float(c), h00 + 0.05, float(r),
-                             c + 1.0, h10 + 0.05, float(r), plane_col, pw)
-                self._line3d(surface, vp, hw, hh,
-                             c + 1.0, h10 + 0.05, float(r),
-                             c + 1.0, h11 + 0.05, r + 1.0, plane_col, pw)
-                self._line3d(surface, vp, hw, hh,
-                             c + 1.0, h11 + 0.05, r + 1.0,
-                             float(c), h01 + 0.05, r + 1.0, plane_col, pw)
-                self._line3d(surface, vp, hw, hh,
-                             float(c), h01 + 0.05, r + 1.0,
-                             float(c), h00 + 0.05, float(r), plane_col, pw)
-                # Diagonal for clarity
-                self._line3d(surface, vp, hw, hh,
-                             float(c), h00 + 0.05, float(r),
-                             c + 1.0, h11 + 0.05, r + 1.0, plane_col, 1)
-
-                # Arrow from center in slope direction
-                cx_w = c + 0.5
-                cz_w = r + 0.5
-                center_h = fh + dx * 0.5 + dy * 0.5  # height at cell center
-                mag = (dx * dx + dy * dy) ** 0.5
-                arrow_len = min(0.4, mag * 0.3)
-                if mag > 0.01:
-                    ndx = dx / mag
-                    ndy = dy / mag
-                else:
-                    continue
-                arrow_col = (255, 255, 100) if is_aim else (200, 220, 100)
-                aw = 3 if is_aim else 2
-                tx = cx_w + ndx * arrow_len
-                tz = cz_w + ndy * arrow_len
-                ty = center_h + mag * 0.15
-                self._line3d(surface, vp, hw, hh,
-                             cx_w, center_h + 0.05, cz_w,
-                             tx, ty + 0.05, tz, arrow_col, aw)
-                # Arrowhead
-                perp_x = -ndy * 0.10
-                perp_z = ndx * 0.10
-                self._line3d(surface, vp, hw, hh,
-                             tx, ty + 0.05, tz,
-                             tx - ndx * 0.12 + perp_x, ty, tz - ndy * 0.12 + perp_z,
-                             arrow_col, aw)
-                self._line3d(surface, vp, hw, hh,
-                             tx, ty + 0.05, tz,
-                             tx - ndx * 0.12 - perp_x, ty, tz - ndy * 0.12 - perp_z,
-                             arrow_col, aw)
-        # Draw axis indicator on aimed cell
-        if aimed:
-            ar, ac = aimed.row, aimed.col
-            fh = zone.floor_heights[ar][ac] if zone.floor_heights else 0.0
-            adx = sdx[ar][ac] if sdx and len(sdx) > ar and len(sdx[ar]) > ac else 0.0
-            ady = sdy[ar][ac] if sdy and len(sdy) > ar and len(sdy[ar]) > ac else 0.0
-            center_h = fh + adx * 0.5 + ady * 0.5
-            cx_w = ac + 0.5
-            cz_w = ar + 0.5
-            if axis == "dx":
-                self._line3d(surface, vp, hw, hh,
-                             cx_w - 0.35, center_h + 0.06, cz_w,
-                             cx_w + 0.35, center_h + 0.06, cz_w,
-                             (255, 255, 150), 3)
-            else:
-                self._line3d(surface, vp, hw, hh,
-                             cx_w, center_h + 0.06, cz_w - 0.35,
-                             cx_w, center_h + 0.06, cz_w + 0.35,
-                             (255, 255, 150), 3)
-
     def _draw_reflect_overlay(self, surface, vp, hw, hh, zone, W, H):
         """Draw blue-tinted floor quads showing reflectivity."""
         if self.tool != "reflect":
@@ -636,18 +534,17 @@ class RenderingMixin:
 
     def _draw_layer2_slabs(self, surface, vp, hw, hh, zone, W, H):
         """Draw secondary floor/ceiling surfaces as wireframe rectangles."""
-        if self.tool != "layer2":
-            return
         f2 = getattr(zone, 'floor2_heights', None)
         c2 = getattr(zone, 'ceil2_heights', None)
         if not f2 and not c2:
             return
         from editor.view_3d.tools_layer2 import LAYER_NONE
         aimed = self.aimed
+        is_layer2_mode = getattr(self, '_sculpt_layer2', False)
         target = getattr(self, '_layer2_target', 'floor2')
         for r in range(H):
             for c in range(W):
-                is_aim = (aimed and aimed.row == r and aimed.col == c)
+                is_aim = (aimed and aimed.row == r and aimed.col == c) and is_layer2_mode
                 # Floor2
                 if f2:
                     fv = f2[r][c]
@@ -1023,13 +920,35 @@ class RenderingMixin:
                     self._line3d(surface, vp, hw, hh, *pts[0], *pts[1], lcol, 3)
 
     def _draw_crosshair(self, surface, sw, sh):
-        tool_col = TOOL_COLORS.get(self.tool, COL_CROSSHAIR)
+        is_layer2 = (self.tool == "sculpt"
+                     and getattr(self, '_sculpt_layer2', False))
+        tool_col = COL_TOOL_LAYER2 if is_layer2 else TOOL_COLORS.get(self.tool, COL_CROSSHAIR)
         cx, cy = sw // 2, sh // 2
+
+        # Inner crosshair lines + dot
         pygame.draw.line(surface, tool_col, (cx - 14, cy), (cx - 4, cy), 2)
         pygame.draw.line(surface, tool_col, (cx + 4, cy), (cx + 14, cy), 2)
         pygame.draw.line(surface, tool_col, (cx, cy - 14), (cx, cy - 4), 2)
         pygame.draw.line(surface, tool_col, (cx, cy + 4), (cx, cy + 14), 2)
         pygame.draw.circle(surface, tool_col, (cx, cy), 2)
+
+        # Layer 2 mode: outer diamond + "L2" badge
+        if is_layer2:
+            d = 20
+            pts = [(cx, cy - d), (cx + d, cy), (cx, cy + d), (cx - d, cy)]
+            pygame.draw.polygon(surface, tool_col, pts, 2)
+
+            font = _get_font(12)
+            tgt = getattr(self, '_layer2_target', 'floor2')
+            badge = "L2:FLOOR" if tgt == "floor2" else "L2:CEIL"
+            badge_img = font.render(badge, True, tool_col)
+            bw, bh = badge_img.get_size()
+            badge_x = cx - bw // 2
+            badge_y = cy - d - bh - 4
+            bg = pygame.Surface((bw + 8, bh + 4), pygame.SRCALPHA)
+            bg.fill((0, 0, 0, 160))
+            surface.blit(bg, (badge_x - 4, badge_y - 2))
+            surface.blit(badge_img, (badge_x, badge_y))
 
         if self.aimed:
             zone_a = self.zone
@@ -1068,7 +987,9 @@ class RenderingMixin:
             else:
                 ctx_key = "none"
         elif tool == "sculpt":
-            if part == "ceiling":
+            if getattr(self, '_sculpt_layer2', False):
+                ctx_key = "layer2"
+            elif part == "ceiling":
                 ctx_key = "ceiling"
             elif part in ("floor", "wall", "ground"):
                 ctx_key = "floor"
@@ -1103,12 +1024,19 @@ class RenderingMixin:
         bg_x = cx - bg_w // 2
         bg_y = start_y
 
+        is_layer2 = (self.tool == "sculpt"
+                     and getattr(self, '_sculpt_layer2', False))
         bg = pygame.Surface((bg_w, bg_h), pygame.SRCALPHA)
-        bg.fill((0, 0, 0, 120))
+        if is_layer2:
+            bg.fill((60, 30, 80, 150))
+        else:
+            bg.fill((0, 0, 0, 120))
         surface.blit(bg, (bg_x, bg_y))
 
         for i, (text, col) in enumerate(lines):
-            img = font.render(text, True, col)
+            # Use layer2 colour for action text when in layer2 sub-mode
+            text_col = COL_TOOL_LAYER2 if is_layer2 else col
+            img = font.render(text, True, text_col)
             surface.blit(img, (bg_x + 6, bg_y + 4 + i * lh))
 
     # ── Selection highlight ───────────────────────────────────────
@@ -1232,38 +1160,15 @@ class RenderingMixin:
                 lines.append((f"> {cap_name}_", (255, 255, 200)))
 
         # ── New tool HUD info ─────────────────────────────────────
-        if self.tool == "light":
+        if self.tool == "sculpt" and getattr(self, '_sculpt_layer2', False):
+            tgt = getattr(self, '_layer2_target', 'floor2')
+            lines.append((f"[Layer 2]  Target: {tgt}", COL_TOOL_LAYER2))
+        elif self.tool == "light":
             step = getattr(self, '_light_step', 0.1)
             lines.append((f"Step: {step:.2f}", COL_TOOL_LIGHT))
-        elif self.tool == "slope":
-            step = getattr(self, '_slope_step', 0.5)
-            div = getattr(self, '_slope_div', 4)
-            # Show cardinal direction camera is facing
-            import math as _m
-            yaw = getattr(self, 'yaw', 0.0)
-            fx, fy = _m.sin(yaw), _m.cos(yaw)
-            if abs(fx) >= abs(fy):
-                dir_name = "East" if fx > 0 else "West"
-            else:
-                dir_name = "South" if fy > 0 else "North"
-            lines.append((f"Dir: {dir_name}  Rise: {step:.1f}  Div: {div}", COL_TOOL_SLOPE))
-            # Show current slope on aimed cell
-            aimed = self.aimed
-            if aimed:
-                sdx = getattr(self.zone, 'floor_slope_dx', [])
-                sdy = getattr(self.zone, 'floor_slope_dy', [])
-                sdv = getattr(self.zone, 'floor_slope_div', [])
-                dx = sdx[aimed.row][aimed.col] if sdx else 0.0
-                dy = sdy[aimed.row][aimed.col] if sdy else 0.0
-                cdv = sdv[aimed.row][aimed.col] if sdv and aimed.row < len(sdv) and aimed.col < len(sdv[aimed.row]) else 0
-                if abs(dx) > 0.001 or abs(dy) > 0.001:
-                    lines.append((f"  dx={dx:+.2f}  dy={dy:+.2f}  steps={cdv}", COL_TOOL_SLOPE))
         elif self.tool == "reflect":
             step = getattr(self, '_reflect_step', 32)
             lines.append((f"Step: {step}", COL_TOOL_REFLECT))
-        elif self.tool == "layer2":
-            tgt = getattr(self, '_layer2_target', 'floor2')
-            lines.append((f"Target: {tgt}  (X)", COL_TOOL_LAYER2))
         elif self.tool == "quad":
             sel = getattr(self, '_quad_selected', None)
             snap = getattr(self, '_quad_snap', 0.25)
@@ -1347,17 +1252,11 @@ class RenderingMixin:
                 ll = zone.light_levels
                 lv = ll[r][c] if ll and r < len(ll) and c < len(ll[r]) else 1.0
                 lines.append((f"Light: {lv:.2f}", COL_TOOL_LIGHT))
-            elif self.tool == "slope":
-                sdx = zone.floor_slope_dx
-                sdy = zone.floor_slope_dy
-                dx_v = sdx[r][c] if sdx and r < len(sdx) and c < len(sdx[r]) else 0.0
-                dy_v = sdy[r][c] if sdy and r < len(sdy) and c < len(sdy[r]) else 0.0
-                lines.append((f"Slope: dx={dx_v:.2f} dy={dy_v:.2f}", COL_TOOL_SLOPE))
             elif self.tool == "reflect":
                 rm = zone.reflect_map
                 rv = rm[r][c] if rm and r < len(rm) and c < len(rm[r]) else 0
                 lines.append((f"Reflect: {rv}", COL_TOOL_REFLECT))
-            elif self.tool == "layer2":
+            elif getattr(self, '_sculpt_layer2', False):
                 from editor.view_3d.tools_layer2 import LAYER_NONE as _LN
                 f2 = getattr(zone, 'floor2_heights', None)
                 c2h = getattr(zone, 'ceil2_heights', None)

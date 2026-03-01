@@ -514,7 +514,7 @@ def main() -> None:
             nx, ny = px + dx, py + dy
             if noclip:
                 px, py = nx, ny
-                player_fh = renderer.floor_height_at(px, py)
+                player_fh = renderer.floor_height_at(px, py, player_fh)
                 return
             # Height-aware collision
             if renderer.can_step_to(nx, py, player_fh,
@@ -524,7 +524,7 @@ def main() -> None:
                                     MAX_STEP_UP, HEAD_CLEARANCE):
                 py = ny
             # Update floor height under player
-            player_fh = renderer.floor_height_at(px, py)
+            player_fh = renderer.floor_height_at(px, py, player_fh)
 
         # Forward / backward
         if keys[pygame.K_w]:

@@ -75,6 +75,10 @@ DASH_DURATION = 0.15
 DASH_COOLDOWN = 0.45
 DASH_FOV_PUNCH = 0.14
 
+# Height-aware movement
+EYE_HEIGHT = 0.5
+CAM_LERP_SPEED = 8.0
+
 # Internal render resolution — render at 1/RSCALE then upscale.
 # 2 = half-res (480×320 → 960×640), huge perf win with retro look.
 _RSCALE = 2
@@ -120,6 +124,10 @@ class FirstPerson(Scene):
         self._dash_timer: float = 0.0
         self._dash_cooldown: float = 0.0
         self._dash_dir: tuple[float, float] = (0.0, 0.0)
+
+        # Height-aware movement
+        self._player_fh: float = 0.0
+        self._cam_h: float = EYE_HEIGHT  # smoothed camera height
 
     # ── Attach interaction methods from fp_interact ──────────────
     from scenes.world.fp_interact import (  # type: ignore[assignment]
@@ -175,6 +183,22 @@ class FirstPerson(Scene):
         self._renderer.invalidate_zone(self.session.zone_name)
         self._renderer.notify_tiles_changed()
         self._renderer.warmup()
+
+        # Initialise floor height from spawn position
+        result2 = app.world.query_one(Player, Position)
+        if result2:
+            _, _, p = result2
+            from systems.physics import floor_height_at
+            fh_list = self.session.floor_heights
+            fh2_list = self.session.floor2_heights
+            if fh_list:
+                self._player_fh = floor_height_at(
+                    p.x, p.y,
+                    self.session.map_h, self.session.map_w,
+                    fh_list, fh2_list, 0.0)
+            else:
+                self._player_fh = 0.0
+            self._cam_h = self._player_fh + EYE_HEIGHT
 
     def on_exit(self, app: App) -> None:
         if self._perflog.active:
@@ -459,12 +483,28 @@ class FirstPerson(Scene):
         _plog.record_ms('dt_sim', _dt_sim)
 
         _t0 = _perf()
-        movement_system(app.world, dt, self.session.tiles,
-                        portal_tiles=self.session.portal_positions)
+        new_fh = movement_system(
+            app.world, dt, self.session.tiles,
+            portal_tiles=self.session.portal_positions,
+            floor_heights=self.session.floor_heights,
+            ceil_heights=self.session.ceil_heights,
+            floor2_heights=self.session.floor2_heights or None,
+            ceil2_heights=self.session.ceil2_heights or None,
+            player_fh=self._player_fh,
+        )
+        if new_fh is not None:
+            self._player_fh = new_fh
         app.world.events.flush()
         _dt_phys = _perf() - _t0
         self._prof_record('physics', _dt_phys)
         _plog.record_ms('dt_physics', _dt_phys)
+
+        # ── Smooth camera height toward floor + eye ──────────
+        target_cam_h = self._player_fh + EYE_HEIGHT
+        if abs(self._cam_h - target_cam_h) < 0.001:
+            self._cam_h = target_cam_h
+        else:
+            self._cam_h += (target_cam_h - self._cam_h) * min(1.0, CAM_LERP_SPEED * dt)
 
         if self.session.check_portals(dt):
             pass
@@ -499,7 +539,9 @@ class FirstPerson(Scene):
             dn = max(dn, 0.85)
 
         fog_rate, _ambient, fog_lut = compute_fog_params(dn)
-        half = sh // 2 + int(self._bob_offset)
+        # Shift horizon down when standing on elevated floor
+        fh_offset = int(self._player_fh * sh * 0.7)
+        half = sh // 2 + int(self._bob_offset) + fh_offset
         sway = int(self._sway_offset)
         current_fov = FOV + self._sprint_fov
 
@@ -626,6 +668,7 @@ class FirstPerson(Scene):
             tiles, map_w, map_h, self.session.first_person,
             floor_heights=self.session.floor_heights,
             ceil_heights=self.session.ceil_heights,
+            cam_h=self._cam_h,
         )
         _dt_fc = _perf() - _t0
         self._prof_record('floor/ceil', _dt_fc)
