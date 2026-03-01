@@ -11,6 +11,103 @@ class PaintMixin:
 
     _FACE_IDX = FACE_IDX
 
+    # ── Prism / quad picking helpers (for paint tool) ─────────────
+
+    def _paint_find_prism(self) -> int | None:
+        """Find prism under crosshair using box picking (for paint tool)."""
+        return self._box_find_aimed()
+
+    def _paint_find_quad(self) -> int | None:
+        """Find quad under crosshair using quad picking (for paint tool)."""
+        return self._quad_find_aimed()
+
+    # ── Paint prisms and quads ────────────────────────────────────
+
+    def _paint_prism(self, idx: int) -> None:
+        """Paint all faces of the aimed prism with the current texture."""
+        zone = self.zone
+        if not zone or not zone.boxes:
+            return
+        if idx < 0 or idx >= len(zone.boxes):
+            return
+        self._push_undo()
+        tex = zone.boxes[idx].setdefault("textures", {})
+        for f in ("N", "S", "E", "W", "top", "bot"):
+            tex[f] = self.current_texture
+        self.dirty = True
+
+    def _erase_prism(self, idx: int) -> None:
+        """Erase (clear) textures on the aimed prism."""
+        zone = self.zone
+        if not zone or not zone.boxes:
+            return
+        if idx < 0 or idx >= len(zone.boxes):
+            return
+        self._push_undo()
+        tex = zone.boxes[idx].setdefault("textures", {})
+        for f in ("N", "S", "E", "W", "top", "bot"):
+            tex[f] = ""
+        self.dirty = True
+
+    def _pick_prism_texture(self, idx: int) -> None:
+        """Eyedropper: pick the texture from the aimed prism."""
+        zone = self.zone
+        if not zone or not zone.boxes:
+            return
+        if idx < 0 or idx >= len(zone.boxes):
+            return
+        tex = zone.boxes[idx].get("textures", {})
+        # Pick the first non-empty texture found
+        picked = ""
+        for f in ("N", "S", "E", "W", "top", "bot"):
+            t = tex.get(f, "")
+            if t:
+                picked = t
+                break
+        if picked:
+            palette = _ensure_palette()
+            if picked in palette:
+                self.tex_idx = palette.index(picked)
+                self.current_texture = picked
+
+    def _paint_quad(self, idx: int) -> None:
+        """Paint the aimed quad with the current texture."""
+        zone = self.zone
+        if not zone or not zone.quads:
+            return
+        if idx < 0 or idx >= len(zone.quads):
+            return
+        self._push_undo()
+        zone.quads[idx]["texture"] = self.current_texture
+        self.dirty = True
+
+    def _erase_quad(self, idx: int) -> None:
+        """Erase (clear) the texture on the aimed quad."""
+        zone = self.zone
+        if not zone or not zone.quads:
+            return
+        if idx < 0 or idx >= len(zone.quads):
+            return
+        self._push_undo()
+        zone.quads[idx]["texture"] = ""
+        self.dirty = True
+
+    def _pick_quad_texture(self, idx: int) -> None:
+        """Eyedropper: pick the texture from the aimed quad."""
+        zone = self.zone
+        if not zone or not zone.quads:
+            return
+        if idx < 0 or idx >= len(zone.quads):
+            return
+        picked = zone.quads[idx].get("texture", "")
+        if picked:
+            palette = _ensure_palette()
+            if picked in palette:
+                self.tex_idx = palette.index(picked)
+                self.current_texture = picked
+
+    # ── Cell painting ─────────────────────────────────────────────
+
     def _paint(self, push_undo: bool = True) -> None:
         """Paint the aimed face with the current texture.
 

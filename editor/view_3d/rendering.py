@@ -26,7 +26,7 @@ from editor.view_3d.constants import (
     COL_TOOL_CEILING,
     COL_TOOL_LIGHT, COL_TOOL_REFLECT,
     COL_TOOL_LAYER2, COL_TOOL_QUAD, COL_TOOL_PORTAL,
-    COL_TOOL_CURVE, COL_TOOL_FOG,
+    COL_TOOL_CURVE, COL_TOOL_FOG, COL_TOOL_BOX,
     HOTBAR_SIZE,
     FACE_IDX,
 )
@@ -341,7 +341,11 @@ class RenderingMixin:
             self._draw_box_ghost(surface, vp, hw, hh, zone)
 
     def _draw_box_ghost(self, surface, vp, hw, hh, zone):
-        """Draw a translucent preview of the box about to be placed."""
+        """Draw a translucent preview of the prism about to be placed.
+
+        Respects grid-snap and auto-stacking so the ghost shows the
+        actual placement position.
+        """
         hit = self.aimed
         if hit is None:
             return
@@ -352,14 +356,14 @@ class RenderingMixin:
         wx = max(0.1, min(zone.width - 0.1, wx))
         wz = max(0.1, min(zone.height - 0.1, wz))
 
-        ci = max(0, min(zone.width - 1, int(wx)))
-        ri = max(0, min(zone.height - 1, int(wz)))
-        fh = zone.floor_heights[ri][ci] if zone.floor_heights else 0.0
+        w, d, h = self._box_w, self._box_d, self._box_h
+        wx, wz = self._box_snap_pos(wx, wz)
+        fh = self._box_stack_height(wx, wz, w, d)
 
         self._filled_rotated_box(
             surface, vp, hw, hh,
             wx, wz,
-            self._box_w, self._box_h, self._box_d,
+            w, h, d,
             fh, self._box_yaw,
             base_color=self._COL_BOX_GHOST,
             edge_color=(255, 240, 180),
@@ -995,6 +999,8 @@ class RenderingMixin:
                 ctx_key = "floor"
             else:
                 ctx_key = "none"
+        elif tool == "box":
+            ctx_key = "selected" if getattr(self, '_box_selected', None) is not None else "unselected"
         else:
             ctx_key = "any"
 
@@ -1194,6 +1200,18 @@ class RenderingMixin:
         elif self.tool == "fog":
             step = getattr(self, '_fog_step', 0.1)
             lines.append((f"Step: {step:.2f}", COL_TOOL_FOG))
+        elif self.tool == "box":
+            sel = getattr(self, '_box_selected', None)
+            snap = getattr(self, '_box_snap', True)
+            snap_str = "ON" if snap else "OFF"
+            lines.append((f"Snap: {snap_str}  (G)", COL_TOOL_BOX))
+            if sel is not None:
+                lines.append((f"Prism #{sel} selected", COL_TOOL_BOX))
+            else:
+                w = getattr(self, '_box_w', 1.0)
+                h = getattr(self, '_box_h', 1.0)
+                d = getattr(self, '_box_d', 1.0)
+                lines.append((f"Size: {w:.2f}w × {d:.2f}d × {h:.2f}h", COL_TOOL_BOX))
 
         hit = self.aimed
         if hit:

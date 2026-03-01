@@ -79,7 +79,7 @@ TOOL_LABELS = {
     "paint":   "PAINT",
     "segment": "DETAIL",
     "entity":  "ENTITY",
-    "box":     "BOX",
+    "box":     "PRISM",
     "select":  "SELECT",
     "stamp":   "PRESET",
     "light":   "LIGHT",
@@ -164,7 +164,7 @@ TOOL_HINTS = {
         "title": "Paint",
         "actions": {
             "any": {
-                "LMB": "Paint face (hold=drag)",
+                "LMB": "Paint face / prism / quad",
                 "Sh+LMB": "Paint whole cell",
                 "Ct+LMB": "Flood fill",
                 "RMB": "Erase texture",
@@ -173,7 +173,7 @@ TOOL_HINTS = {
                 "Scroll": "Cycle palette",
             },
         },
-        "keys": "T=tile picker  1-0=hotbar",
+        "keys": "T=tile picker  1-0=hotbar  (aims prisms & quads too)",
     },
     "segment": {
         "title": "Detail",
@@ -234,18 +234,24 @@ TOOL_HINTS = {
         "keys": "Del=delete  T=cycle state  Esc=deselect",
     },
     "box": {
-        "title": "Box",
+        "title": "Prism",
         "actions": {
-            "any": {
-                "LMB": "Place / select box",
-                "LMB(sel)": "Move selected",
-                "RMB": "Deselect / delete aimed",
-                "Scroll": "Cycle texture",
-                "Sh+Scrl": "Rotate / stack",
+            "unselected": {
+                "LMB": "Place / select prism",
+                "RMB": "Delete aimed prism",
+                "Scroll": "Width",
+                "Sh+Scrl": "Depth",
+                "Ct+Scrl": "Height",
+            },
+            "selected": {
+                "LMB": "Move selected (stacks)",
+                "RMB": "Deselect",
+                "Scroll": "Shift Z up/down",
+                "Sh+Scrl": "Fine rotate (15°)",
                 "Ct+Scrl": "Adjust height",
             },
         },
-        "keys": "Del=delete  Esc=deselect  MMB=paint all faces",
+        "keys": "R=rotate 90°  G=snap  Del=delete  Esc=deselect",
     },
     "light": {
         "title": "Light  (L=exit)",

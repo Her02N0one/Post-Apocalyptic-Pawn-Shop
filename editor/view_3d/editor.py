@@ -410,7 +410,11 @@ class Zone3DEditor(
             return self._adjust_upper_wall_height(mod)
 
         # Reset height (global — works in any tool when aiming)
+        # Box tool overrides R for 90° rotation
         if key == pygame.K_r:
+            if self.tool == "box":
+                self._box_rotate_90()
+                return True
             if self.aimed:
                 if self.aimed.part == "ceiling":
                     return self._reset_ceiling()
@@ -442,6 +446,9 @@ class Zone3DEditor(
 
         # Cycle snap grid
         if key == pygame.K_g:
+            if self.tool == "box":
+                self._box_toggle_snap()
+                return True
             if self.tool == "quad":
                 # Cycle quad snap: 0.25 → 0.5 → 1.0 → 0.0 (off) → 0.25
                 _QUAD_SNAPS = [0.25, 0.5, 1.0, 0.0]
@@ -568,18 +575,38 @@ class Zone3DEditor(
             return True
 
         if tool == "paint":
-            if btn == 1 and ctrl:
-                self._fill()          # Ctrl+LMB = flood fill
-            elif btn == 1 and shift:
-                self._paint_all()     # Shift+LMB = paint whole cell
-            elif btn == 1:
-                self._paint()         # LMB = paint face
-            elif btn == 3 and ctrl:
-                self._fill_clear()    # Ctrl+RMB = flood clear
-            elif btn == 3:
-                self._erase_texture() # RMB = erase texture
-            elif btn == 2:
-                self._pick_texture()  # MMB = eyedropper
+            # Check if crosshair is on a prism or quad (closer than cell)
+            aimed_prism = self._paint_find_prism()
+            aimed_quad = self._paint_find_quad() if aimed_prism is None else None
+
+            if aimed_prism is not None:
+                if btn == 1:
+                    self._paint_prism(aimed_prism)
+                elif btn == 3:
+                    self._erase_prism(aimed_prism)
+                elif btn == 2:
+                    self._pick_prism_texture(aimed_prism)
+            elif aimed_quad is not None:
+                if btn == 1:
+                    self._paint_quad(aimed_quad)
+                elif btn == 3:
+                    self._erase_quad(aimed_quad)
+                elif btn == 2:
+                    self._pick_quad_texture(aimed_quad)
+            else:
+                # Fall through to cell-based painting
+                if btn == 1 and ctrl:
+                    self._fill()          # Ctrl+LMB = flood fill
+                elif btn == 1 and shift:
+                    self._paint_all()     # Shift+LMB = paint whole cell
+                elif btn == 1:
+                    self._paint()         # LMB = paint face
+                elif btn == 3 and ctrl:
+                    self._fill_clear()    # Ctrl+RMB = flood clear
+                elif btn == 3:
+                    self._erase_texture() # RMB = erase texture
+                elif btn == 2:
+                    self._pick_texture()  # MMB = eyedropper
             return True
 
         if tool == "select":
@@ -635,10 +662,6 @@ class Zone3DEditor(
                     self._box_move_to_aimed()
                 else:
                     self._box_place()
-            elif btn == 2:
-                # MMB = paint all faces of selected box
-                if self._box_selected is not None:
-                    self._box_paint_face()
             elif btn == 3:
                 if self._box_selected is not None:
                     self._box_deselect()
@@ -720,7 +743,14 @@ class Zone3DEditor(
 
         # ── Universal eyedropper fallback: MMB picks texture in any tool ──
         if btn == 2:
-            self._pick_texture()
+            aimed_prism = self._paint_find_prism()
+            aimed_quad = self._paint_find_quad() if aimed_prism is None else None
+            if aimed_prism is not None:
+                self._pick_prism_texture(aimed_prism)
+            elif aimed_quad is not None:
+                self._pick_quad_texture(aimed_quad)
+            else:
+                self._pick_texture()
             return True
 
         return False
@@ -759,19 +789,22 @@ class Zone3DEditor(
         if tool == "box":
             shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
             ctrl = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
-            if shift and self._box_selected is not None:
-                self._box_rotate(event.y)
-            elif shift:
-                self._box_stack_scroll(event.y)
-            elif ctrl:
-                self._box_adjust_size(event.y, "h")
+            if self._box_selected is not None:
+                # Selected: Scroll=Z shift, Shift=fine rotate, Ctrl=height
+                if shift:
+                    self._box_rotate_fine(event.y)
+                elif ctrl:
+                    self._box_adjust_size(event.y, "h")
+                else:
+                    self._box_shift_z(event.y)
             else:
-                # Cycle texture palette
-                palette = _ensure_palette()
-                if palette:
-                    self.tex_idx = (self.tex_idx + event.y) % len(palette)
-                    self.current_texture = palette[self.tex_idx]
-                    self.hotbar[self.hotbar_slot] = self.current_texture
+                # Unselected: Scroll=width, Shift=depth, Ctrl=height
+                if shift:
+                    self._box_adjust_size(event.y, "d")
+                elif ctrl:
+                    self._box_adjust_size(event.y, "h")
+                else:
+                    self._box_adjust_size(event.y, "w")
             return True
 
         # ── New utility tool scroll handling ──────────────────────
