@@ -365,6 +365,7 @@ py_render_frame(PyObject *self, PyObject *dict)
     int n_curves = 0;
     Py_buffer reflect_buf    = {0};   /* uint8[map_h*map_w]   (optional) */
     Py_buffer slope_buf      = {0};   /* float64[map_h*map_w*2] (optional) */
+    Py_buffer slope_div_buf   = {0};   /* uint8[map_h*map_w]     (optional) */
     /* Secondary floor/ceiling layer buffers (optional — multi-layer) */
     Py_buffer fh2_buf        = {0};   /* float64[map_h*map_w]   (optional) */
     Py_buffer ch2_buf        = {0};   /* float64[map_h*map_w]   (optional) */
@@ -543,6 +544,14 @@ py_render_frame(PyObject *self, PyObject *dict)
                 goto cleanup;
         }
     }
+    /* ── Optional: per-cell slope division counts (uint8[map_h*map_w]) ── */
+    {
+        PyObject *sd_o = PyDict_GetItemString(dict, "slope_div");
+        if (sd_o && sd_o != Py_None) {
+            if (PyObject_GetBuffer(sd_o, &slope_div_buf, 0) < 0)
+                goto cleanup;
+        }
+    }
 
     /* ── Optional: secondary floor/ceiling layer buffers ─────────── */
     {
@@ -642,6 +651,8 @@ py_render_frame(PyObject *self, PyObject *dict)
         goto cleanup;
     }
 
+    /* slope_mask removed — slopes baked into fheight */
+
     {
     /* ── Pointer aliases ─────────────────────────────────────────── */
     uint8_t       *fb       = (uint8_t *)      fb_buf.buf;
@@ -693,6 +704,9 @@ py_render_frame(PyObject *self, PyObject *dict)
     const double  *slope_data = (slope_buf.buf
                                && slope_buf.len >= (Py_ssize_t)(map_h * map_w * 2 * (int)sizeof(double)))
                               ? (const double *)slope_buf.buf : NULL;
+    const uint8_t *slope_div = (slope_div_buf.buf
+                               && slope_div_buf.len >= (Py_ssize_t)(map_h * map_w))
+                              ? (const uint8_t *)slope_div_buf.buf : NULL;
     /* Secondary layer aliases (optional — multi-layer) */
     const double  *fh2 = (fh2_buf.buf
                           && fh2_buf.len >= (Py_ssize_t)(map_h * map_w * (int)sizeof(double)))
@@ -1001,24 +1015,30 @@ py_render_frame(PyObject *self, PyObject *dict)
                     double cch_local = cheight[cur_ci];
 
                     /* ── Collect step-wall transitions (single DDA) ── */
-                    /* Floor height transition */
-                    if (fabs(cfh_local - prev_fh) > TIER_TOL
-                        && n_fstep[x] < MAX_STEP_HITS) {
-                        double wf;
-                        if (side == 0) wf = cam_y + bp * rdy;
-                        else           wf = cam_x + bp * rdx;
-                        wf -= floor(wf);
-                        StepWallHit *swh = &fstep_hits[
-                            x * MAX_STEP_HITS + n_fstep[x]++];
-                        swh->perp      = bp;
-                        swh->wall_frac = wf;
-                        swh->pfh       = prev_fh;
-                        swh->cfh       = cfh_local;
-                        swh->pci       = prev_ci;
-                        swh->ci        = cur_ci;
-                        swh->sd        = side;
-                        swh->ssx       = step_x;
-                        swh->ssy       = step_y;
+                    /* Floor height transition — adjust for slopes at
+                     * the boundary crossing point so step walls
+                     * appear where adjacent cells differ in height. */
+                    {
+                        double eff_prev = prev_fh;
+                        double eff_cur  = cfh_local;
+                        if (fabs(eff_cur - eff_prev) > TIER_TOL
+                            && n_fstep[x] < MAX_STEP_HITS) {
+                            double wf;
+                            if (side == 0) wf = cam_y + bp * rdy;
+                            else           wf = cam_x + bp * rdx;
+                            wf -= floor(wf);
+                            StepWallHit *swh = &fstep_hits[
+                                x * MAX_STEP_HITS + n_fstep[x]++];
+                            swh->perp      = bp;
+                            swh->wall_frac = wf;
+                            swh->pfh       = eff_prev;
+                            swh->cfh       = eff_cur;
+                            swh->pci       = prev_ci;
+                            swh->ci        = cur_ci;
+                            swh->sd        = side;
+                            swh->ssx       = step_x;
+                            swh->ssy       = step_y;
+                        }
                     }
                     /* Ceiling height transition — include upper_wall_height
                      * so that two cells with the same ch but different uwh
@@ -1092,10 +1112,10 @@ py_render_frame(PyObject *self, PyObject *dict)
             }
 
             /* ── Solid cell — collect step wall at boundary, then stop ── */
-            /* Floor height transition into the solid cell */
             {
                 double sfh = fheight[cur_ci];
-                if (fabs(sfh - prev_fh) > TIER_TOL
+                double eff_prev = prev_fh;
+                if (fabs(sfh - eff_prev) > TIER_TOL
                     && n_fstep[x] < MAX_STEP_HITS) {
                     double wf;
                     if (side == 0) wf = cam_y + bp * rdy;
@@ -1105,7 +1125,7 @@ py_render_frame(PyObject *self, PyObject *dict)
                         x * MAX_STEP_HITS + n_fstep[x]++];
                     swh->perp      = bp;
                     swh->wall_frac = wf;
-                    swh->pfh       = prev_fh;
+                    swh->pfh       = eff_prev;
                     swh->cfh       = sfh;
                     swh->pci       = prev_ci;
                     swh->ci        = cur_ci;
@@ -1884,6 +1904,31 @@ py_render_frame(PyObject *self, PyObject *dict)
             }
         }
 
+        /* Slope stair step heights: add N discrete levels per slope cell */
+        if (slope_data && slope_div) {
+            for (int ci = 0; ci < map_size && n_floor_tiers < MAX_FLOOR_TIERS; ci++) {
+                int div = slope_div[ci];
+                if (div < 2) continue;
+                double sdx = slope_data[ci * 2];
+                double sdy = slope_data[ci * 2 + 1];
+                if (sdx == 0.0 && sdy == 0.0) continue;
+                double base = fheight[ci];
+                double lo = (sdx < 0 ? sdx : 0) + (sdy < 0 ? sdy : 0);
+                double rng = fabs(sdx) + fabs(sdy);
+                if (rng < 0.001) continue;
+                double step_sz = rng / div;
+                for (int s = 0; s < div && n_floor_tiers < MAX_FLOOR_TIERS; s++) {
+                    double sh_val = base + lo + s * step_sz;
+                    if (sh_val >= CAM_H) continue;
+                    int found = 0;
+                    for (int j = 0; j < n_floor_tiers; j++) {
+                        if (fabs(floor_tiers[j] - sh_val) < TIER_TOL) { found = 1; break; }
+                    }
+                    if (!found) floor_tiers[n_floor_tiers++] = sh_val;
+                }
+            }
+        }
+
         for (int i = 0; i < n_floor_tiers - 1; i++)
             for (int j = i + 1; j < n_floor_tiers; j++)
                 if (floor_tiers[j] > floor_tiers[i]) {
@@ -1939,6 +1984,30 @@ py_render_frame(PyObject *self, PyObject *dict)
                     double cell_fh = fheight[ci];
                     int layer2_match = 0;
 
+                    /* Slope stair snap: compute stepped height from
+                     * fractional position within the cell.  Only fires
+                     * for cells with slope_div >= 2.                  */
+                    if (slope_div && slope_div[ci] >= 2 && slope_data) {
+                        double sdx_c = slope_data[ci * 2];
+                        double sdy_c = slope_data[ci * 2 + 1];
+                        if (sdx_c != 0.0 || sdy_c != 0.0) {
+                            int div = slope_div[ci];
+                            double fx = ffx - cx;
+                            double fy = ffy - cy;
+                            double raw = sdx_c * fx + sdy_c * fy;
+                            double lo = (sdx_c < 0 ? sdx_c : 0)
+                                      + (sdy_c < 0 ? sdy_c : 0);
+                            double rng = fabs(sdx_c) + fabs(sdy_c);
+                            if (rng > 0.001) {
+                                double t_norm = (raw - lo) / rng;
+                                if (t_norm < 0.0) t_norm = 0.0;
+                                if (t_norm >= 1.0) t_norm = 0.9999;
+                                int step = (int)(t_norm * div);
+                                cell_fh += lo + step * (rng / div);
+                            }
+                        }
+                    }
+
                     if (fabs(cell_fh - floor_tiers[t]) > TIER_TOL) {
                         /* Primary doesn't match — check secondary layer */
                         if (fh2 && fh2[ci] > LAYER_NONE + 1.0
@@ -1950,39 +2019,10 @@ py_render_frame(PyObject *self, PyObject *dict)
                         }
                     }
 
-                    /* Per-cell slope: interpolate height within cell.
-                     * Tier match uses base height; slope raises the
-                     * floor surface geometrically.
-                     * slope_data layout: [dx0, dy0, dx1, dy1, ...]
-                     *
-                     * Fractional coords use [0,1) so the base height
-                     * is the low corner and the slope raises toward
-                     * the opposite corner — no "underground" dip.   */
-                    double slope_off = 0.0;
-                    int y_draw = y;
-                    if (slope_data) {
-                        double sdx = slope_data[ci * 2];
-                        double sdy = slope_data[ci * 2 + 1];
-                        if (sdx != 0.0 || sdy != 0.0) {
-                            double fx = ffx - cx;   /* 0.0 … 1.0 */
-                            double fy = ffy - cy;
-                            slope_off = sdx * fx + sdy * fy;
-                            cell_fh += slope_off;
-                            /* Perspective-correct screen Y for the
-                             * sloped height at this ray distance.  */
-                            double dh_eff = CAM_H - cell_fh;
-                            if (dh_eff < 0.01) continue; /* above cam */
-                            double p_new = dh_eff * (double)sh / ft_rd[t];
-                            y_draw = half + (int)p_new;
-                            if (y_draw < 0 || y_draw >= sh)
-                                continue;
-                        }
-                    }
-
                     /* Depth check: skip if existing pixel is closer
                      * than this floor surface (step walls win when
                      * they are nearer). */
-                    if (depth_px[y_draw * sw + x] <= (float)ft_rd[t])
+                    if (depth_px[y * sw + x] <= (float)ft_rd[t])
                         break;
 
                     int tid = tiles[ci];
@@ -2009,21 +2049,6 @@ py_render_frame(PyObject *self, PyObject *dict)
                         r = (r * 210) >> 8;
                         g = (g * 210) >> 8;
                         b = (b * 210) >> 8;
-                    }
-
-                    /* Slope shading: simulate directional light on sloped
-                     * floor surfaces.  slope_off varies across the cell
-                     * (positive on the "high" side, negative on the "low"),
-                     * so multiplying by a shading factor produces a visible
-                     * per-pixel brightness gradient — dark on one edge,
-                     * bright on the other — that reads as a ramp.         */
-                    if (slope_off != 0.0) {
-                        double shade = 1.0 + slope_off * 0.8;
-                        if (shade < 0.4) shade = 0.4;
-                        if (shade > 1.6) shade = 1.6;
-                        r = clampi((int)(r * shade), 0, 255);
-                        g = clampi((int)(g * shade), 0, 255);
-                        b = clampi((int)(b * shade), 0, 255);
                     }
 
                     if (cell_fh > 0.01) {
@@ -2075,7 +2100,7 @@ py_render_frame(PyObject *self, PyObject *dict)
 
                     /* ── Reflective floor blend ─────────────────── */
                     if (reflect_flags && reflect_flags[ci] > 0) {
-                        int y_ref = 2 * half - y_draw;
+                        int y_ref = 2 * half - y;
                         if (y_ref >= 0 && y_ref < half) {
                             int ref_off = (y_ref * sw + x) * 3;
                             int rr = fb[ref_off];
@@ -2089,24 +2114,10 @@ py_render_frame(PyObject *self, PyObject *dict)
                         }
                     }
 
-                    /* Write pixel at displaced position.  Cap gap-fill
-                     * to at most 2 rows to prevent overdraw perf cliff
-                     * on steep slopes near the camera.                */
-                    {
-                        int y_lo = y_draw < y ? y_draw : y;
-                        int y_hi = y_draw > y ? y_draw : y;
-                        if (y_hi - y_lo > 2) {
-                            y_lo = y_draw;
-                            y_hi = y_draw;
-                        }
-                        if (y_lo < 0) y_lo = 0;
-                        if (y_hi >= sh) y_hi = sh - 1;
-                        for (int yy = y_lo; yy <= y_hi; yy++) {
-                            if (depth_px[yy * sw + x] > (float)ft_rd[t]) {
-                                put_px(fb, sw, x, yy, r, g, b);
-                                put_depth(depth_px, sw, x, yy, (float)ft_rd[t]);
-                            }
-                        }
+                    /* Write single pixel */
+                    if (depth_px[y * sw + x] > (float)ft_rd[t]) {
+                        put_px(fb, sw, x, y, r, g, b);
+                        put_depth(depth_px, sw, x, y, (float)ft_rd[t]);
                     }
                     break;
                 }
@@ -2784,6 +2795,7 @@ cleanup:
     if (crv_buf.buf)     PyBuffer_Release(&crv_buf);
     if (reflect_buf.buf) PyBuffer_Release(&reflect_buf);
     if (slope_buf.buf)   PyBuffer_Release(&slope_buf);
+    if (slope_div_buf.buf) PyBuffer_Release(&slope_div_buf);
     if (fh2_buf.buf)     PyBuffer_Release(&fh2_buf);
     if (ch2_buf.buf)     PyBuffer_Release(&ch2_buf);
     if (ftex2_buf.buf)   PyBuffer_Release(&ftex2_buf);
@@ -2811,6 +2823,7 @@ cleanup:
     free(cstep_hits);
     free(col_fog);
     free(n_def);
+    /* slope_mask removed */
     return result;
 }
 

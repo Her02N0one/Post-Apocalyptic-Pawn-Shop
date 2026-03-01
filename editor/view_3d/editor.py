@@ -495,10 +495,6 @@ class Zone3DEditor(
         if key == pygame.K_x and self.tool == "select":
             self._sel_toggle_ceiling_mode()
             return True
-        # Toggle slope axis
-        if key == pygame.K_x and self.tool == "slope":
-            self._slope_toggle_axis()
-            return True
         # Toggle layer2 target (floor2/ceil2)
         if key == pygame.K_x and self.tool == "layer2":
             self._layer2_toggle_target()
@@ -661,7 +657,7 @@ class Zone3DEditor(
             if btn == 1:
                 self._slope_increase(shift)
             elif btn == 3:
-                self._slope_decrease()
+                self._slope_decrease(shift)
             return True
 
         if tool == "reflect":

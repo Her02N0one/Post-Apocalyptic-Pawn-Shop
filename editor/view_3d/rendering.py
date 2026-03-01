@@ -528,36 +528,38 @@ class RenderingMixin:
                 fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
                 is_aim = (aimed and aimed.row == r and aimed.col == c)
 
-                # Draw tilted floor plane showing actual slope
-                # Corner heights: h(x,z) = fh + dx*(x-0.5) + dy*(z-0.5)
-                h00 = fh + dx * -0.5 + dy * -0.5  # (c, r) corner
-                h10 = fh + dx *  0.5 + dy * -0.5  # (c+1, r) corner
-                h11 = fh + dx *  0.5 + dy *  0.5  # (c+1, r+1) corner
-                h01 = fh + dx * -0.5 + dy *  0.5  # (c, r+1) corner
+                # Draw tilted floor plane matching C renderer [0,1) model:
+                # fh is the base corner (col, row); slope rises toward
+                # the opposite corner — no underground dip.
+                h00 = fh                  # (c,   r)   corner
+                h10 = fh + dx             # (c+1, r)   corner
+                h11 = fh + dx + dy        # (c+1, r+1) corner
+                h01 = fh + dy             # (c,   r+1) corner
 
                 plane_col = COL_TOOL_SLOPE if is_aim else (160, 190, 90)
                 pw = 3 if is_aim else 2
-                # Draw the tilted quad as 4 edges
+                # Draw the tilted quad as 4 edges (+0.05 clears the floor slab)
                 self._line3d(surface, vp, hw, hh,
-                             float(c), h00 + 0.03, float(r),
-                             c + 1.0, h10 + 0.03, float(r), plane_col, pw)
+                             float(c), h00 + 0.05, float(r),
+                             c + 1.0, h10 + 0.05, float(r), plane_col, pw)
                 self._line3d(surface, vp, hw, hh,
-                             c + 1.0, h10 + 0.03, float(r),
-                             c + 1.0, h11 + 0.03, r + 1.0, plane_col, pw)
+                             c + 1.0, h10 + 0.05, float(r),
+                             c + 1.0, h11 + 0.05, r + 1.0, plane_col, pw)
                 self._line3d(surface, vp, hw, hh,
-                             c + 1.0, h11 + 0.03, r + 1.0,
-                             float(c), h01 + 0.03, r + 1.0, plane_col, pw)
+                             c + 1.0, h11 + 0.05, r + 1.0,
+                             float(c), h01 + 0.05, r + 1.0, plane_col, pw)
                 self._line3d(surface, vp, hw, hh,
-                             float(c), h01 + 0.03, r + 1.0,
-                             float(c), h00 + 0.03, float(r), plane_col, pw)
+                             float(c), h01 + 0.05, r + 1.0,
+                             float(c), h00 + 0.05, float(r), plane_col, pw)
                 # Diagonal for clarity
                 self._line3d(surface, vp, hw, hh,
-                             float(c), h00 + 0.03, float(r),
-                             c + 1.0, h11 + 0.03, r + 1.0, plane_col, 1)
+                             float(c), h00 + 0.05, float(r),
+                             c + 1.0, h11 + 0.05, r + 1.0, plane_col, 1)
 
                 # Arrow from center in slope direction
                 cx_w = c + 0.5
                 cz_w = r + 0.5
+                center_h = fh + dx * 0.5 + dy * 0.5  # height at cell center
                 mag = (dx * dx + dy * dy) ** 0.5
                 arrow_len = min(0.4, mag * 0.3)
                 if mag > 0.01:
@@ -569,9 +571,9 @@ class RenderingMixin:
                 aw = 3 if is_aim else 2
                 tx = cx_w + ndx * arrow_len
                 tz = cz_w + ndy * arrow_len
-                ty = fh + mag * 0.15
+                ty = center_h + mag * 0.15
                 self._line3d(surface, vp, hw, hh,
-                             cx_w, fh + 0.05, cz_w,
+                             cx_w, center_h + 0.05, cz_w,
                              tx, ty + 0.05, tz, arrow_col, aw)
                 # Arrowhead
                 perp_x = -ndy * 0.10
@@ -586,18 +588,22 @@ class RenderingMixin:
                              arrow_col, aw)
         # Draw axis indicator on aimed cell
         if aimed:
-            fh = zone.floor_heights[aimed.row][aimed.col] if zone.floor_heights else 0.0
-            cx_w = aimed.col + 0.5
-            cz_w = aimed.row + 0.5
+            ar, ac = aimed.row, aimed.col
+            fh = zone.floor_heights[ar][ac] if zone.floor_heights else 0.0
+            adx = sdx[ar][ac] if sdx and len(sdx) > ar and len(sdx[ar]) > ac else 0.0
+            ady = sdy[ar][ac] if sdy and len(sdy) > ar and len(sdy[ar]) > ac else 0.0
+            center_h = fh + adx * 0.5 + ady * 0.5
+            cx_w = ac + 0.5
+            cz_w = ar + 0.5
             if axis == "dx":
                 self._line3d(surface, vp, hw, hh,
-                             cx_w - 0.35, fh + 0.06, cz_w,
-                             cx_w + 0.35, fh + 0.06, cz_w,
+                             cx_w - 0.35, center_h + 0.06, cz_w,
+                             cx_w + 0.35, center_h + 0.06, cz_w,
                              (255, 255, 150), 3)
             else:
                 self._line3d(surface, vp, hw, hh,
-                             cx_w, fh + 0.06, cz_w - 0.35,
-                             cx_w, fh + 0.06, cz_w + 0.35,
+                             cx_w, center_h + 0.06, cz_w - 0.35,
+                             cx_w, center_h + 0.06, cz_w + 0.35,
                              (255, 255, 150), 3)
 
     def _draw_reflect_overlay(self, surface, vp, hw, hh, zone, W, H):
@@ -1230,10 +1236,28 @@ class RenderingMixin:
             step = getattr(self, '_light_step', 0.1)
             lines.append((f"Step: {step:.2f}", COL_TOOL_LIGHT))
         elif self.tool == "slope":
-            axis = getattr(self, '_slope_axis', 'dx')
-            step = getattr(self, '_slope_step', 0.25)
-            lines.append((f"Axis: {axis}  (X)", COL_TOOL_SLOPE))
-            lines.append((f"Step: {step:.2f}", COL_TOOL_SLOPE))
+            step = getattr(self, '_slope_step', 0.5)
+            div = getattr(self, '_slope_div', 4)
+            # Show cardinal direction camera is facing
+            import math as _m
+            yaw = getattr(self, 'yaw', 0.0)
+            fx, fy = _m.sin(yaw), _m.cos(yaw)
+            if abs(fx) >= abs(fy):
+                dir_name = "East" if fx > 0 else "West"
+            else:
+                dir_name = "South" if fy > 0 else "North"
+            lines.append((f"Dir: {dir_name}  Rise: {step:.1f}  Div: {div}", COL_TOOL_SLOPE))
+            # Show current slope on aimed cell
+            aimed = self.aimed
+            if aimed:
+                sdx = getattr(self.zone, 'floor_slope_dx', [])
+                sdy = getattr(self.zone, 'floor_slope_dy', [])
+                sdv = getattr(self.zone, 'floor_slope_div', [])
+                dx = sdx[aimed.row][aimed.col] if sdx else 0.0
+                dy = sdy[aimed.row][aimed.col] if sdy else 0.0
+                cdv = sdv[aimed.row][aimed.col] if sdv and aimed.row < len(sdv) and aimed.col < len(sdv[aimed.row]) else 0
+                if abs(dx) > 0.001 or abs(dy) > 0.001:
+                    lines.append((f"  dx={dx:+.2f}  dy={dy:+.2f}  steps={cdv}", COL_TOOL_SLOPE))
         elif self.tool == "reflect":
             step = getattr(self, '_reflect_step', 32)
             lines.append((f"Step: {step}", COL_TOOL_REFLECT))

@@ -36,6 +36,7 @@ class UndoMixin:
             "curves": copy.deepcopy(z.curves) if z.curves else [],
             "floor_slope_dx": copy.deepcopy(z.floor_slope_dx) if z.floor_slope_dx else [],
             "floor_slope_dy": copy.deepcopy(z.floor_slope_dy) if z.floor_slope_dy else [],
+            "floor_slope_div": copy.deepcopy(z.floor_slope_div) if z.floor_slope_div else [],
             "floor2_heights": copy.deepcopy(z.floor2_heights) if z.floor2_heights else [],
             "ceil2_heights": copy.deepcopy(z.ceil2_heights) if z.ceil2_heights else [],
             "floor2_textures": copy.deepcopy(z.floor2_textures) if z.floor2_textures else [],
@@ -82,6 +83,8 @@ class UndoMixin:
             z.floor_slope_dx = snap["floor_slope_dx"]
         if "floor_slope_dy" in snap:
             z.floor_slope_dy = snap["floor_slope_dy"]
+        if "floor_slope_div" in snap:
+            z.floor_slope_div = snap["floor_slope_div"]
         if "floor2_heights" in snap:
             z.floor2_heights = snap["floor2_heights"]
         if "ceil2_heights" in snap:

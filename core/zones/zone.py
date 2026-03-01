@@ -112,9 +112,13 @@ class Zone:
     curves: list[dict[str, Any]] = field(default_factory=list)
     # Per-cell floor slope: slope_dx[r][c] and slope_dy[r][c] represent
     # height change per unit in X and Y directions across the cell.
-    # The centre of the cell is at fheight[r][c]; edges differ by ±0.5*slope.
+    # fheight[r][c] is the base corner (col, row); the slope rises
+    # toward the opposite corner: h(fx,fy) = fh + dx*fx + dy*fy  (fx,fy in [0,1)).
     floor_slope_dx: list[list[float]] = field(default_factory=list)
     floor_slope_dy: list[list[float]] = field(default_factory=list)
+    # Per-cell slope subdivision count (stair steps per tile).
+    # 0 = use default (4), otherwise N = number of discrete steps.
+    floor_slope_div: list[list[int]] = field(default_factory=list)
     # ── Multi-layer floor/ceiling (secondary layer per cell) ────
     # -1000.0 sentinel = no secondary surface at this cell.
     floor2_heights: list[list[float]] = field(default_factory=list)
@@ -285,6 +289,7 @@ class Zone:
             curves=data.get("curves", []),
             floor_slope_dx=_grid_or_default("floor_slope_dx", 0.0, H, W),
             floor_slope_dy=_grid_or_default("floor_slope_dy", 0.0, H, W),
+            floor_slope_div=_grid_or_default("floor_slope_div", 0, H, W),
             floor2_heights=_grid_or_default("floor2_heights", -1000.0, H, W),
             ceil2_heights=_grid_or_default("ceil2_heights", -1000.0, H, W),
             floor2_textures=_grid_or_default("floor2_textures", "", H, W),

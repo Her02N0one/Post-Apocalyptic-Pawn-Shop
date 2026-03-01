@@ -263,13 +263,14 @@ TOOL_HINTS = {
         "title": "Slope  (O=exit)",
         "actions": {
             "any": {
-                "LMB": "Increase slope",
-                "Sh+LMB": "Reset flat",
-                "RMB": "Decrease slope",
+                "LMB": "Ramp toward camera",
+                "Sh+LMB": "Steepen slope",
+                "RMB": "Flatten",
+                "Sh+RMB": "Reduce slope",
                 "Scroll": "Adjust step",
             },
         },
-        "keys": "X=toggle dx/dy  O=exit slope",
+        "keys": "O=exit slope",
     },
     "reflect": {
         "title": "Reflect  (I=exit)",

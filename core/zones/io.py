@@ -184,6 +184,7 @@ def save_binary_zone(
                 "curves": zone.curves,
                 "floor_slope_dx": zone.floor_slope_dx,
                 "floor_slope_dy": zone.floor_slope_dy,
+                "floor_slope_div": zone.floor_slope_div,
                 "floor2_heights": zone.floor2_heights,
                 "ceil2_heights": zone.ceil2_heights,
                 "floor2_textures": zone.floor2_textures,
@@ -409,6 +410,7 @@ def load_binary_zone(
             result.setdefault("curves", [])
             result.setdefault("floor_slope_dx", [])
             result.setdefault("floor_slope_dy", [])
+            result.setdefault("floor_slope_div", [])
             result.setdefault("floor2_heights", [])
             result.setdefault("ceil2_heights", [])
             result.setdefault("floor2_textures", [])

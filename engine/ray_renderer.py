@@ -408,9 +408,13 @@ class RayRenderer:
         else:
             self._curve_buf = None
 
-        # ── Per-cell floor slope (float64[map_h*map_w*2]: dx,dy pairs) ──
+        # ── Per-cell floor slope → discrete stair steps ──────────
+        # Pass slope dx/dy and per-cell division counts to C.
+        # The C renderer snaps floor heights to discrete steps,
+        # giving a staircase appearance with minimal overhead.
         sdx = getattr(zone, "floor_slope_dx", [])
         sdy = getattr(zone, "floor_slope_dy", [])
+        sdiv = getattr(zone, "floor_slope_div", [])
         has_slope = (
             sdx and sdy
             and len(sdx) == zone.height
@@ -420,15 +424,26 @@ class RayRenderer:
         )
         if has_slope:
             slope_flat: list[float] = []
+            div_flat: list[int] = []
             for r in range(zone.height):
                 sdx_row = sdx[r] if r < len(sdx) else [0.0] * zone.width
                 sdy_row = sdy[r] if r < len(sdy) else [0.0] * zone.width
+                sdiv_row = sdiv[r] if sdiv and r < len(sdiv) else [0] * zone.width
                 for c in range(zone.width):
-                    slope_flat.append(float(sdx_row[c]) if c < len(sdx_row) else 0.0)
-                    slope_flat.append(float(sdy_row[c]) if c < len(sdy_row) else 0.0)
+                    dx_v = float(sdx_row[c]) if c < len(sdx_row) else 0.0
+                    dy_v = float(sdy_row[c]) if c < len(sdy_row) else 0.0
+                    dv = int(sdiv_row[c]) if c < len(sdiv_row) else 0
+                    slope_flat.append(dx_v)
+                    slope_flat.append(dy_v)
+                    # Default division count for slope cells: 4
+                    if (dx_v != 0.0 or dy_v != 0.0) and dv < 2:
+                        dv = 4
+                    div_flat.append(dv)
             self._slope_buf: bytes | None = array.array("d", slope_flat).tobytes()
+            self._slope_div_buf: bytes | None = array.array("B", div_flat).tobytes()
         else:
             self._slope_buf = None
+            self._slope_div_buf: bytes | None = None
 
         # ── Multi-layer secondary floor/ceiling buffers ──────────
         LAYER_NONE = -1000.0
@@ -1192,6 +1207,7 @@ class RayRenderer:
             "n_curves":     self._n_curves,
             # Floor slope data (optional — None = no slopes)
             "slope_data":   self._slope_buf,
+            "slope_div":    self._slope_div_buf,
             # Multi-layer secondary floor/ceiling (optional)
             "fheight2":     self._fh2_buf,
             "cheight2":     self._ch2_buf,
@@ -1444,16 +1460,36 @@ class RayRenderer:
         considered: the highest floor surface at or below
         ``current_fh + _MAX_STEP`` is returned, letting the player walk
         on elevated catwalks / layer-2 surfaces.
+
+        Slope heights are computed using discrete stair-steps when
+        slope data and per-cell division counts are available.
         """
         ix, iy = int(x), int(y)
         if ix < 0 or ix >= self._map_w or iy < 0 or iy >= self._map_h:
             return 0.0
-        import struct
+        import struct, math
         idx = iy * self._map_w + ix
         offset = idx * 8  # 8 bytes per float64
         if offset + 8 > len(self._fh_buf):
             return 0.0
         fh1 = struct.unpack_from("d", self._fh_buf, offset)[0]
+
+        # Apply discrete stair-step from slope data
+        if self._slope_buf is not None and self._slope_div_buf is not None:
+            s_off = idx * 16  # 2 doubles per cell
+            if s_off + 16 <= len(self._slope_buf):
+                sdx, sdy = struct.unpack_from("dd", self._slope_buf, s_off)
+                div = self._slope_div_buf[idx]
+                if (sdx != 0.0 or sdy != 0.0) and div >= 2:
+                    fx = x - ix
+                    fy = y - iy
+                    raw = sdx * fx + sdy * fy
+                    lo = min(0.0, sdx) + min(0.0, sdy)
+                    rng = abs(sdx) + abs(sdy)
+                    if rng > 0.001:
+                        t = max(0.0, min((raw - lo) / rng, 0.9999))
+                        step = int(t * div)
+                        fh1 += lo + step * (rng / div)
 
         if current_fh is None:
             return fh1  # backward-compat: primary floor only
@@ -1511,7 +1547,7 @@ class RayRenderer:
           3. The floor drop is within *max_step_down*.
           4. There is enough ceiling clearance for the player.
         """
-        import struct
+        import struct, math
         LAYER_NONE = -1000.0
         for dx_off in (-radius, 0, radius):
             for dy_off in (-radius, 0, radius):
@@ -1526,6 +1562,24 @@ class RayRenderer:
                 offset = ci * 8
                 fh1 = struct.unpack_from("d", self._fh_buf, offset)[0]
                 ch1 = struct.unpack_from("d", self._ch_buf, offset)[0]
+
+                # Apply discrete stair-step from slope data
+                if self._slope_buf is not None and self._slope_div_buf is not None:
+                    s_off = ci * 16
+                    if s_off + 16 <= len(self._slope_buf):
+                        sdx_v, sdy_v = struct.unpack_from(
+                            "dd", self._slope_buf, s_off)
+                        div = self._slope_div_buf[ci]
+                        if (sdx_v != 0.0 or sdy_v != 0.0) and div >= 2:
+                            fx = cx - ix
+                            fy = cy - iy
+                            raw = sdx_v * fx + sdy_v * fy
+                            lo = min(0.0, sdx_v) + min(0.0, sdy_v)
+                            rng = abs(sdx_v) + abs(sdy_v)
+                            if rng > 0.001:
+                                t = max(0.0, min((raw - lo) / rng, 0.9999))
+                                step = int(t * div)
+                                fh1 += lo + step * (rng / div)
 
                 # Read layer-2 heights (sentinel = no layer)
                 fh2 = LAYER_NONE
