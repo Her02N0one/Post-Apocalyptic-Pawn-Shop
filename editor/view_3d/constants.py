@@ -164,16 +164,17 @@ TOOL_HINTS = {
         "title": "Paint",
         "actions": {
             "any": {
-                "LMB": "Paint face / prism / quad",
-                "Sh+LMB": "Paint whole cell",
+                "LMB": "Paint face / prism face / quad",
+                "Sh+LMB": "Paint whole cell / all prism faces",
                 "Ct+LMB": "Flood fill",
                 "RMB": "Erase texture",
+                "Sh+RMB": "Erase all prism faces",
                 "Ct+RMB": "Flood clear",
                 "MMB": "Eyedropper",
                 "Scroll": "Cycle palette",
             },
         },
-        "keys": "T=tile picker  1-0=hotbar  (aims prisms & quads too)",
+        "keys": "T=tile picker  1-0=hotbar",
     },
     "segment": {
         "title": "Detail",

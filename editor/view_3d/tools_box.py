@@ -57,6 +57,15 @@ class BoxMixin:
 
     def _box_find_aimed(self) -> int | None:
         """Return index of prism under crosshair, or None."""
+        result = self._box_find_aimed_face()
+        return result[0] if result is not None else None
+
+    def _box_find_aimed_face(self) -> tuple[int, str, float] | None:
+        """Return (index, face_name, t) of prism under crosshair, or None.
+
+        *face_name* is one of 'north','south','east','west','top','bot'.
+        *t* is the ray parameter (hit distance) for depth comparison.
+        """
         zone = self.zone
         if not zone or not zone.boxes:
             return None
@@ -66,6 +75,7 @@ class BoxMixin:
 
         best_t = float("inf")
         best_idx: int | None = None
+        best_face: str = ""
 
         for i, b in enumerate(zone.boxes):
             result = _ray_vs_obb(
@@ -81,12 +91,13 @@ class BoxMixin:
             if result is not None and result[0] < best_t:
                 best_t = result[0]
                 best_idx = i
+                best_face = result[1]
 
         # Only pick prism if closer than aimed cell
         if best_idx is not None:
             aimed = self.aimed
             if aimed is None or best_t < aimed.t:
-                return best_idx
+                return (best_idx, best_face, best_t)
 
         return None
 

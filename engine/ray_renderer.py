@@ -357,6 +357,10 @@ class RayRenderer:
                     v = tex.get(k, 0)
                     return v if isinstance(v, int) else _s2i(v)
                 flags = 1 if b.get("collision", False) else 0
+                # BX_TEX_N (index 7) = +Y face in C = south in editor
+                # BX_TEX_S (index 8) = -Y face in C = north in editor
+                # Swap N↔S so editor face names map to the correct
+                # raycaster faces (Y axis = editor Z, +Y = south).
                 bx_data.extend([
                     float(b.get("x", 0.0)),
                     float(b.get("y", 0.0)),
@@ -365,7 +369,7 @@ class RayRenderer:
                     float(b.get("h", 1.0)),
                     float(b.get("d", 1.0)),
                     float(b.get("yaw", 0.0)),
-                    float(_tid("N")), float(_tid("S")),
+                    float(_tid("S")), float(_tid("N")),
                     float(_tid("E")), float(_tid("W")),
                     float(_tid("top")), float(_tid("bot")),
                     float(flags),

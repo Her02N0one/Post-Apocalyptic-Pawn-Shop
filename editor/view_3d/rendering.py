@@ -894,8 +894,20 @@ class RenderingMixin:
 
     def _draw_face_hl_and_preview(self, surface, vp, hw, hh, sw, sh):
         aimed = self.aimed
+        is_paint = getattr(self, 'tool', '') == 'paint'
+        prism_aimed = getattr(self, '_paint_aimed_prism', None) is not None
+        quad_aimed = getattr(self, '_paint_aimed_quad', None) is not None
+
+        # Cell face highlight — skip when a prism/quad is closer (paint tool)
+        # because the cell highlight bleeds through semi-transparent prism faces.
         if aimed is not None and aimed.face != "ground":
-            self._draw_face_highlight(surface, vp, hw, hh, aimed)
+            if not (is_paint and (prism_aimed or quad_aimed)):
+                self._draw_face_highlight(surface, vp, hw, hh, aimed)
+
+        # Prism / quad face highlight (paint tool only)
+        if is_paint:
+            self._draw_prism_face_hl(surface, vp, hw, hh)
+            self._draw_quad_face_hl(surface, vp, hw, hh)
 
         # Segment merge-target: highlight the boundary nearest to crosshair
         if self.tool == "segment" and aimed is not None:
@@ -1372,8 +1384,133 @@ class RenderingMixin:
                 tmp = pygame.Surface((tw, th), pygame.SRCALPHA)
                 off = [(px - min_x, py - min_y) for px, py in poly]
                 pygame.draw.polygon(tmp, (*tool_col[:3], fill_a), off)
-                surface.blit(tmp, (min_x, min_y))
                 pygame.draw.polygon(tmp, (*tool_col[:3], edge_a), off, edge_w)
+                surface.blit(tmp, (min_x, min_y))
+        except (ValueError, OverflowError):
+            pass
+
+    # ── Prism / Quad face highlight ───────────────────────────────
+
+    # Maps ray-picker face names to _FACE_DEFS indices (corner index tuples)
+    _OBJ_FACE_IDX = {
+        "top":   (4, 5, 6, 7),
+        "bot":   (0, 3, 2, 1),
+        "north": (0, 1, 5, 4),
+        "south": (2, 3, 7, 6),
+        "west":  (0, 4, 7, 3),
+        "east":  (1, 2, 6, 5),
+    }
+
+    def _draw_prism_face_hl(
+        self, surface: pygame.Surface, vp: list[float],
+        hw: float, hh: float,
+    ) -> None:
+        """Draw a translucent highlight on the aimed prism face."""
+        idx = getattr(self, '_paint_aimed_prism', None)
+        face = getattr(self, '_paint_aimed_prism_face', '')
+        if idx is None or not face:
+            return
+        zone = self.zone
+        if not zone or not zone.boxes:
+            return
+        if idx < 0 or idx >= len(zone.boxes):
+            return
+        b = zone.boxes[idx]
+        cx = float(b.get("x", 0))
+        cz = float(b.get("y", 0))
+        base_y = float(b.get("z", 0))
+        w = float(b.get("w", 1))
+        h = float(b.get("h", 1))
+        d = float(b.get("d", 1))
+        yaw = float(b.get("yaw", 0))
+
+        cos_y = math.cos(yaw)
+        sin_y = math.sin(yaw)
+        hw2, hd2 = w * 0.5, d * 0.5
+        top_y = base_y + h
+
+        local = [(-hw2, -hd2), (hw2, -hd2), (hw2, hd2), (-hw2, hd2)]
+        corners: list[tuple[float, float, float]] = []
+        for lx, lz in local:
+            wx = cx + lx * cos_y - lz * sin_y
+            wz = cz + lx * sin_y + lz * cos_y
+            corners.append((wx, base_y, wz))
+        for lx, lz in local:
+            wx = cx + lx * cos_y - lz * sin_y
+            wz = cz + lx * sin_y + lz * cos_y
+            corners.append((wx, top_y, wz))
+
+        face_indices = self._OBJ_FACE_IDX.get(face)
+        if face_indices is None:
+            return
+        face_corners = [corners[i] for i in face_indices]
+        self._draw_object_face_poly(surface, vp, hw, hh, face_corners)
+
+    def _draw_quad_face_hl(
+        self, surface: pygame.Surface, vp: list[float],
+        hw: float, hh: float,
+    ) -> None:
+        """Draw a translucent highlight on the aimed quad."""
+        idx = getattr(self, '_paint_aimed_quad', None)
+        if idx is None:
+            return
+        zone = self.zone
+        if not zone or not zone.quads:
+            return
+        if idx < 0 or idx >= len(zone.quads):
+            return
+        q = zone.quads[idx]
+        qx = float(q.get("x", 0.0))
+        qz = float(q.get("z", 0.0))
+        by = float(q.get("base_y", 0.0))
+        w = float(q.get("width", 1.0))
+        h = float(q.get("height", 1.0))
+        angle = float(q.get("angle", 0.0))
+
+        cos_a = math.cos(angle)
+        sin_a = math.sin(angle)
+        hw2 = w * 0.5
+        x0 = qx - cos_a * hw2
+        z0 = qz + sin_a * hw2
+        x1 = qx + cos_a * hw2
+        z1 = qz - sin_a * hw2
+
+        face_corners = [
+            (x0, by, z0), (x1, by, z1),
+            (x1, by + h, z1), (x0, by + h, z0),
+        ]
+        self._draw_object_face_poly(surface, vp, hw, hh, face_corners)
+
+    def _draw_object_face_poly(
+        self, surface: pygame.Surface, vp: list[float],
+        hw: float, hh: float,
+        face_corners: list[tuple[float, float, float]],
+    ) -> None:
+        """Draw a translucent highlight polygon for a prism or quad face."""
+        poly = _project_poly(vp, face_corners, hw, hh)
+        if poly is None:
+            return
+        xs = [p[0] for p in poly]
+        ys = [p[1] for p in poly]
+        sw2, sh2 = int(hw * 2), int(hh * 2)
+        if max(xs) < -50 or min(xs) > sw2 + 50:
+            return
+        if max(ys) < -50 or min(ys) > sh2 + 50:
+            return
+
+        tool_col = TOOL_COLORS.get(self.tool, COL_TOOL_BOX)
+        try:
+            min_x = max(0, min(xs))
+            min_y = max(0, min(ys))
+            max_x = min(sw2, max(xs))
+            max_y = min(sh2, max(ys))
+            tw = max_x - min_x + 1
+            th = max_y - min_y + 1
+            if tw > 0 and th > 0:
+                tmp = pygame.Surface((tw, th), pygame.SRCALPHA)
+                off = [(px - min_x, py - min_y) for px, py in poly]
+                pygame.draw.polygon(tmp, (*tool_col[:3], 90), off)
+                pygame.draw.polygon(tmp, (*tool_col[:3], 180), off, 3)
                 surface.blit(tmp, (min_x, min_y))
         except (ValueError, OverflowError):
             pass

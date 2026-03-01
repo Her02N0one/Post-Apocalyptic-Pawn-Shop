@@ -575,17 +575,22 @@ class Zone3DEditor(
             return True
 
         if tool == "paint":
-            # Check if crosshair is on a prism or quad (closer than cell)
-            aimed_prism = self._paint_find_prism()
-            aimed_quad = self._paint_find_quad() if aimed_prism is None else None
+            # Check per-frame aim: prism or quad closer than cell?
+            aimed_prism = self._paint_aimed_prism
+            aimed_face = self._paint_aimed_prism_face
+            aimed_quad = self._paint_aimed_quad
 
             if aimed_prism is not None:
-                if btn == 1:
-                    self._paint_prism(aimed_prism)
+                if btn == 1 and shift:
+                    self._paint_prism(aimed_prism, face=None)   # all faces
+                elif btn == 1:
+                    self._paint_prism(aimed_prism, face=aimed_face)
+                elif btn == 3 and shift:
+                    self._erase_prism(aimed_prism, face=None)   # all faces
                 elif btn == 3:
-                    self._erase_prism(aimed_prism)
+                    self._erase_prism(aimed_prism, face=aimed_face)
                 elif btn == 2:
-                    self._pick_prism_texture(aimed_prism)
+                    self._pick_prism_texture(aimed_prism, face=aimed_face)
             elif aimed_quad is not None:
                 if btn == 1:
                     self._paint_quad(aimed_quad)
@@ -743,12 +748,13 @@ class Zone3DEditor(
 
         # ── Universal eyedropper fallback: MMB picks texture in any tool ──
         if btn == 2:
-            aimed_prism = self._paint_find_prism()
-            aimed_quad = self._paint_find_quad() if aimed_prism is None else None
-            if aimed_prism is not None:
-                self._pick_prism_texture(aimed_prism)
-            elif aimed_quad is not None:
-                self._pick_quad_texture(aimed_quad)
+            ap = self._paint_aimed_prism
+            af = self._paint_aimed_prism_face
+            aq = self._paint_aimed_quad
+            if ap is not None:
+                self._pick_prism_texture(ap, face=af)
+            elif aq is not None:
+                self._pick_quad_texture(aq)
             else:
                 self._pick_texture()
             return True
@@ -967,8 +973,11 @@ class Zone3DEditor(
         # Continuous paint: if LMB held + paint tool, paint every frame
         # Skip undo push — a single undo entry was pushed on the initial
         # MOUSEBUTTONDOWN so the entire stroke is one undo operation.
+        # Skip cell painting when crosshair is over a prism or quad — those
+        # are discrete objects, not drag-paintable surfaces.
         if self._lmb_held and self.tool == "paint" and self.aimed:
-            self._paint_continuous()
+            if self._paint_aimed_prism is None and self._paint_aimed_quad is None:
+                self._paint_continuous()
 
     def _collides_xz(self, x: float, z: float, y: float, radius: float) -> bool:
         """True if a camera circle at *(x, z)* overlaps any solid cell at height *y*.
@@ -1068,6 +1077,7 @@ class Zone3DEditor(
 
         self.aimed = best
         self._compute_preview()
+        self._paint_update_aim()
 
     def _compute_preview(self) -> None:
         """Compute preview indicators showing what the next click will do."""
