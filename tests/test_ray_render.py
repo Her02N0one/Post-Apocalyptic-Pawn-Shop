@@ -2232,6 +2232,66 @@ class TestFreeformBox:
             f"Rotated box not visible: depth={d:.3f}"
         )
 
+    # ── Counter-top (top surface) renders for short box ────────
+
+    def test_counter_top_renders(self) -> None:
+        """A short box (h=0.3) on the floor should have its counter-top
+        (top surface) visible from default camera height 0.5.
+        The counter-top pixels should be drawn between the box top row
+        and the horizon, at a shallower depth than the box face."""
+        bx = dict(
+            x=5.5, y=3.5, z=0.0,
+            w=1.0, h=0.3, d=1.0,
+            yaw=0.0,
+            textures={"N": _find_wall_tile(), "S": _find_wall_tile(),
+                       "E": _find_wall_tile(), "W": _find_wall_tile(),
+                       "top": _find_wall_tile(), "bot": _find_wall_tile()},
+            collision=False,
+        )
+        r = self._render_with_box(bx, px=5.5, py=5.5)
+        cx = SW // 2
+        half = SH // 2
+
+        # Box face is a narrow strip below the horizon.  For cam h=0.5,
+        # z=0, h=0.3 at distance ~1.5: face occupies rows ~114-150
+        # (on a 180-high screen with half=90).
+        d_face = _depth_at(r, cx, half + 30)
+        assert 1.0 < d_face < 4.0, (
+            f"Box face not at expected depth: {d_face:.3f}"
+        )
+
+        # The counter-top should render between the box top (~row 114)
+        # and the horizon (row 90).  Check around row 100.
+        d_ct = _depth_at(r, cx, half + 10)
+        # If counter-top renders, depth should be moderate (not MAX_DEPTH)
+        assert d_ct < 20.0, (
+            f"Counter-top depth too large (not rendered?): {d_ct:.3f}"
+        )
+
+    def test_counter_top_off_cell_boundary(self) -> None:
+        """A box centred at (5.3, 3.7) — NOT aligned to grid —
+        should still have a visible counter-top.  Before the fix,
+        the cell-boundary constraint killed the counter-top
+        immediately because the floor-cast left the hit cell."""
+        bx = dict(
+            x=5.3, y=3.7, z=0.0,
+            w=0.8, h=0.3, d=0.8,
+            yaw=0.0,
+            textures={"N": _find_wall_tile(), "S": _find_wall_tile(),
+                       "E": _find_wall_tile(), "W": _find_wall_tile(),
+                       "top": _find_wall_tile(), "bot": _find_wall_tile()},
+            collision=False,
+        )
+        r = self._render_with_box(bx, px=5.3, py=5.5)
+        cx = SW // 2
+        half = SH // 2
+
+        # Just above horizon: counter-top should be present
+        d_ct = _depth_at(r, cx, half - 3)
+        assert d_ct < 20.0, (
+            f"Off-grid box counter-top not rendered: depth={d_ct:.3f}"
+        )
+
 
 # ═══════════════════════════════════════════════════════════════════
 #  Reflective Surfaces

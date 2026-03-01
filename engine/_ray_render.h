@@ -89,6 +89,7 @@ typedef struct {
     double hs;         /* height_scale (< 1 for short, 1 for full)  */
     double base_y;     /* Z anchor override; < -1e8 → use cell fh   */
     int    top_tid;    /* top-face texture for boxes; -1 = use tid   */
+    int    box_idx;    /* index into box_data; -1 = not a box        */
 } DeferredHit;
 
 /* qsort comparator: sort deferred hits far-to-near (descending dist) */
