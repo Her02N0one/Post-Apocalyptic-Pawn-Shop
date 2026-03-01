@@ -1409,15 +1409,15 @@ class TestToggleCeiling:
         ed._toggle_ceiling()  # remove
         assert z.ceil_heights[r][c] >= SKY_HEIGHT - 0.01
 
-    def test_c_key_toggles_ceiling(self):
-        """C key press triggers _toggle_ceiling via handle_event."""
+    def test_x_key_toggles_ceiling(self):
+        """X key press triggers _toggle_ceiling via handle_event."""
         ed, z = _make_editor()
         r, c = 2, 2
         _open_cell(z, r, c, fh=0.0, ch=0.95)
         z.ceil_heights[r][c] = SKY_HEIGHT
         ed.tool = "sculpt"
         ed.aimed = _CellHit(1.0, c, r, "floor", "top", 0.04)
-        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_c)
+        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_x)
         ed.handle_event(ev)
         assert z.ceil_heights[r][c] == pytest.approx(DEFAULT_CEIL)
 

@@ -24,9 +24,9 @@ from editor.view_3d.constants import (
     TOOL_LABELS, TOOL_COLORS, TOOL_HINTS,
     COL_TOOL_SELECT,
     COL_TOOL_CEILING,
-    COL_TOOL_LIGHT, COL_TOOL_SLOPE, COL_TOOL_REFLECT,
+    COL_TOOL_SLOPE,
     COL_TOOL_LAYER2, COL_TOOL_QUAD, COL_TOOL_PORTAL,
-    COL_TOOL_CURVE, COL_TOOL_FOG,
+    COL_TOOL_CURVE,
     HOTBAR_SIZE,
     FACE_IDX,
 )
@@ -98,11 +98,8 @@ class RenderingMixin:
         self._draw_surface_markers(surface, vp, hw, hh, zone, W, H)
         self._draw_seg_boundary_rings(surface, vp, hw, hh, zone, W, H)
         # ── Per-cell tool overlays ──
-        self._draw_light_overlay(surface, vp, hw, hh, zone, W, H)
         self._draw_slope_arrows(surface, vp, hw, hh, zone, W, H)
-        self._draw_reflect_overlay(surface, vp, hw, hh, zone, W, H)
         self._draw_layer2_slabs(surface, vp, hw, hh, zone, W, H)
-        self._draw_fog_overlay(surface, vp, hw, hh, zone, W, H)
         self._draw_entities(surface, vp, hw, hh, zone)
         self._draw_boxes(surface, vp, hw, hh, zone)
         # ── Discrete object overlays ──
@@ -473,42 +470,12 @@ class RenderingMixin:
 
     # ── Per-cell tool overlays ────────────────────────────────────
 
-    def _draw_light_overlay(self, surface, vp, hw, hh, zone, W, H):
-        """Draw tinted floor quads showing light levels (active in light tool or when data exists)."""
-        if self.tool != "light":
-            return
-        ll = zone.light_levels
-        if not ll:
-            return
-        from core.tiles import tile_def as _td
-        aimed = self.aimed
-        for r in range(H):
-            for c in range(W):
-                v = ll[r][c]
-                if abs(v - 1.0) < 0.01:
-                    continue  # fully lit, skip
-                td = _td(zone.tiles[r][c])
-                if td and td.wall:
-                    continue
-                fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
-                # Darkness overlay: stronger alpha for darker cells
-                darkness = 1.0 - v
-                alpha = int(darkness * 180) + 20
-                if alpha < 10:
-                    continue
-                is_aim = (aimed and aimed.row == r and aimed.col == c)
-                col = COL_TOOL_LIGHT if is_aim else (40, 30, 10)
-                a = min(220, alpha + 50) if is_aim else alpha
-                self._filled_box(surface, vp, hw, hh,
-                                 float(c), fh, float(r),
-                                 c + 1.0, fh + 0.02, r + 1.0,
-                                 col, COL_TOOL_LIGHT if is_aim else None,
-                                 2 if is_aim else 1, alpha=a)
-
     def _draw_slope_arrows(self, surface, vp, hw, hh, zone, W, H):
-        """Draw tilted floor planes and directional arrows on cells with non-zero slope."""
-        if self.tool != "slope":
-            return
+        """Draw tilted floor planes and directional arrows on cells with non-zero slope.
+        
+        Slope tool has been removed; this overlay is now dormant.
+        """
+        return
         sdx = zone.floor_slope_dx
         sdy = zone.floor_slope_dy
         if not sdx and not sdy:
@@ -607,36 +574,12 @@ class RenderingMixin:
                              (255, 255, 150), 3)
 
     def _draw_reflect_overlay(self, surface, vp, hw, hh, zone, W, H):
-        """Draw blue-tinted floor quads showing reflectivity."""
-        if self.tool != "reflect":
-            return
-        rm = zone.reflect_map
-        if not rm:
-            return
-        from core.tiles import tile_def as _td
-        aimed = self.aimed
-        for r in range(H):
-            for c in range(W):
-                v = rm[r][c]
-                if v < 1:
-                    continue
-                td = _td(zone.tiles[r][c])
-                if td and td.wall:
-                    continue
-                fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
-                alpha = int(v / 255.0 * 160) + 40
-                is_aim = (aimed and aimed.row == r and aimed.col == c)
-                col = COL_TOOL_REFLECT
-                a = min(220, alpha + 50) if is_aim else alpha
-                self._filled_box(surface, vp, hw, hh,
-                                 float(c), fh, float(r),
-                                 c + 1.0, fh + 0.02, r + 1.0,
-                                 col, col if is_aim else None,
-                                 2 if is_aim else 1, alpha=a)
+        """Draw blue-tinted floor quads showing reflectivity (removed — now a no-op)."""
+        return
 
     def _draw_layer2_slabs(self, surface, vp, hw, hh, zone, W, H):
         """Draw secondary floor/ceiling surfaces as wireframe rectangles."""
-        if self.tool != "layer2":
+        if self.tool not in ("sculpt", "paint", "select"):
             return
         f2 = getattr(zone, 'floor2_heights', None)
         c2 = getattr(zone, 'ceil2_heights', None)
@@ -670,33 +613,8 @@ class RenderingMixin:
                                          col, col, w, alpha=80 if is_aim else 50)
 
     def _draw_fog_overlay(self, surface, vp, hw, hh, zone, W, H):
-        """Draw semi-transparent volumes showing fog density."""
-        if self.tool != "fog":
-            return
-        fd = zone.fog_density
-        if not fd:
-            return
-        from core.tiles import tile_def as _td
-        aimed = self.aimed
-        for r in range(H):
-            for c in range(W):
-                v = fd[r][c]
-                if v < 0.01:
-                    continue
-                td = _td(zone.tiles[r][c])
-                if td and td.wall:
-                    continue
-                fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
-                ch = zone.ceil_heights[r][c] if zone.ceil_heights else 1.0
-                alpha = int(v * 140) + 30
-                is_aim = (aimed and aimed.row == r and aimed.col == c)
-                col = COL_TOOL_FOG
-                a = min(200, alpha + 50) if is_aim else alpha
-                self._filled_box(surface, vp, hw, hh,
-                                 float(c) + 0.05, fh + 0.01, float(r) + 0.05,
-                                 c + 0.95, ch - 0.01, r + 0.95,
-                                 col, col if is_aim else None,
-                                 2 if is_aim else 1, alpha=a)
+        """Draw semi-transparent volumes showing fog density (removed — now a no-op)."""
+        return
 
     # ── Discrete object overlays ──────────────────────────────────
 
@@ -1232,38 +1150,9 @@ class RenderingMixin:
                 lines.append((f"> {cap_name}_", (255, 255, 200)))
 
         # ── New tool HUD info ─────────────────────────────────────
-        if self.tool == "light":
-            step = getattr(self, '_light_step', 0.1)
-            lines.append((f"Step: {step:.2f}", COL_TOOL_LIGHT))
-        elif self.tool == "slope":
-            step = getattr(self, '_slope_step', 0.5)
-            div = getattr(self, '_slope_div', 4)
-            # Show cardinal direction camera is facing
-            import math as _m
-            yaw = getattr(self, 'yaw', 0.0)
-            fx, fy = _m.sin(yaw), _m.cos(yaw)
-            if abs(fx) >= abs(fy):
-                dir_name = "East" if fx > 0 else "West"
-            else:
-                dir_name = "South" if fy > 0 else "North"
-            lines.append((f"Dir: {dir_name}  Rise: {step:.1f}  Div: {div}", COL_TOOL_SLOPE))
-            # Show current slope on aimed cell
-            aimed = self.aimed
-            if aimed:
-                sdx = getattr(self.zone, 'floor_slope_dx', [])
-                sdy = getattr(self.zone, 'floor_slope_dy', [])
-                sdv = getattr(self.zone, 'floor_slope_div', [])
-                dx = sdx[aimed.row][aimed.col] if sdx else 0.0
-                dy = sdy[aimed.row][aimed.col] if sdy else 0.0
-                cdv = sdv[aimed.row][aimed.col] if sdv and aimed.row < len(sdv) and aimed.col < len(sdv[aimed.row]) else 0
-                if abs(dx) > 0.001 or abs(dy) > 0.001:
-                    lines.append((f"  dx={dx:+.2f}  dy={dy:+.2f}  steps={cdv}", COL_TOOL_SLOPE))
-        elif self.tool == "reflect":
-            step = getattr(self, '_reflect_step', 32)
-            lines.append((f"Step: {step}", COL_TOOL_REFLECT))
-        elif self.tool == "layer2":
+        if self.tool == "sculpt":
             tgt = getattr(self, '_layer2_target', 'floor2')
-            lines.append((f"Target: {tgt}  (X)", COL_TOOL_LAYER2))
+            lines.append((f"L2 target: {tgt}  (Sh+X)", COL_TOOL_LAYER2))
         elif self.tool == "quad":
             sel = getattr(self, '_quad_selected', None)
             snap = getattr(self, '_quad_snap', 0.25)
@@ -1286,10 +1175,6 @@ class RenderingMixin:
             else:
                 rad = getattr(self, '_curve_radius', 1.0)
                 lines.append((f"Radius: {rad:.2f}", COL_TOOL_CURVE))
-        elif self.tool == "fog":
-            step = getattr(self, '_fog_step', 0.1)
-            lines.append((f"Step: {step:.2f}", COL_TOOL_FOG))
-
         hit = self.aimed
         if hit:
             zone = self.zone
@@ -1343,21 +1228,7 @@ class RenderingMixin:
                                      (180, 180, 180)))
 
             # Tool-specific cell data
-            if self.tool == "light":
-                ll = zone.light_levels
-                lv = ll[r][c] if ll and r < len(ll) and c < len(ll[r]) else 1.0
-                lines.append((f"Light: {lv:.2f}", COL_TOOL_LIGHT))
-            elif self.tool == "slope":
-                sdx = zone.floor_slope_dx
-                sdy = zone.floor_slope_dy
-                dx_v = sdx[r][c] if sdx and r < len(sdx) and c < len(sdx[r]) else 0.0
-                dy_v = sdy[r][c] if sdy and r < len(sdy) and c < len(sdy[r]) else 0.0
-                lines.append((f"Slope: dx={dx_v:.2f} dy={dy_v:.2f}", COL_TOOL_SLOPE))
-            elif self.tool == "reflect":
-                rm = zone.reflect_map
-                rv = rm[r][c] if rm and r < len(rm) and c < len(rm[r]) else 0
-                lines.append((f"Reflect: {rv}", COL_TOOL_REFLECT))
-            elif self.tool == "layer2":
+            if self.tool in ("sculpt", "paint", "select"):
                 from editor.view_3d.tools_layer2 import LAYER_NONE as _LN
                 f2 = getattr(zone, 'floor2_heights', None)
                 c2h = getattr(zone, 'ceil2_heights', None)
@@ -1366,10 +1237,6 @@ class RenderingMixin:
                 f_str = f"{fv:.2f}" if fv > _LN + 1 else "\u2014"
                 c_str = f"{cv:.2f}" if cv > _LN + 1 else "\u2014"
                 lines.append((f"Floor2: {f_str}  Ceil2: {c_str}", COL_TOOL_LAYER2))
-            elif self.tool == "fog":
-                fd = zone.fog_density
-                fv = fd[r][c] if fd and r < len(fd) and c < len(fd[r]) else 0.0
-                lines.append((f"Fog: {fv:.2f}", COL_TOOL_FOG))
 
         max_w = max((font.size(t)[0] for t, _ in lines if t), default=80)
         bg_h = len(lines) * lh + pad * 2

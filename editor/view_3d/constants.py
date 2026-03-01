@@ -70,8 +70,8 @@ COL_TOOL_STAMP   = (180, 140, 255)
 
 # Core tools (F-keys / Tab) + utility modes (letter keys)
 TOOLS = ("sculpt", "paint", "segment", "entity", "box")
-UTIL_TOOLS = ("select", "stamp", "light", "slope", "reflect",
-              "layer2", "quad", "portal", "curve", "fog")
+UTIL_TOOLS = ("select", "stamp",
+              "quad", "portal", "curve")
 ALL_TOOLS = TOOLS + UTIL_TOOLS
 
 TOOL_LABELS = {
@@ -80,16 +80,11 @@ TOOL_LABELS = {
     "segment": "DETAIL",
     "entity":  "ENTITY",
     "box":     "BOX",
-    "select":  "SELECT",
-    "stamp":   "PRESET",
-    "light":   "LIGHT",
-    "slope":   "SLOPE",
-    "reflect": "REFLECT",
-    "layer2":  "LAYER 2",
-    "quad":    "QUAD",
-    "portal":  "PORTAL",
-    "curve":   "CURVE",
-    "fog":     "FOG",
+    "select":    "SELECT",
+    "stamp":     "PRESET",
+    "quad":      "QUAD",
+    "portal":    "PORTAL",
+    "curve":     "CURVE",
 }
 TOOL_COLORS = {
     "sculpt":  COL_TOOL_WALL,
@@ -97,16 +92,11 @@ TOOL_COLORS = {
     "segment": COL_TOOL_SEGMENT,
     "entity":  COL_TOOL_ENTITY,
     "box":     COL_TOOL_BOX,
-    "select":  COL_TOOL_SELECT,
-    "stamp":   COL_TOOL_STAMP,
-    "light":   COL_TOOL_LIGHT,
-    "slope":   COL_TOOL_SLOPE,
-    "reflect": COL_TOOL_REFLECT,
-    "layer2":  COL_TOOL_LAYER2,
-    "quad":    COL_TOOL_QUAD,
-    "portal":  COL_TOOL_PORTAL,
-    "curve":   COL_TOOL_CURVE,
-    "fog":     COL_TOOL_FOG,
+    "select":    COL_TOOL_SELECT,
+    "stamp":     COL_TOOL_STAMP,
+    "quad":      COL_TOOL_QUAD,
+    "portal":    COL_TOOL_PORTAL,
+    "curve":     COL_TOOL_CURVE,
 }
 # F-key → core tool
 TOOL_KEYS = {
@@ -117,17 +107,14 @@ TOOL_KEYS = {
     pygame.K_F9: "box",
 }
 # Letter key → utility mode (toggles in/out)
+# NOTE: these must NOT collide with Ctrl/Alt combos (Ctrl+Y = redo, etc.).
+# The event handler guards against modifiers before checking this dict.
 UTIL_KEYS = {
     pygame.K_b: "select",
     pygame.K_p: "stamp",
-    pygame.K_l: "light",
-    pygame.K_o: "slope",
-    pygame.K_i: "reflect",
-    pygame.K_k: "layer2",
     pygame.K_h: "quad",
     pygame.K_y: "portal",
     pygame.K_SEMICOLON: "curve",
-    pygame.K_COMMA: "fog",
 }
 # Hotbar: 10 texture quick-access slots (keys 1-0)
 HOTBAR_SIZE = 10
@@ -145,18 +132,22 @@ TOOL_HINTS = {
                 "RMB": "Lower floor",
                 "Scroll": "Extend",
                 "Sh+Scrl": "Snap grid",
+                "Sh+LMB": "Raise floor2",
+                "Sh+RMB": "Lower floor2",
             },
             "ceiling": {
                 "LMB": "Lower ceiling",
                 "RMB": "Raise ceiling",
                 "Scroll": "Upper wall",
                 "Sh+Scrl": "Snap grid",
+                "Sh+LMB": "Raise ceil2",
+                "Sh+RMB": "Lower ceil2",
             },
             "none": {
                 "LMB": "Aim at surface",
             },
         },
-        "keys": "C=ceil  R=reset  Del=clear  G=snap  V=walls",
+        "keys": "X=ceil  Sh+X=floor2/ceil2  Ct+Sh+LMB=remove L2  R=reset  Del=clear  G=snap  V=walls",
     },
     "paint": {
         "title": "Paint",
@@ -245,61 +236,7 @@ TOOL_HINTS = {
         },
         "keys": "Del=delete  Esc=deselect  MMB=paint all faces",
     },
-    "light": {
-        "title": "Light  (L=exit)",
-        "actions": {
-            "any": {
-                "LMB": "Darken cell",
-                "Sh+LMB": "Full dark",
-                "RMB": "Brighten cell",
-                "Sh+RMB": "Full bright",
-                "Scroll": "Adjust step",
-                "MMB": "Eyedropper",
-            },
-        },
-        "keys": "L=exit light",
-    },
-    "slope": {
-        "title": "Slope  (O=exit)",
-        "actions": {
-            "any": {
-                "LMB": "Ramp toward camera",
-                "Sh+LMB": "Steepen slope",
-                "RMB": "Flatten",
-                "Sh+RMB": "Reduce slope",
-                "Scroll": "Adjust step",
-            },
-        },
-        "keys": "O=exit slope",
-    },
-    "reflect": {
-        "title": "Reflect  (I=exit)",
-        "actions": {
-            "any": {
-                "LMB": "Increase reflectivity",
-                "Sh+LMB": "Full mirror (255)",
-                "RMB": "Decrease reflectivity",
-                "Sh+RMB": "No reflection (0)",
-                "Scroll": "Adjust step",
-                "MMB": "Eyedropper",
-            },
-        },
-        "keys": "I=exit reflect",
-    },
-    "layer2": {
-        "title": "Layer 2  (K=exit)",
-        "actions": {
-            "any": {
-                "LMB": "Raise floor2",
-                "Sh+LMB": "Raise ceil2",
-                "Ct+LMB": "Remove layer 2",
-                "RMB": "Lower floor2",
-                "Sh+RMB": "Lower ceil2",
-                "Scroll": "Cycle texture",
-            },
-        },
-        "keys": "X=floor2/ceil2  K=exit layer2",
-    },
+
     "quad": {
         "title": "Quad  (H=exit)",
         "actions": {
@@ -338,20 +275,6 @@ TOOL_HINTS = {
             },
         },
         "keys": "Del=delete  Esc=deselect  MMB=paint texture",
-    },
-    "fog": {
-        "title": "Fog  (,=exit)",
-        "actions": {
-            "any": {
-                "LMB": "Increase fog density",
-                "Sh+LMB": "Max density",
-                "RMB": "Decrease fog density",
-                "Sh+RMB": "Clear fog",
-                "Scroll": "Adjust step",
-                "MMB": "Eyedropper",
-            },
-        },
-        "keys": ",=exit fog",
     },
 }
 

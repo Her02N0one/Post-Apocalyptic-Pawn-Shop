@@ -57,14 +57,10 @@ from editor.view_3d.constants import (  # noqa: F401
     COL_TOOL_SELECT,
     COL_TOOL_STAMP,
     COL_TOOL_BOX,
-    COL_TOOL_LIGHT,
-    COL_TOOL_SLOPE,
-    COL_TOOL_REFLECT,
     COL_TOOL_LAYER2,
     COL_TOOL_QUAD,
     COL_TOOL_PORTAL,
     COL_TOOL_CURVE,
-    COL_TOOL_FOG,
     COL_FACE_HL,
     TOOLS, UTIL_TOOLS, ALL_TOOLS,
     TOOL_LABELS, TOOL_COLORS, TOOL_KEYS, UTIL_KEYS,
@@ -88,14 +84,10 @@ from editor.view_3d.tools_segment import SegmentMixin
 from editor.view_3d.tools_stamp import StampMixin
 from editor.view_3d.tools_entity import EntityMixin
 from editor.view_3d.tools_box import BoxMixin
-from editor.view_3d.tools_light import LightMixin
-from editor.view_3d.tools_slope import SlopeMixin
-from editor.view_3d.tools_reflect import ReflectMixin
 from editor.view_3d.tools_layer2 import Layer2Mixin
 from editor.view_3d.tools_quad import QuadMixin
 from editor.view_3d.tools_portal import PortalMixin
 from editor.view_3d.tools_curve import CurveMixin
-from editor.view_3d.tools_fog import FogMixin
 from editor.view_3d.save import SaveMixin
 from editor.view_3d.primitives import DrawPrimitivesMixin
 from editor.view_3d.rendering import RenderingMixin
@@ -117,14 +109,10 @@ class Zone3DEditor(
     StampMixin,
     EntityMixin,
     BoxMixin,
-    LightMixin,
-    SlopeMixin,
-    ReflectMixin,
     Layer2Mixin,
     QuadMixin,
     PortalMixin,
     CurveMixin,
-    FogMixin,
     GeometryMixin,
     UndoMixin,
     SaveMixin,
@@ -381,7 +369,7 @@ class Zone3DEditor(
                 self.tool = target
             return True
 
-        # ── Tab = cycle core tools ────────────────────────────────
+        # ── Tab = cycle core tools ─────────────────────────────
         if key == pygame.K_TAB:
             if self.tool == "select":
                 self._sel_cancel()
@@ -418,10 +406,19 @@ class Zone3DEditor(
                     return self._reset_floor()
             return False
 
-        # Toggle ceiling target (C — was T, now C is free from fly-down)
-        if key == pygame.K_c:
-            if self.tool == "sculpt" and self.aimed:
-                return self._toggle_ceiling()
+        # Toggle ceiling target (X — same key as select ceiling toggle)
+        if key == pygame.K_x:
+            shift = bool(mod & pygame.KMOD_SHIFT)
+            if self.tool == "sculpt":
+                if shift:
+                    # Shift+X → toggle floor2/ceil2 target for layer-2
+                    self._layer2_toggle_target()
+                    return True
+                elif self.aimed:
+                    return self._toggle_ceiling()
+            if self.tool == "select":
+                self._sel_toggle_ceiling_mode()
+                return True
             return False
 
         # Delete / Backspace — select-tool batch delete takes priority
@@ -491,15 +488,6 @@ class Zone3DEditor(
             self._ent_cycle_state()
             return True
 
-        # Toggle ceiling mode in select tool
-        if key == pygame.K_x and self.tool == "select":
-            self._sel_toggle_ceiling_mode()
-            return True
-        # Toggle layer2 target (floor2/ceil2)
-        if key == pygame.K_x and self.tool == "layer2":
-            self._layer2_toggle_target()
-            return True
-
         # Undo / redo
         if key == pygame.K_z and (mod & pygame.KMOD_CTRL):
             if mod & pygame.KMOD_SHIFT:
@@ -549,18 +537,27 @@ class Zone3DEditor(
             self._lmb_held = True
 
         if tool == "sculpt":
-            if btn == 2:
-                self._paint()
-            elif part in ("floor", "wall", "ground"):
+            if shift:
+                # Shift held → layer-2 operations
                 if btn == 1:
-                    self._tool_floor_raise()
+                    self._layer2_raise(shift=False, ctrl=ctrl)
                 elif btn == 3:
-                    self._tool_floor_lower()
-            elif part == "ceiling":
-                if btn == 1:
-                    self._tool_ceiling_lower()
-                elif btn == 3:
-                    self._tool_ceiling_raise()
+                    self._layer2_lower(shift=False)
+                elif btn == 2:
+                    self._layer2_paint()
+            else:
+                if btn == 2:
+                    self._paint()
+                elif part in ("floor", "wall", "ground"):
+                    if btn == 1:
+                        self._tool_floor_raise()
+                    elif btn == 3:
+                        self._tool_floor_lower()
+                elif part == "ceiling":
+                    if btn == 1:
+                        self._tool_ceiling_lower()
+                    elif btn == 3:
+                        self._tool_ceiling_raise()
             return True
 
         if tool == "paint":
@@ -644,39 +641,7 @@ class Zone3DEditor(
 
         # ── New utility tools ─────────────────────────────────────
 
-        if tool == "light":
-            if btn == 1:
-                self._light_increase(shift)
-            elif btn == 3:
-                self._light_decrease(shift)
-            elif btn == 2:
-                self._light_pick()
-            return True
 
-        if tool == "slope":
-            if btn == 1:
-                self._slope_increase(shift)
-            elif btn == 3:
-                self._slope_decrease(shift)
-            return True
-
-        if tool == "reflect":
-            if btn == 1:
-                self._reflect_increase(shift)
-            elif btn == 3:
-                self._reflect_decrease(shift)
-            elif btn == 2:
-                self._reflect_pick()
-            return True
-
-        if tool == "layer2":
-            if btn == 1:
-                self._layer2_raise(shift, ctrl)
-            elif btn == 3:
-                self._layer2_lower(shift)
-            elif btn == 2:
-                self._layer2_paint()
-            return True
 
         if tool == "quad":
             aimed_quad = self._quad_find_aimed()
@@ -719,15 +684,6 @@ class Zone3DEditor(
                     self._curve_deselect()
                 elif aimed_curve is not None:
                     self._curve_delete(aimed_curve)
-            return True
-
-        if tool == "fog":
-            if btn == 1:
-                self._fog_increase(shift)
-            elif btn == 3:
-                self._fog_decrease(shift)
-            elif btn == 2:
-                self._fog_pick()
             return True
 
         return False
@@ -783,27 +739,6 @@ class Zone3DEditor(
 
         # ── New utility tool scroll handling ──────────────────────
 
-        if tool == "light":
-            self._light_adjust_step(event.y)
-            return True
-
-        if tool == "slope":
-            self._slope_adjust_step(event.y)
-            return True
-
-        if tool == "reflect":
-            self._reflect_adjust_step(event.y)
-            return True
-
-        if tool == "layer2":
-            # Scroll cycles texture palette for painting secondary layer
-            palette = _ensure_palette()
-            if palette:
-                self.tex_idx = (self.tex_idx + event.y) % len(palette)
-                self.current_texture = palette[self.tex_idx]
-                self.hotbar[self.hotbar_slot] = self.current_texture
-            return True
-
         if tool == "quad":
             shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
             ctrl = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
@@ -832,10 +767,6 @@ class Zone3DEditor(
                 self._curve_adjust_angle_end(event.y)
             else:
                 self._curve_adjust_radius(event.y)
-            return True
-
-        if tool == "fog":
-            self._fog_adjust_step(event.y)
             return True
 
         if tool == "select":
@@ -900,16 +831,14 @@ class Zone3DEditor(
         if keys[pygame.K_e]:
             self.yaw += KB_TURN_SPEED * dt
 
-        ctrl_held = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
-
         dx, dy, dz = wasd_3d(
             self.yaw, self.pitch,
             forward=keys[pygame.K_w],
-            backward=keys[pygame.K_s] and not ctrl_held,
+            backward=keys[pygame.K_s],
             strafe_left=keys[pygame.K_a],
             strafe_right=keys[pygame.K_d],
             up=keys[pygame.K_SPACE],
-            down=ctrl_held,
+            down=keys[pygame.K_c],
             speed=speed,
             dt=dt,
         )
