@@ -156,6 +156,9 @@ class Zone3DEditor(
         # Continuous paint state
         self._lmb_held: bool = False
 
+        # Layer 2 sub-mode (integrated into sculpt)
+        self._sculpt_layer2: bool = False
+
         # Selection state (for select tool)
         self._sel_start: tuple[int, int] | None = None
         self._sel_end: tuple[int, int] | None = None
@@ -398,7 +401,11 @@ class Zone3DEditor(
             return self._adjust_upper_wall_height(mod)
 
         # Reset height (global — works in any tool when aiming)
+        # Box tool overrides R for 90° rotation
         if key == pygame.K_r:
+            if self.tool == "box":
+                self._box_rotate_90()
+                return True
             if self.aimed:
                 if self.aimed.part == "ceiling":
                     return self._reset_ceiling()
@@ -406,20 +413,9 @@ class Zone3DEditor(
                     return self._reset_floor()
             return False
 
-        # Toggle ceiling target (X — same key as select ceiling toggle)
-        if key == pygame.K_x:
-            shift = bool(mod & pygame.KMOD_SHIFT)
-            if self.tool == "sculpt":
-                if shift:
-                    # Shift+X → toggle floor2/ceil2 target for layer-2
-                    self._layer2_toggle_target()
-                    return True
-                elif self.aimed:
-                    return self._toggle_ceiling()
-            if self.tool == "select":
-                self._sel_toggle_ceiling_mode()
-                return True
-            return False
+        # Toggle ceiling (T key — C is now fly-down)
+        if key == pygame.K_t and self.tool == "sculpt" and self.aimed:
+            return self._toggle_ceiling()
 
         # Delete / Backspace — select-tool batch delete takes priority
         if key in (pygame.K_DELETE, pygame.K_BACKSPACE):
@@ -441,6 +437,9 @@ class Zone3DEditor(
 
         # Cycle snap grid
         if key == pygame.K_g:
+            if self.tool == "box":
+                self._box_toggle_snap()
+                return True
             if self.tool == "quad":
                 # Cycle quad snap: 0.25 → 0.5 → 1.0 → 0.0 (off) → 0.25
                 _QUAD_SNAPS = [0.25, 0.5, 1.0, 0.0]
@@ -486,6 +485,15 @@ class Zone3DEditor(
         # Entity tool: cycle state
         if key == pygame.K_t and self.tool == "entity":
             self._ent_cycle_state()
+            return True
+
+        # Toggle ceiling mode in select tool
+        if key == pygame.K_x and self.tool == "select":
+            self._sel_toggle_ceiling_mode()
+            return True
+        # Toggle layer2 sub-mode in sculpt tool
+        if key == pygame.K_x and self.tool == "sculpt":
+            self._sculpt_layer2 = not self._sculpt_layer2
             return True
 
         # Undo / redo
@@ -537,22 +545,19 @@ class Zone3DEditor(
             self._lmb_held = True
 
         if tool == "sculpt":
-            if shift:
-                # Shift held → layer-2 operations
+            if btn == 2:
+                self._pick_texture()  # universal eyedropper
+            elif self._sculpt_layer2:
+                # Layer 2 sub-mode
                 if btn == 1:
-                    self._layer2_raise(shift=False, ctrl=ctrl)
+                    self._layer2_raise(shift, ctrl)
                 elif btn == 3:
-                    self._layer2_lower(shift=False)
-                elif btn == 2:
-                    self._layer2_paint()
-            else:
-                if btn == 2:
-                    self._paint()
-                elif part in ("floor", "wall", "ground"):
-                    if btn == 1:
-                        self._tool_floor_raise()
-                    elif btn == 3:
-                        self._tool_floor_lower()
+                    self._layer2_lower(shift)
+            elif part in ("floor", "wall", "ground"):
+                if btn == 1:
+                    self._tool_floor_raise()
+                elif btn == 3:
+                    self._tool_floor_lower()
                 elif part == "ceiling":
                     if btn == 1:
                         self._tool_ceiling_lower()
@@ -561,18 +566,43 @@ class Zone3DEditor(
             return True
 
         if tool == "paint":
-            if btn == 1 and ctrl:
-                self._fill()          # Ctrl+LMB = flood fill
-            elif btn == 1 and shift:
-                self._paint_all()     # Shift+LMB = paint whole cell
-            elif btn == 1:
-                self._paint()         # LMB = paint face
-            elif btn == 3 and ctrl:
-                self._fill_clear()    # Ctrl+RMB = flood clear
-            elif btn == 3:
-                self._erase_texture() # RMB = erase texture
-            elif btn == 2:
-                self._pick_texture()  # MMB = eyedropper
+            # Check per-frame aim: prism or quad closer than cell?
+            aimed_prism = self._paint_aimed_prism
+            aimed_face = self._paint_aimed_prism_face
+            aimed_quad = self._paint_aimed_quad
+
+            if aimed_prism is not None:
+                if btn == 1 and shift:
+                    self._paint_prism(aimed_prism, face=None)   # all faces
+                elif btn == 1:
+                    self._paint_prism(aimed_prism, face=aimed_face)
+                elif btn == 3 and shift:
+                    self._erase_prism(aimed_prism, face=None)   # all faces
+                elif btn == 3:
+                    self._erase_prism(aimed_prism, face=aimed_face)
+                elif btn == 2:
+                    self._pick_prism_texture(aimed_prism, face=aimed_face)
+            elif aimed_quad is not None:
+                if btn == 1:
+                    self._paint_quad(aimed_quad)
+                elif btn == 3:
+                    self._erase_quad(aimed_quad)
+                elif btn == 2:
+                    self._pick_quad_texture(aimed_quad)
+            else:
+                # Fall through to cell-based painting
+                if btn == 1 and ctrl:
+                    self._fill()          # Ctrl+LMB = flood fill
+                elif btn == 1 and shift:
+                    self._paint_all()     # Shift+LMB = paint whole cell
+                elif btn == 1:
+                    self._paint()         # LMB = paint face
+                elif btn == 3 and ctrl:
+                    self._fill_clear()    # Ctrl+RMB = flood clear
+                elif btn == 3:
+                    self._erase_texture() # RMB = erase texture
+                elif btn == 2:
+                    self._pick_texture()  # MMB = eyedropper
             return True
 
         if tool == "select":
@@ -628,10 +658,6 @@ class Zone3DEditor(
                     self._box_move_to_aimed()
                 else:
                     self._box_place()
-            elif btn == 2:
-                # MMB = paint all faces of selected box
-                if self._box_selected is not None:
-                    self._box_paint_face()
             elif btn == 3:
                 if self._box_selected is not None:
                     self._box_deselect()
@@ -640,8 +666,6 @@ class Zone3DEditor(
             return True
 
         # ── New utility tools ─────────────────────────────────────
-
-
 
         if tool == "quad":
             aimed_quad = self._quad_find_aimed()
@@ -686,6 +710,19 @@ class Zone3DEditor(
                     self._curve_delete(aimed_curve)
             return True
 
+        # ── Universal eyedropper fallback: MMB picks texture in any tool ──
+        if btn == 2:
+            ap = self._paint_aimed_prism
+            af = self._paint_aimed_prism_face
+            aq = self._paint_aimed_quad
+            if ap is not None:
+                self._pick_prism_texture(ap, face=af)
+            elif aq is not None:
+                self._pick_quad_texture(aq)
+            else:
+                self._pick_texture()
+            return True
+
         return False
 
     def _on_mouseup(self, event: pygame.event.Event) -> bool:
@@ -722,19 +759,22 @@ class Zone3DEditor(
         if tool == "box":
             shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
             ctrl = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
-            if shift and self._box_selected is not None:
-                self._box_rotate(event.y)
-            elif shift:
-                self._box_stack_scroll(event.y)
-            elif ctrl:
-                self._box_adjust_size(event.y, "h")
+            if self._box_selected is not None:
+                # Selected: Scroll=Z shift, Shift=fine rotate, Ctrl=height
+                if shift:
+                    self._box_rotate_fine(event.y)
+                elif ctrl:
+                    self._box_adjust_size(event.y, "h")
+                else:
+                    self._box_shift_z(event.y)
             else:
-                # Cycle texture palette
-                palette = _ensure_palette()
-                if palette:
-                    self.tex_idx = (self.tex_idx + event.y) % len(palette)
-                    self.current_texture = palette[self.tex_idx]
-                    self.hotbar[self.hotbar_slot] = self.current_texture
+                # Unselected: Scroll=width, Shift=depth, Ctrl=height
+                if shift:
+                    self._box_adjust_size(event.y, "d")
+                elif ctrl:
+                    self._box_adjust_size(event.y, "h")
+                else:
+                    self._box_adjust_size(event.y, "w")
             return True
 
         # ── New utility tool scroll handling ──────────────────────
@@ -784,6 +824,14 @@ class Zone3DEditor(
 
         if tool == "sculpt":
             shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
+            # Layer 2 sub-mode: scroll cycles texture palette
+            if self._sculpt_layer2:
+                palette = _ensure_palette()
+                if palette:
+                    self.tex_idx = (self.tex_idx + event.y) % len(palette)
+                    self.current_texture = palette[self.tex_idx]
+                    self.hotbar[self.hotbar_slot] = self.current_texture
+                return True
             part = self.aimed.part if self.aimed else None
             if shift:
                 # Shift+Scroll: fine-adjust snap (half steps)
@@ -877,8 +925,11 @@ class Zone3DEditor(
         # Continuous paint: if LMB held + paint tool, paint every frame
         # Skip undo push — a single undo entry was pushed on the initial
         # MOUSEBUTTONDOWN so the entire stroke is one undo operation.
+        # Skip cell painting when crosshair is over a prism or quad — those
+        # are discrete objects, not drag-paintable surfaces.
         if self._lmb_held and self.tool == "paint" and self.aimed:
-            self._paint_continuous()
+            if self._paint_aimed_prism is None and self._paint_aimed_quad is None:
+                self._paint_continuous()
 
     def _collides_xz(self, x: float, z: float, y: float, radius: float) -> bool:
         """True if a camera circle at *(x, z)* overlaps any solid cell at height *y*.
@@ -978,6 +1029,7 @@ class Zone3DEditor(
 
         self.aimed = best
         self._compute_preview()
+        self._paint_update_aim()
 
     def _compute_preview(self) -> None:
         """Compute preview indicators showing what the next click will do."""

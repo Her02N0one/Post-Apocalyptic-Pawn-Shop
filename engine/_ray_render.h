@@ -84,10 +84,12 @@ typedef struct {
     int    tid;        /* tile ID for texture lookup                 */
     int    ci;         /* cell index (my * map_w + mx)               */
     int    side;       /* 0=NS face, 1=EW face                      */
-    int    face;       /* FACE_NORTH/SOUTH/EAST/WEST                */
+    int    face;       /* FACE_NORTH/SOUTH/EAST/WEST; -1 = box/quad */
     double wall_frac;  /* fractional wall-X for texture U coordinate */
     double hs;         /* height_scale (< 1 for short, 1 for full)  */
     double base_y;     /* Z anchor override; < -1e8 → use cell fh   */
+    int    top_tid;    /* top-face texture for boxes; -1 = use tid   */
+    int    box_idx;    /* index into box_data; -1 = not a box        */
 } DeferredHit;
 
 /* qsort comparator: sort deferred hits far-to-near (descending dist) */

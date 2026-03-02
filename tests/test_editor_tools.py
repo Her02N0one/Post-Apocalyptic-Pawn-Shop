@@ -1409,15 +1409,15 @@ class TestToggleCeiling:
         ed._toggle_ceiling()  # remove
         assert z.ceil_heights[r][c] >= SKY_HEIGHT - 0.01
 
-    def test_x_key_toggles_ceiling(self):
-        """X key press triggers _toggle_ceiling via handle_event."""
+    def test_t_key_toggles_ceiling(self):
+        """T key press triggers _toggle_ceiling via handle_event."""
         ed, z = _make_editor()
         r, c = 2, 2
         _open_cell(z, r, c, fh=0.0, ch=0.95)
         z.ceil_heights[r][c] = SKY_HEIGHT
         ed.tool = "sculpt"
         ed.aimed = _CellHit(1.0, c, r, "floor", "top", 0.04)
-        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_x)
+        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_t)
         ed.handle_event(ev)
         assert z.ceil_heights[r][c] == pytest.approx(DEFAULT_CEIL)
 
@@ -1671,15 +1671,15 @@ class TestBoxTool:
         assert len(z.boxes) == 0
         assert ed._box_selected is None
 
-    def test_box_rotate(self):
-        """Shift+Scroll rotates the selected box."""
+    def test_box_rotate_fine(self):
+        """Shift+Scroll rotates the selected prism by 15° increments."""
         ed, z = _make_editor()
         ed.tool = "box"
         z.boxes = [{"x": 3.0, "y": 3.0, "z": 0.0, "w": 1, "h": 1, "d": 1,
-                     "yaw": 0.0, "textures": {}, "collision": False}]
+                     "yaw": 0.0, "textures": {}, "collision": True}]
         ed._box_selected = 0
         old_yaw = z.boxes[0]["yaw"]
-        ed._box_rotate(1)
+        ed._box_rotate_fine(1)
         assert z.boxes[0]["yaw"] != old_yaw
 
     def test_box_undo(self):
@@ -1707,15 +1707,45 @@ class TestBoxTool:
         ed.handle_event(ev)
         assert ed._box_selected is None
 
-    def test_box_paint_all_faces(self):
-        """MMB paints all faces of the selected box."""
+    def test_box_rotate_90(self):
+        """R key rotates placement yaw or selected prism by 90°."""
         ed, z = _make_editor()
         ed.tool = "box"
+        ed._box_yaw = 0.0
+        ed._box_rotate_90()
+        assert abs(ed._box_yaw - math.pi / 2.0) < 0.01
+
+    def test_box_snap_toggle(self):
+        """G key toggles grid-snap on and off."""
+        ed, z = _make_editor()
+        ed.tool = "box"
+        assert ed._box_snap is True
+        ed._box_toggle_snap()
+        assert ed._box_snap is False
+        ed._box_toggle_snap()
+        assert ed._box_snap is True
+
+    def test_box_collision_default_true(self):
+        """New prisms have collision=True by default."""
+        ed, z = _make_editor()
+        ed.tool = "box"
+        ed.aimed = _CellHit(t=2.0, col=3, row=3, part="floor", face="top")
+        ed.cam_x, ed.cam_y, ed.cam_z = 3.0, 0.8, 5.0
+        ed.yaw = math.pi * 1.5
+        ed.pitch = -0.3
+        ed._box_place()
+        assert z.boxes[-1]["collision"] is True
+
+    def test_box_auto_stacking(self):
+        """_box_stack_height computes correct stacked Z position."""
+        ed, z = _make_editor()
+        ed.tool = "box"
+        # Pre-place a box at (3, 3, 0) of height 1
         z.boxes = [{"x": 3.0, "y": 3.0, "z": 0.0, "w": 1, "h": 1, "d": 1,
-                     "yaw": 0, "textures": {}, "collision": False}]
-        ed._box_selected = 0
-        ed.current_texture = "brick_wall"
-        ed._box_paint_face()
-        tex = z.boxes[0]["textures"]
-        for f in ("N", "S", "E", "W", "top", "bot"):
-            assert tex[f] == "brick_wall"
+                     "yaw": 0, "textures": {}, "collision": True}]
+        # Stack height at the same position should be on top of existing box
+        stack_z = ed._box_stack_height(3.0, 3.0, 1.0, 1.0)
+        assert stack_z >= 1.0
+        # Stack height at a distant position should just be floor height (no stacking)
+        far_z = ed._box_stack_height(8.0, 8.0, 1.0, 1.0)
+        assert far_z < 1.0  # no box stacking at that position

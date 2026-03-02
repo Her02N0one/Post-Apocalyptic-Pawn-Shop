@@ -38,9 +38,15 @@ class QuadMixin:
     # ── Picking ───────────────────────────────────────────────────
 
     def _quad_find_aimed(self) -> int | None:
-        """Return index of quad under crosshair, or None.
+        """Return index of quad under crosshair, or None."""
+        result = self._quad_find_aimed_t()
+        return result[0] if result is not None else None
+
+    def _quad_find_aimed_t(self) -> tuple[int, float] | None:
+        """Return (index, t) of quad under crosshair, or None.
 
         Uses a thin-slab AABB approximation for picking.
+        *t* is the ray parameter (hit distance) for depth comparison.
         """
         zone = self.zone
         if not zone or not zone.quads:
@@ -72,7 +78,9 @@ class QuadMixin:
                     best_t = result[0]
                     best_idx = i
 
-        return best_idx
+        if best_idx is not None:
+            return (best_idx, best_t)
+        return None
 
     # ── Placement ─────────────────────────────────────────────────
 

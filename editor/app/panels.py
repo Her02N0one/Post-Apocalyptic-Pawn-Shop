@@ -878,7 +878,7 @@ class PanelsMixin:
                   and zone.floor2_heights[r][c] > LAYER_NONE + 1.0)
         has_c2 = (zone.ceil2_heights and len(zone.ceil2_heights) > r
                   and zone.ceil2_heights[r][c] > LAYER_NONE + 1.0)
-        show_l2 = has_f2 or has_c2 or (self.editor_3d and self.editor_3d.tool == "sculpt")
+        show_l2 = has_f2 or has_c2 or (self.editor_3d and getattr(self.editor_3d, '_sculpt_layer2', False))
         if show_l2:
             imgui.spacing()
             imgui.text_disabled("Layer 2")
@@ -900,7 +900,7 @@ class PanelsMixin:
                 if c2t:
                     imgui.same_line()
                     imgui.text_disabled(f"({c2t})")
-            if self.editor_3d and self.editor_3d.tool == "sculpt":
+            if self.editor_3d and getattr(self.editor_3d, '_sculpt_layer2', False):
                 tgt = self.editor_3d._layer2_target
                 imgui.text_disabled("  Target")
                 imgui.same_line(60)

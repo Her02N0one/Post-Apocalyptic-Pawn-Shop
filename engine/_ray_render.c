@@ -1073,6 +1073,8 @@ py_render_frame(PyObject *self, PyObject *dict)
                             dh->wall_frac = wf;
                             dh->hs        = hs_arr[tid];
                             dh->base_y    = -1e9;
+                            dh->top_tid   = -1;
+                            dh->box_idx   = -1;
                             n_short_col++;
                         }
                     }
@@ -1099,6 +1101,8 @@ py_render_frame(PyObject *self, PyObject *dict)
                         dh->wall_frac = wfrac;
                         dh->hs        = hs_arr[tid];
                         dh->base_y    = -1e9;
+                        dh->top_tid   = -1;
+                        dh->box_idx   = -1;
                     }
                 }
                 /* Update prev ceiling/floor for next cell */
@@ -1331,10 +1335,12 @@ py_render_frame(PyObject *self, PyObject *dict)
             dh->tid       = (otid >= 0 && otid < num_tiles) ? otid : 0;
             dh->ci        = oci;
             dh->side      = ov_side;
-            dh->face      = 0;
+            dh->face      = -1;
             dh->wall_frac = wfrac;
             dh->hs        = ohs;
             dh->base_y    = -1e9;
+            dh->top_tid   = -1;
+            dh->box_idx   = -1;
         }
 
         /* ── Quad intersections (two-sided thin decals / fences) ── */
@@ -1394,10 +1400,12 @@ py_render_frame(PyObject *self, PyObject *dict)
             qdh->tid       = (qtid >= 0 && qtid < num_tiles) ? qtid : 0;
             qdh->ci        = qci;
             qdh->side      = q_side;
-            qdh->face      = 0;
+            qdh->face      = -1;
             qdh->wall_frac = wfrac_q;
             qdh->hs        = Q[QD_HEIGHT];
             qdh->base_y    = Q[QD_BASE_Y];
+            qdh->top_tid   = -1;
+            qdh->box_idx   = -1;
         }
 
         /* ── Freeform box intersections (OBB ray-slab) ────────── */
@@ -1458,23 +1466,23 @@ py_render_frame(PyObject *self, PyObject *dict)
                 int b_side;
 
                 if (t_near == t1x) {
-                    /* Hit X slab face */
+                    /* Hit X slab face (east/west) */
                     double local_hit_y = lo_y + t_near * ld_y;
                     b_u = (local_hit_y + hd) / (2.0 * hd);
-                    b_side = 1;  /* EW-shading */
+                    b_side = 0;  /* X-boundary → same shading as DDA side=0 */
                     if (ld_x > 0)
                         b_tid = (int)B[BX_TEX_W];  /* entered from -X = west */
                     else
                         b_tid = (int)B[BX_TEX_E];  /* entered from +X = east */
                 } else {
-                    /* Hit Y slab face */
+                    /* Hit Y slab face (north/south) */
                     double local_hit_x = lo_x + t_near * ld_x;
                     b_u = (local_hit_x + hw) / (2.0 * hw);
-                    b_side = 0;  /* NS-shading */
+                    b_side = 1;  /* Y-boundary → same shading as DDA side=1 */
                     if (ld_y > 0)
-                        b_tid = (int)B[BX_TEX_S];  /* entered from -Y = south */
+                        b_tid = (int)B[BX_TEX_S];  /* entered from -Y (north) */
                     else
-                        b_tid = (int)B[BX_TEX_N];  /* entered from +Y = north */
+                        b_tid = (int)B[BX_TEX_N];  /* entered from +Y (south) */
                 }
 
                 b_u = b_u - floor(b_u);  /* wrap to [0,1) */
@@ -1486,16 +1494,21 @@ py_render_frame(PyObject *self, PyObject *dict)
                 int hcy = clampi((int)floor(hy), 0, map_h - 1);
                 int bci = hcy * map_w + hcx;
 
+                int b_top_tid = (int)B[BX_TEX_T];
+
                 DeferredHit *bdh = &deferred[x * MAX_DEF_PER_COL + n_def[x]++];
                 bdh->col       = x;
                 bdh->dist      = t_near;
                 bdh->tid       = (b_tid >= 0 && b_tid < num_tiles) ? b_tid : 0;
                 bdh->ci        = bci;
                 bdh->side      = b_side;
-                bdh->face      = 0;
+                bdh->face      = -1;   /* not a cell wall → skip face_tex */
                 bdh->wall_frac = b_u;
                 bdh->hs        = B[BX_H];
                 bdh->base_y    = B[BX_Z];
+                bdh->top_tid   = (b_top_tid >= 0 && b_top_tid < num_tiles)
+                                 ? b_top_tid : 0;
+                bdh->box_idx   = bi;
             }
         }
 
@@ -1576,10 +1589,12 @@ py_render_frame(PyObject *self, PyObject *dict)
                     cdh->tid       = (c_tid >= 0 && c_tid < num_tiles) ? c_tid : 0;
                     cdh->ci        = cci;
                     cdh->side      = c_side;
-                    cdh->face      = 0;
+                    cdh->face      = -1;
                     cdh->wall_frac = frac_u;
                     cdh->hs        = C[CRV_HS];
                     cdh->base_y    = C[CRV_BASE];
+                    cdh->top_tid   = -1;
+                    cdh->box_idx   = -1;
                     break;  /* take nearest (first) valid root */
                 }
             }
@@ -2144,12 +2159,6 @@ py_render_frame(PyObject *self, PyObject *dict)
                     sample_tex(atlas, ts, ftid, u, v, &r, &g, &b, &a);
                     if (a <= 0) continue;
 
-                    if ((cx ^ cy) & 1) {
-                        r = (r * 210) >> 8;
-                        g = (g * 210) >> 8;
-                        b = (b * 210) >> 8;
-                    }
-
                     if (cell_fh > 0.01) {
                         double boost = 1.0 + 0.15 * cell_fh;
                         if (boost > 1.5) boost = 1.5;
@@ -2678,7 +2687,10 @@ py_render_frame(PyObject *self, PyObject *dict)
 
             int safe_tid = (d_tid >= 0 && d_tid < num_tiles) ? d_tid : 0;
             /* Resolve per-face texture for deferred walls */
-            if (d_ci >= 0 && d_ci < map_size) {
+            /* Resolve per-face texture only for cell walls (face >= 0).
+             * Boxes, quads, overlays, curves set face = -1 and carry
+             * their own pre-resolved tid. */
+            if (d_face >= 0 && d_ci >= 0 && d_ci < map_size) {
                 safe_tid = resolve_face_tex(face_tex, d_ci, d_face,
                                             safe_tid, num_tiles);
             }
@@ -2769,7 +2781,8 @@ py_render_frame(PyObject *self, PyObject *dict)
             /* ── Counter-top horizontal surface ──────────────────── */
             /* Renders the visible top of short walls when the camera
              * is above the counter height.  Uses floor-cast technique
-             * at counter-top height, constrained to the counter tile. */
+             * at counter-top height, constrained to the counter tile
+             * (or the OBB footprint for freeform boxes).             */
             {
                 double counter_h = d_fh + d_hs;
                 if (d_hs < 0.999 && CAM_H > counter_h && d_hw_top > half) {
@@ -2778,12 +2791,36 @@ py_render_frame(PyObject *self, PyObject *dict)
                     double cc  = 2.0 * dx / (double)sw - 1.0;
                     double rx  = dir_x + plane_x * cc;
                     double ry  = dir_y + plane_y * cc;
+
+                    /* Pre-compute bound check context.
+                     * For cell walls: tile_x / tile_y cell check.
+                     * For boxes: OBB point containment test.        */
+                    int use_obb = 0;
                     int tile_x = d_ci % map_w;
                     int tile_y = d_ci / map_w;
+                    double obb_cx = 0, obb_cy = 0;
+                    double obb_hw = 0, obb_hd = 0;
+                    double obb_cos = 1, obb_sin = 0;
+                    if (dh->box_idx >= 0 && dh->box_idx < n_boxes && box_data) {
+                        const double *CB = box_data + dh->box_idx * BX_STRIDE;
+                        use_obb = 1;
+                        obb_cx  = CB[BX_X];
+                        obb_cy  = CB[BX_Y];
+                        obb_hw  = CB[BX_W] * 0.5;
+                        obb_hd  = CB[BX_D] * 0.5;
+                        obb_cos = cos(CB[BX_YAW]);
+                        obb_sin = sin(CB[BX_YAW]);
+                    }
 
-                    /* Base tile texture for horizontal surface */
-                    int top_tid = (d_tid >= 0 && d_tid < num_tiles)
-                        ? d_tid : 0;
+                    /* Base tile texture for horizontal surface.
+                     * Boxes supply their own top_tid via the deferred
+                     * hit; other walls fall back to the wall-face tid. */
+                    int top_tid;
+                    if (dh->top_tid >= 0 && dh->top_tid < num_tiles)
+                        top_tid = dh->top_tid;
+                    else
+                        top_tid = (d_tid >= 0 && d_tid < num_tiles)
+                            ? d_tid : 0;
                     top_tid = resolve_anim_tid(anim_lt, top_tid, anim_tick, num_tiles);
 
                     int ct_lo = half + 1 < 0 ? 0 : half + 1;
@@ -2797,25 +2834,26 @@ py_render_frame(PyObject *self, PyObject *dict)
                         /* World coordinates on the counter-top plane */
                         double wx = cam_x + td * rx;
                         double wy = cam_y + td * ry;
+
+                        /* Containment test: OBB for boxes, cell for walls */
                         int wxi = (int)floor(wx);
                         int wyi = (int)floor(wy);
+                        if (use_obb) {
+                            double ldx = wx - obb_cx, ldy = wy - obb_cy;
+                            double lx =  ldx * obb_cos + ldy * obb_sin;
+                            double ly = -ldx * obb_sin + ldy * obb_cos;
+                            if (lx < -obb_hw || lx > obb_hw ||
+                                ly < -obb_hd || ly > obb_hd) break;
+                        } else {
+                            if (wxi != tile_x || wyi != tile_y) break;
+                        }
 
-                        /* Only render while on the counter tile */
-                        if (wxi != tile_x || wyi != tile_y) break;
-
-                        int u = (int)(ts * (wx - wxi)) & ts_mask;
-                        int v = (int)(ts * (wy - wyi)) & ts_mask;
+                        int u = (int)(ts * (wx - floor(wx))) & ts_mask;
+                        int v = (int)(ts * (wy - floor(wy))) & ts_mask;
 
                         int r, g, b, a;
                         sample_tex(atlas, ts, top_tid, u, v, &r, &g, &b, &a);
                         if (a <= 0) continue;
-
-                        /* Checkerboard dimming (matches floor style) */
-                        if ((wxi ^ wyi) & 1) {
-                            r = (r * 210) >> 8;
-                            g = (g * 210) >> 8;
-                            b = (b * 210) >> 8;
-                        }
 
                         /* Brighten top surface (faces upward, well-lit) */
                         r = mini(255, (r * 280) >> 8);

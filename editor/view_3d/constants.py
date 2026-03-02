@@ -79,12 +79,12 @@ TOOL_LABELS = {
     "paint":   "PAINT",
     "segment": "DETAIL",
     "entity":  "ENTITY",
-    "box":     "BOX",
-    "select":    "SELECT",
-    "stamp":     "PRESET",
-    "quad":      "QUAD",
-    "portal":    "PORTAL",
-    "curve":     "CURVE",
+    "box":     "PRISM",
+    "select":  "SELECT",
+    "stamp":   "PRESET",
+    "quad":    "QUAD",
+    "portal":  "PORTAL",
+    "curve":   "CURVE",
 }
 TOOL_COLORS = {
     "sculpt":  COL_TOOL_WALL,
@@ -92,11 +92,11 @@ TOOL_COLORS = {
     "segment": COL_TOOL_SEGMENT,
     "entity":  COL_TOOL_ENTITY,
     "box":     COL_TOOL_BOX,
-    "select":    COL_TOOL_SELECT,
-    "stamp":     COL_TOOL_STAMP,
-    "quad":      COL_TOOL_QUAD,
-    "portal":    COL_TOOL_PORTAL,
-    "curve":     COL_TOOL_CURVE,
+    "select":  COL_TOOL_SELECT,
+    "stamp":   COL_TOOL_STAMP,
+    "quad":    COL_TOOL_QUAD,
+    "portal":  COL_TOOL_PORTAL,
+    "curve":   COL_TOOL_CURVE,
 }
 # F-key → core tool
 TOOL_KEYS = {
@@ -143,20 +143,29 @@ TOOL_HINTS = {
                 "Sh+LMB": "Raise ceil2",
                 "Sh+RMB": "Lower ceil2",
             },
+            "layer2": {
+                "LMB": "Raise floor2",
+                "Sh+LMB": "Raise ceil2",
+                "Ct+LMB": "Remove layer 2",
+                "RMB": "Lower floor2",
+                "Sh+RMB": "Lower ceil2",
+                "Scroll": "Cycle texture",
+            },
             "none": {
                 "LMB": "Aim at surface",
             },
         },
-        "keys": "X=ceil  Sh+X=floor2/ceil2  Ct+Sh+LMB=remove L2  R=reset  Del=clear  G=snap  V=walls",
+        "keys": "T=ceil  R=reset  Del=clear  G=snap  V=walls  X=layer2",
     },
     "paint": {
         "title": "Paint",
         "actions": {
             "any": {
-                "LMB": "Paint face (hold=drag)",
-                "Sh+LMB": "Paint whole cell",
+                "LMB": "Paint face / prism face / quad",
+                "Sh+LMB": "Paint whole cell / all prism faces",
                 "Ct+LMB": "Flood fill",
                 "RMB": "Erase texture",
+                "Sh+RMB": "Erase all prism faces",
                 "Ct+RMB": "Flood clear",
                 "MMB": "Eyedropper",
                 "Scroll": "Cycle palette",
@@ -223,18 +232,24 @@ TOOL_HINTS = {
         "keys": "Del=delete  T=cycle state  Esc=deselect",
     },
     "box": {
-        "title": "Box",
+        "title": "Prism",
         "actions": {
-            "any": {
-                "LMB": "Place / select box",
-                "LMB(sel)": "Move selected",
-                "RMB": "Deselect / delete aimed",
-                "Scroll": "Cycle texture",
-                "Sh+Scrl": "Rotate / stack",
+            "unselected": {
+                "LMB": "Place / select prism",
+                "RMB": "Delete aimed prism",
+                "Scroll": "Width",
+                "Sh+Scrl": "Depth",
+                "Ct+Scrl": "Height",
+            },
+            "selected": {
+                "LMB": "Move selected (stacks)",
+                "RMB": "Deselect",
+                "Scroll": "Shift Z up/down",
+                "Sh+Scrl": "Fine rotate (15°)",
                 "Ct+Scrl": "Adjust height",
             },
         },
-        "keys": "Del=delete  Esc=deselect  MMB=paint all faces",
+        "keys": "R=rotate 90°  G=snap  Del=delete  Esc=deselect",
     },
 
     "quad": {

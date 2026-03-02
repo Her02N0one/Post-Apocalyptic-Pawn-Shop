@@ -26,7 +26,7 @@ from editor.view_3d.constants import (
     COL_TOOL_CEILING,
     COL_TOOL_SLOPE,
     COL_TOOL_LAYER2, COL_TOOL_QUAD, COL_TOOL_PORTAL,
-    COL_TOOL_CURVE,
+    COL_TOOL_CURVE, COL_TOOL_BOX,
     HOTBAR_SIZE,
     FACE_IDX,
 )
@@ -98,7 +98,6 @@ class RenderingMixin:
         self._draw_surface_markers(surface, vp, hw, hh, zone, W, H)
         self._draw_seg_boundary_rings(surface, vp, hw, hh, zone, W, H)
         # ── Per-cell tool overlays ──
-        self._draw_slope_arrows(surface, vp, hw, hh, zone, W, H)
         self._draw_layer2_slabs(surface, vp, hw, hh, zone, W, H)
         self._draw_entities(surface, vp, hw, hh, zone)
         self._draw_boxes(surface, vp, hw, hh, zone)
@@ -339,7 +338,11 @@ class RenderingMixin:
             self._draw_box_ghost(surface, vp, hw, hh, zone)
 
     def _draw_box_ghost(self, surface, vp, hw, hh, zone):
-        """Draw a translucent preview of the box about to be placed."""
+        """Draw a translucent preview of the prism about to be placed.
+
+        Respects grid-snap and auto-stacking so the ghost shows the
+        actual placement position.
+        """
         hit = self.aimed
         if hit is None:
             return
@@ -350,14 +353,14 @@ class RenderingMixin:
         wx = max(0.1, min(zone.width - 0.1, wx))
         wz = max(0.1, min(zone.height - 0.1, wz))
 
-        ci = max(0, min(zone.width - 1, int(wx)))
-        ri = max(0, min(zone.height - 1, int(wz)))
-        fh = zone.floor_heights[ri][ci] if zone.floor_heights else 0.0
+        w, d, h = self._box_w, self._box_d, self._box_h
+        wx, wz = self._box_snap_pos(wx, wz)
+        fh = self._box_stack_height(wx, wz, w, d)
 
         self._filled_rotated_box(
             surface, vp, hw, hh,
             wx, wz,
-            self._box_w, self._box_h, self._box_d,
+            w, h, d,
             fh, self._box_yaw,
             base_color=self._COL_BOX_GHOST,
             edge_color=(255, 240, 180),
@@ -470,108 +473,9 @@ class RenderingMixin:
 
     # ── Per-cell tool overlays ────────────────────────────────────
 
-    def _draw_slope_arrows(self, surface, vp, hw, hh, zone, W, H):
-        """Draw tilted floor planes and directional arrows on cells with non-zero slope.
-        
-        Slope tool has been removed; this overlay is now dormant.
-        """
+    def _draw_light_overlay(self, surface, vp, hw, hh, zone, W, H):
+        """Draw tinted floor quads showing light levels (removed — now a no-op)."""
         return
-        sdx = zone.floor_slope_dx
-        sdy = zone.floor_slope_dy
-        if not sdx and not sdy:
-            return
-        from core.tiles import tile_def as _td
-        aimed = self.aimed
-        axis = getattr(self, '_slope_axis', 'dx')
-        for r in range(H):
-            for c in range(W):
-                dx = sdx[r][c] if sdx else 0.0
-                dy = sdy[r][c] if sdy else 0.0
-                if abs(dx) < 0.01 and abs(dy) < 0.01:
-                    continue
-                td = _td(zone.tiles[r][c])
-                if td and td.wall:
-                    continue
-                fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
-                is_aim = (aimed and aimed.row == r and aimed.col == c)
-
-                # Draw tilted floor plane matching C renderer [0,1) model:
-                # fh is the base corner (col, row); slope rises toward
-                # the opposite corner — no underground dip.
-                h00 = fh                  # (c,   r)   corner
-                h10 = fh + dx             # (c+1, r)   corner
-                h11 = fh + dx + dy        # (c+1, r+1) corner
-                h01 = fh + dy             # (c,   r+1) corner
-
-                plane_col = COL_TOOL_SLOPE if is_aim else (160, 190, 90)
-                pw = 3 if is_aim else 2
-                # Draw the tilted quad as 4 edges (+0.05 clears the floor slab)
-                self._line3d(surface, vp, hw, hh,
-                             float(c), h00 + 0.05, float(r),
-                             c + 1.0, h10 + 0.05, float(r), plane_col, pw)
-                self._line3d(surface, vp, hw, hh,
-                             c + 1.0, h10 + 0.05, float(r),
-                             c + 1.0, h11 + 0.05, r + 1.0, plane_col, pw)
-                self._line3d(surface, vp, hw, hh,
-                             c + 1.0, h11 + 0.05, r + 1.0,
-                             float(c), h01 + 0.05, r + 1.0, plane_col, pw)
-                self._line3d(surface, vp, hw, hh,
-                             float(c), h01 + 0.05, r + 1.0,
-                             float(c), h00 + 0.05, float(r), plane_col, pw)
-                # Diagonal for clarity
-                self._line3d(surface, vp, hw, hh,
-                             float(c), h00 + 0.05, float(r),
-                             c + 1.0, h11 + 0.05, r + 1.0, plane_col, 1)
-
-                # Arrow from center in slope direction
-                cx_w = c + 0.5
-                cz_w = r + 0.5
-                center_h = fh + dx * 0.5 + dy * 0.5  # height at cell center
-                mag = (dx * dx + dy * dy) ** 0.5
-                arrow_len = min(0.4, mag * 0.3)
-                if mag > 0.01:
-                    ndx = dx / mag
-                    ndy = dy / mag
-                else:
-                    continue
-                arrow_col = (255, 255, 100) if is_aim else (200, 220, 100)
-                aw = 3 if is_aim else 2
-                tx = cx_w + ndx * arrow_len
-                tz = cz_w + ndy * arrow_len
-                ty = center_h + mag * 0.15
-                self._line3d(surface, vp, hw, hh,
-                             cx_w, center_h + 0.05, cz_w,
-                             tx, ty + 0.05, tz, arrow_col, aw)
-                # Arrowhead
-                perp_x = -ndy * 0.10
-                perp_z = ndx * 0.10
-                self._line3d(surface, vp, hw, hh,
-                             tx, ty + 0.05, tz,
-                             tx - ndx * 0.12 + perp_x, ty, tz - ndy * 0.12 + perp_z,
-                             arrow_col, aw)
-                self._line3d(surface, vp, hw, hh,
-                             tx, ty + 0.05, tz,
-                             tx - ndx * 0.12 - perp_x, ty, tz - ndy * 0.12 - perp_z,
-                             arrow_col, aw)
-        # Draw axis indicator on aimed cell
-        if aimed:
-            ar, ac = aimed.row, aimed.col
-            fh = zone.floor_heights[ar][ac] if zone.floor_heights else 0.0
-            adx = sdx[ar][ac] if sdx and len(sdx) > ar and len(sdx[ar]) > ac else 0.0
-            ady = sdy[ar][ac] if sdy and len(sdy) > ar and len(sdy[ar]) > ac else 0.0
-            center_h = fh + adx * 0.5 + ady * 0.5
-            cx_w = ac + 0.5
-            cz_w = ar + 0.5
-            if axis == "dx":
-                self._line3d(surface, vp, hw, hh,
-                             cx_w - 0.35, center_h + 0.06, cz_w,
-                             cx_w + 0.35, center_h + 0.06, cz_w,
-                             (255, 255, 150), 3)
-            else:
-                self._line3d(surface, vp, hw, hh,
-                             cx_w, center_h + 0.06, cz_w - 0.35,
-                             cx_w, center_h + 0.06, cz_w + 0.35,
-                             (255, 255, 150), 3)
 
     def _draw_reflect_overlay(self, surface, vp, hw, hh, zone, W, H):
         """Draw blue-tinted floor quads showing reflectivity (removed — now a no-op)."""
@@ -579,18 +483,17 @@ class RenderingMixin:
 
     def _draw_layer2_slabs(self, surface, vp, hw, hh, zone, W, H):
         """Draw secondary floor/ceiling surfaces as wireframe rectangles."""
-        if self.tool not in ("sculpt", "paint", "select"):
-            return
         f2 = getattr(zone, 'floor2_heights', None)
         c2 = getattr(zone, 'ceil2_heights', None)
         if not f2 and not c2:
             return
         from editor.view_3d.tools_layer2 import LAYER_NONE
         aimed = self.aimed
+        is_layer2_mode = getattr(self, '_sculpt_layer2', False)
         target = getattr(self, '_layer2_target', 'floor2')
         for r in range(H):
             for c in range(W):
-                is_aim = (aimed and aimed.row == r and aimed.col == c)
+                is_aim = (aimed and aimed.row == r and aimed.col == c) and is_layer2_mode
                 # Floor2
                 if f2:
                     fv = f2[r][c]
@@ -911,8 +814,20 @@ class RenderingMixin:
 
     def _draw_face_hl_and_preview(self, surface, vp, hw, hh, sw, sh):
         aimed = self.aimed
+        is_paint = getattr(self, 'tool', '') == 'paint'
+        prism_aimed = getattr(self, '_paint_aimed_prism', None) is not None
+        quad_aimed = getattr(self, '_paint_aimed_quad', None) is not None
+
+        # Cell face highlight — skip when a prism/quad is closer (paint tool)
+        # because the cell highlight bleeds through semi-transparent prism faces.
         if aimed is not None and aimed.face != "ground":
-            self._draw_face_highlight(surface, vp, hw, hh, aimed)
+            if not (is_paint and (prism_aimed or quad_aimed)):
+                self._draw_face_highlight(surface, vp, hw, hh, aimed)
+
+        # Prism / quad face highlight (paint tool only)
+        if is_paint:
+            self._draw_prism_face_hl(surface, vp, hw, hh)
+            self._draw_quad_face_hl(surface, vp, hw, hh)
 
         # Segment merge-target: highlight the boundary nearest to crosshair
         if self.tool == "segment" and aimed is not None:
@@ -941,13 +856,35 @@ class RenderingMixin:
                     self._line3d(surface, vp, hw, hh, *pts[0], *pts[1], lcol, 3)
 
     def _draw_crosshair(self, surface, sw, sh):
-        tool_col = TOOL_COLORS.get(self.tool, COL_CROSSHAIR)
+        is_layer2 = (self.tool == "sculpt"
+                     and getattr(self, '_sculpt_layer2', False))
+        tool_col = COL_TOOL_LAYER2 if is_layer2 else TOOL_COLORS.get(self.tool, COL_CROSSHAIR)
         cx, cy = sw // 2, sh // 2
+
+        # Inner crosshair lines + dot
         pygame.draw.line(surface, tool_col, (cx - 14, cy), (cx - 4, cy), 2)
         pygame.draw.line(surface, tool_col, (cx + 4, cy), (cx + 14, cy), 2)
         pygame.draw.line(surface, tool_col, (cx, cy - 14), (cx, cy - 4), 2)
         pygame.draw.line(surface, tool_col, (cx, cy + 4), (cx, cy + 14), 2)
         pygame.draw.circle(surface, tool_col, (cx, cy), 2)
+
+        # Layer 2 mode: outer diamond + "L2" badge
+        if is_layer2:
+            d = 20
+            pts = [(cx, cy - d), (cx + d, cy), (cx, cy + d), (cx - d, cy)]
+            pygame.draw.polygon(surface, tool_col, pts, 2)
+
+            font = _get_font(12)
+            tgt = getattr(self, '_layer2_target', 'floor2')
+            badge = "L2:FLOOR" if tgt == "floor2" else "L2:CEIL"
+            badge_img = font.render(badge, True, tool_col)
+            bw, bh = badge_img.get_size()
+            badge_x = cx - bw // 2
+            badge_y = cy - d - bh - 4
+            bg = pygame.Surface((bw + 8, bh + 4), pygame.SRCALPHA)
+            bg.fill((0, 0, 0, 160))
+            surface.blit(bg, (badge_x - 4, badge_y - 2))
+            surface.blit(badge_img, (badge_x, badge_y))
 
         if self.aimed:
             zone_a = self.zone
@@ -986,12 +923,16 @@ class RenderingMixin:
             else:
                 ctx_key = "none"
         elif tool == "sculpt":
-            if part == "ceiling":
+            if getattr(self, '_sculpt_layer2', False):
+                ctx_key = "layer2"
+            elif part == "ceiling":
                 ctx_key = "ceiling"
             elif part in ("floor", "wall", "ground"):
                 ctx_key = "floor"
             else:
                 ctx_key = "none"
+        elif tool == "box":
+            ctx_key = "selected" if getattr(self, '_box_selected', None) is not None else "unselected"
         else:
             ctx_key = "any"
 
@@ -1021,12 +962,19 @@ class RenderingMixin:
         bg_x = cx - bg_w // 2
         bg_y = start_y
 
+        is_layer2 = (self.tool == "sculpt"
+                     and getattr(self, '_sculpt_layer2', False))
         bg = pygame.Surface((bg_w, bg_h), pygame.SRCALPHA)
-        bg.fill((0, 0, 0, 120))
+        if is_layer2:
+            bg.fill((60, 30, 80, 150))
+        else:
+            bg.fill((0, 0, 0, 120))
         surface.blit(bg, (bg_x, bg_y))
 
         for i, (text, col) in enumerate(lines):
-            img = font.render(text, True, col)
+            # Use layer2 colour for action text when in layer2 sub-mode
+            text_col = COL_TOOL_LAYER2 if is_layer2 else col
+            img = font.render(text, True, text_col)
             surface.blit(img, (bg_x + 6, bg_y + 4 + i * lh))
 
     # ── Selection highlight ───────────────────────────────────────
@@ -1150,9 +1098,9 @@ class RenderingMixin:
                 lines.append((f"> {cap_name}_", (255, 255, 200)))
 
         # ── New tool HUD info ─────────────────────────────────────
-        if self.tool == "sculpt":
+        if self.tool == "sculpt" and getattr(self, '_sculpt_layer2', False):
             tgt = getattr(self, '_layer2_target', 'floor2')
-            lines.append((f"L2 target: {tgt}  (Sh+X)", COL_TOOL_LAYER2))
+            lines.append((f"[Layer 2]  Target: {tgt}", COL_TOOL_LAYER2))
         elif self.tool == "quad":
             sel = getattr(self, '_quad_selected', None)
             snap = getattr(self, '_quad_snap', 0.25)
@@ -1175,6 +1123,19 @@ class RenderingMixin:
             else:
                 rad = getattr(self, '_curve_radius', 1.0)
                 lines.append((f"Radius: {rad:.2f}", COL_TOOL_CURVE))
+        elif self.tool == "box":
+            sel = getattr(self, '_box_selected', None)
+            snap = getattr(self, '_box_snap', True)
+            snap_str = "ON" if snap else "OFF"
+            lines.append((f"Snap: {snap_str}  (G)", COL_TOOL_BOX))
+            if sel is not None:
+                lines.append((f"Prism #{sel} selected", COL_TOOL_BOX))
+            else:
+                w = getattr(self, '_box_w', 1.0)
+                h = getattr(self, '_box_h', 1.0)
+                d = getattr(self, '_box_d', 1.0)
+                lines.append((f"Size: {w:.2f}w × {d:.2f}d × {h:.2f}h", COL_TOOL_BOX))
+
         hit = self.aimed
         if hit:
             zone = self.zone
@@ -1228,7 +1189,7 @@ class RenderingMixin:
                                      (180, 180, 180)))
 
             # Tool-specific cell data
-            if self.tool in ("sculpt", "paint", "select"):
+            if getattr(self, '_sculpt_layer2', False):
                 from editor.view_3d.tools_layer2 import LAYER_NONE as _LN
                 f2 = getattr(zone, 'floor2_heights', None)
                 c2h = getattr(zone, 'ceil2_heights', None)
@@ -1322,8 +1283,133 @@ class RenderingMixin:
                 tmp = pygame.Surface((tw, th), pygame.SRCALPHA)
                 off = [(px - min_x, py - min_y) for px, py in poly]
                 pygame.draw.polygon(tmp, (*tool_col[:3], fill_a), off)
-                surface.blit(tmp, (min_x, min_y))
                 pygame.draw.polygon(tmp, (*tool_col[:3], edge_a), off, edge_w)
+                surface.blit(tmp, (min_x, min_y))
+        except (ValueError, OverflowError):
+            pass
+
+    # ── Prism / Quad face highlight ───────────────────────────────
+
+    # Maps ray-picker face names to _FACE_DEFS indices (corner index tuples)
+    _OBJ_FACE_IDX = {
+        "top":   (4, 5, 6, 7),
+        "bot":   (0, 3, 2, 1),
+        "north": (0, 1, 5, 4),
+        "south": (2, 3, 7, 6),
+        "west":  (0, 4, 7, 3),
+        "east":  (1, 2, 6, 5),
+    }
+
+    def _draw_prism_face_hl(
+        self, surface: pygame.Surface, vp: list[float],
+        hw: float, hh: float,
+    ) -> None:
+        """Draw a translucent highlight on the aimed prism face."""
+        idx = getattr(self, '_paint_aimed_prism', None)
+        face = getattr(self, '_paint_aimed_prism_face', '')
+        if idx is None or not face:
+            return
+        zone = self.zone
+        if not zone or not zone.boxes:
+            return
+        if idx < 0 or idx >= len(zone.boxes):
+            return
+        b = zone.boxes[idx]
+        cx = float(b.get("x", 0))
+        cz = float(b.get("y", 0))
+        base_y = float(b.get("z", 0))
+        w = float(b.get("w", 1))
+        h = float(b.get("h", 1))
+        d = float(b.get("d", 1))
+        yaw = float(b.get("yaw", 0))
+
+        cos_y = math.cos(yaw)
+        sin_y = math.sin(yaw)
+        hw2, hd2 = w * 0.5, d * 0.5
+        top_y = base_y + h
+
+        local = [(-hw2, -hd2), (hw2, -hd2), (hw2, hd2), (-hw2, hd2)]
+        corners: list[tuple[float, float, float]] = []
+        for lx, lz in local:
+            wx = cx + lx * cos_y - lz * sin_y
+            wz = cz + lx * sin_y + lz * cos_y
+            corners.append((wx, base_y, wz))
+        for lx, lz in local:
+            wx = cx + lx * cos_y - lz * sin_y
+            wz = cz + lx * sin_y + lz * cos_y
+            corners.append((wx, top_y, wz))
+
+        face_indices = self._OBJ_FACE_IDX.get(face)
+        if face_indices is None:
+            return
+        face_corners = [corners[i] for i in face_indices]
+        self._draw_object_face_poly(surface, vp, hw, hh, face_corners)
+
+    def _draw_quad_face_hl(
+        self, surface: pygame.Surface, vp: list[float],
+        hw: float, hh: float,
+    ) -> None:
+        """Draw a translucent highlight on the aimed quad."""
+        idx = getattr(self, '_paint_aimed_quad', None)
+        if idx is None:
+            return
+        zone = self.zone
+        if not zone or not zone.quads:
+            return
+        if idx < 0 or idx >= len(zone.quads):
+            return
+        q = zone.quads[idx]
+        qx = float(q.get("x", 0.0))
+        qz = float(q.get("z", 0.0))
+        by = float(q.get("base_y", 0.0))
+        w = float(q.get("width", 1.0))
+        h = float(q.get("height", 1.0))
+        angle = float(q.get("angle", 0.0))
+
+        cos_a = math.cos(angle)
+        sin_a = math.sin(angle)
+        hw2 = w * 0.5
+        x0 = qx - cos_a * hw2
+        z0 = qz + sin_a * hw2
+        x1 = qx + cos_a * hw2
+        z1 = qz - sin_a * hw2
+
+        face_corners = [
+            (x0, by, z0), (x1, by, z1),
+            (x1, by + h, z1), (x0, by + h, z0),
+        ]
+        self._draw_object_face_poly(surface, vp, hw, hh, face_corners)
+
+    def _draw_object_face_poly(
+        self, surface: pygame.Surface, vp: list[float],
+        hw: float, hh: float,
+        face_corners: list[tuple[float, float, float]],
+    ) -> None:
+        """Draw a translucent highlight polygon for a prism or quad face."""
+        poly = _project_poly(vp, face_corners, hw, hh)
+        if poly is None:
+            return
+        xs = [p[0] for p in poly]
+        ys = [p[1] for p in poly]
+        sw2, sh2 = int(hw * 2), int(hh * 2)
+        if max(xs) < -50 or min(xs) > sw2 + 50:
+            return
+        if max(ys) < -50 or min(ys) > sh2 + 50:
+            return
+
+        tool_col = TOOL_COLORS.get(self.tool, COL_TOOL_BOX)
+        try:
+            min_x = max(0, min(xs))
+            min_y = max(0, min(ys))
+            max_x = min(sw2, max(xs))
+            max_y = min(sh2, max(ys))
+            tw = max_x - min_x + 1
+            th = max_y - min_y + 1
+            if tw > 0 and th > 0:
+                tmp = pygame.Surface((tw, th), pygame.SRCALPHA)
+                off = [(px - min_x, py - min_y) for px, py in poly]
+                pygame.draw.polygon(tmp, (*tool_col[:3], 90), off)
+                pygame.draw.polygon(tmp, (*tool_col[:3], 180), off, 3)
                 surface.blit(tmp, (min_x, min_y))
         except (ValueError, OverflowError):
             pass
