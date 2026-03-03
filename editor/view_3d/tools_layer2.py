@@ -50,80 +50,96 @@ class Layer2Mixin:
                 if len(g[r]) != W:
                     g[r] = [""] * W
 
-    def _layer2_raise(self, shift: bool = False, ctrl: bool = False) -> None:
-        """LMB: raise secondary floor (or ceiling if shift).  Ctrl = remove."""
-        hit = self.aimed
-        if not hit:
-            return
-        self._layer2_ensure_grids()
+    def _layer2_raise_at(self, r: int, c: int,
+                         shift: bool = False, ctrl: bool = False) -> bool:
+        """Raise layer-2 surface at *(r, c)*.  Returns True if changed."""
         zone = self.zone
-        r, c = hit.row, hit.col
-
         if ctrl:
-            # Remove secondary layer
-            self._push_undo()
             zone.floor2_heights[r][c] = LAYER_NONE
             zone.ceil2_heights[r][c] = LAYER_NONE
             zone.floor2_textures[r][c] = ""
             zone.ceil2_textures[r][c] = ""
-            self.dirty = True
-            return
-
+            return True
         if shift or self._layer2_target == "ceil2":
-            # Raise secondary ceiling
             old = zone.ceil2_heights[r][c]
             if old <= LAYER_NONE + 1.0:
-                # Create at primary ceiling height
                 old = zone.ceil_heights[r][c] if zone.ceil_heights else 1.0
             new = min(CEIL_MAX, old + self.snap_y)
             if abs(new - old) < 0.001:
-                return
-            self._push_undo()
+                return False
             zone.ceil2_heights[r][c] = round(new, 3)
-            # Auto-set texture if empty
             if not zone.ceil2_textures[r][c]:
                 zone.ceil2_textures[r][c] = self.current_texture
-            self.dirty = True
+            return True
         else:
-            # Raise secondary floor
             old = zone.floor2_heights[r][c]
             if old <= LAYER_NONE + 1.0:
-                # Create at primary floor height + offset
                 base = zone.floor_heights[r][c] if zone.floor_heights else 0.0
                 old = base + 0.5
             new = min(FLOOR_MAX, old + self.snap_y)
             if abs(new - old) < 0.001:
-                return
-            self._push_undo()
+                return False
             zone.floor2_heights[r][c] = round(new, 3)
             if not zone.floor2_textures[r][c]:
                 zone.floor2_textures[r][c] = self.current_texture
-            self.dirty = True
+            return True
 
-    def _layer2_lower(self, shift: bool = False) -> None:
-        """RMB: lower secondary floor (or ceiling if shift)."""
+    def _layer2_raise(self, shift: bool = False, ctrl: bool = False) -> None:
+        """LMB: raise secondary floor (or ceiling if shift).  Ctrl = remove.
+
+        Selection-aware: batch-applies to all selected cells.
+        """
+        self._layer2_ensure_grids()
+        if self._has_selection():
+            self._push_undo()
+            if self._apply_to_selection(
+                lambda r, c: self._layer2_raise_at(r, c, shift, ctrl)
+            ):
+                self.dirty = True
+            return
         hit = self.aimed
         if not hit:
             return
-        self._layer2_ensure_grids()
-        zone = self.zone
-        r, c = hit.row, hit.col
+        self._push_undo()
+        if self._layer2_raise_at(hit.row, hit.col, shift, ctrl):
+            self.dirty = True
 
+    def _layer2_lower_at(self, r: int, c: int, shift: bool = False) -> bool:
+        """Lower layer-2 surface at *(r, c)*.  Returns True if changed."""
+        zone = self.zone
         if shift or self._layer2_target == "ceil2":
             old = zone.ceil2_heights[r][c]
             if old <= LAYER_NONE + 1.0:
-                return  # no secondary ceiling to lower
+                return False
             new = max(CEIL_MIN, old - self.snap_y)
-            self._push_undo()
             zone.ceil2_heights[r][c] = round(new, 3)
-            self.dirty = True
+            return True
         else:
             old = zone.floor2_heights[r][c]
             if old <= LAYER_NONE + 1.0:
-                return
+                return False
             new = max(FLOOR_MIN, old - self.snap_y)
-            self._push_undo()
             zone.floor2_heights[r][c] = round(new, 3)
+            return True
+
+    def _layer2_lower(self, shift: bool = False) -> None:
+        """RMB: lower secondary floor (or ceiling if shift).
+
+        Selection-aware: batch-applies to all selected cells.
+        """
+        self._layer2_ensure_grids()
+        if self._has_selection():
+            self._push_undo()
+            if self._apply_to_selection(
+                lambda r, c: self._layer2_lower_at(r, c, shift)
+            ):
+                self.dirty = True
+            return
+        hit = self.aimed
+        if not hit:
+            return
+        self._push_undo()
+        if self._layer2_lower_at(hit.row, hit.col, shift):
             self.dirty = True
 
     def _layer2_paint(self) -> None:

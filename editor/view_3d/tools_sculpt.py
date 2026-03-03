@@ -47,71 +47,76 @@ class SculptMixin:
 
     # ── Floor raise / lower ───────────────────────────────────────
 
-    def _tool_floor_raise(self) -> None:
-        """Raise floor height (pure shape change, no segmenting).
-
-        When the cell has a ceiling (below SKY_HEIGHT), the floor is
-        clamped so that a 0.05 gap remains.  When the cell has no
-        ceiling (sky), the ceiling is pushed up together with the
-        floor so they stay the same distance apart.
-        """
-        hit = self.aimed
-        if not hit:
-            return
+    def _floor_raise_at(self, r: int, c: int) -> bool:
+        """Raise floor at *(r, c)* by ``snap_y``.  Returns True if changed."""
         zone = self.zone
-        r, c = hit.row, hit.col
         fh = zone.floor_heights[r][c]
         ch = zone.ceil_heights[r][c]
         is_sky = ch >= SKY_HEIGHT
         max_fh = FLOOR_MAX if is_sky else min(FLOOR_MAX, ch - 0.05)
         new_fh = min(fh + self.snap_y, max_fh)
         if abs(new_fh - fh) < 0.001:
-            return
-        self._push_undo()
-        self._ensure_face_textures()
+            return False
         delta = new_fh - fh
         zone.floor_heights[r][c] = new_fh
-        # Push ceiling up with floor so the gap is preserved
         if not is_sky:
             zone.ceil_heights[r][c] = min(CEIL_MAX, ch + delta)
-        # Keep existing segment top-edges in sync with new height
         for fi in range(4):
             segs = zone.floor_step_segments[r][c][fi]
             if segs:
                 segs[-1][1] = max(0.0, new_fh)
         self._sync_tile_type(r, c)
-        self.dirty = True
+        return True
 
-    def _tool_floor_lower(self) -> None:
-        """Lower floor height.  Cleans up floor step segments when they
-        become invalid (floor returns to ground level or segments
-        extend beyond the new height)."""
+    def _tool_floor_raise(self) -> None:
+        """Raise floor height.  Selection-aware: batch-raises all selected floors."""
+        if self._has_selection():
+            self._push_undo()
+            self._ensure_face_textures()
+            if self._apply_to_selection(self._floor_raise_at):
+                self.dirty = True
+            return
         hit = self.aimed
         if not hit:
-            return
-        zone = self.zone
-        r, c = hit.row, hit.col
-        fh = zone.floor_heights[r][c]
-        new_fh = max(FLOOR_MIN, fh - self.snap_y)
-        if abs(new_fh - fh) < 0.001:
             return
         self._push_undo()
         self._ensure_face_textures()
+        if self._floor_raise_at(hit.row, hit.col):
+            self.dirty = True
+
+    def _floor_lower_at(self, r: int, c: int) -> bool:
+        """Lower floor at *(r, c)* by ``snap_y``.  Returns True if changed."""
+        zone = self.zone
+        fh = zone.floor_heights[r][c]
+        new_fh = max(FLOOR_MIN, fh - self.snap_y)
+        if abs(new_fh - fh) < 0.001:
+            return False
         zone.floor_heights[r][c] = new_fh
-        # Trim / clear floor step segments
         self._trim_floor_segments(r, c, new_fh)
         self._sync_tile_type(r, c)
-        self.dirty = True
+        return True
 
-    # ── Ceiling lower / raise / delete ────────────────────────────
-
-    def _tool_ceiling_lower(self) -> None:
-        """Lower ceiling (pure shape change, no segmenting).  If sky, bring in default."""
+    def _tool_floor_lower(self) -> None:
+        """Lower floor height.  Selection-aware: batch-lowers all selected floors."""
+        if self._has_selection():
+            self._push_undo()
+            self._ensure_face_textures()
+            if self._apply_to_selection(self._floor_lower_at):
+                self.dirty = True
+            return
         hit = self.aimed
         if not hit:
             return
+        self._push_undo()
+        self._ensure_face_textures()
+        if self._floor_lower_at(hit.row, hit.col):
+            self.dirty = True
+
+    # ── Ceiling lower / raise / delete ────────────────────────────
+
+    def _ceiling_lower_at(self, r: int, c: int) -> bool:
+        """Lower ceiling at *(r, c)*.  Returns True if changed."""
         zone = self.zone
-        r, c = hit.row, hit.col
         ch = zone.ceil_heights[r][c]
         fh = zone.floor_heights[r][c]
         if ch >= SKY_HEIGHT:
@@ -120,34 +125,55 @@ class SculptMixin:
             min_ch = max(CEIL_MIN, fh + 0.05)
             new_ch = max(ch - self.snap_y, min_ch)
         if abs(new_ch - ch) < 0.001:
-            return
-        self._push_undo()
-        self._ensure_face_textures()
+            return False
         zone.ceil_heights[r][c] = new_ch
         self._sync_tile_type(r, c)
-        self.dirty = True
+        return True
 
-    def _tool_ceiling_raise(self) -> None:
-        """Raise ceiling (clamped to SKY_HEIGHT).  Clears ceiling step
-        segments when the ceiling reaches open sky."""
+    def _tool_ceiling_lower(self) -> None:
+        """Lower ceiling.  Selection-aware."""
+        if self._has_selection():
+            self._push_undo()
+            self._ensure_face_textures()
+            if self._apply_to_selection(self._ceiling_lower_at):
+                self.dirty = True
+            return
         hit = self.aimed
         if not hit:
             return
+        self._push_undo()
+        self._ensure_face_textures()
+        if self._ceiling_lower_at(hit.row, hit.col):
+            self.dirty = True
+
+    def _ceiling_raise_at(self, r: int, c: int) -> bool:
+        """Raise ceiling at *(r, c)*.  Returns True if changed."""
         zone = self.zone
-        r, c = hit.row, hit.col
         ch = zone.ceil_heights[r][c]
         if ch >= SKY_HEIGHT:
-            return
+            return False
         new_ch = min(ch + self.snap_y, SKY_HEIGHT)
         if abs(new_ch - ch) < 0.001:
-            return
-        self._push_undo()
+            return False
         zone.ceil_heights[r][c] = new_ch
-        # Sky = no ceiling mass = no ceiling step segments
         if new_ch >= SKY_HEIGHT - 0.01:
             self._clear_ceil_segments(r, c)
         self._sync_tile_type(r, c)
-        self.dirty = True
+        return True
+
+    def _tool_ceiling_raise(self) -> None:
+        """Raise ceiling.  Selection-aware."""
+        if self._has_selection():
+            self._push_undo()
+            if self._apply_to_selection(self._ceiling_raise_at):
+                self.dirty = True
+            return
+        hit = self.aimed
+        if not hit:
+            return
+        self._push_undo()
+        if self._ceiling_raise_at(hit.row, hit.col):
+            self.dirty = True
 
     def _tool_ceiling_delete(self) -> None:
         """Delete ceiling (set to open sky).  Clears ceiling step segments."""
@@ -164,23 +190,62 @@ class SculptMixin:
         self._clear_ceil_segments(r, c)
         self.dirty = True
 
-    # ── Toggle ceiling (T key) ────────────────────────────────────
+    # ── Toggle / add / remove ceiling (T key) ───────────────────────
 
-    def _toggle_ceiling(self) -> bool:
-        """T key: toggle ceiling on/off for the aimed cell."""
-        hit = self.aimed
-        if not hit:
-            return False
+    def _toggle_ceiling_at(self, r: int, c: int) -> bool:
+        """Toggle ceiling on/off at *(r, c)*.  Returns True (always changes)."""
         zone = self.zone
-        r, c = hit.row, hit.col
         ch = zone.ceil_heights[r][c]
         fh = zone.floor_heights[r][c]
-        self._push_undo()
         if ch >= SKY_HEIGHT - 0.01:
             zone.ceil_heights[r][c] = fh + DEFAULT_CEIL
         else:
             zone.ceil_heights[r][c] = SKY_HEIGHT
             self._clear_ceil_segments(r, c)
+        return True
+
+    def _add_ceiling_at(self, r: int, c: int) -> bool:
+        """Add a default ceiling if cell has none.  Returns True if changed."""
+        zone = self.zone
+        if zone.ceil_heights[r][c] < SKY_HEIGHT - 0.01:
+            return False  # already has a ceiling
+        fh = zone.floor_heights[r][c]
+        zone.ceil_heights[r][c] = fh + DEFAULT_CEIL
+        return True
+
+    def _remove_ceiling_at(self, r: int, c: int) -> bool:
+        """Remove ceiling (set to sky).  Returns True if changed."""
+        zone = self.zone
+        if zone.ceil_heights[r][c] >= SKY_HEIGHT - 0.01:
+            return False  # already sky
+        zone.ceil_heights[r][c] = SKY_HEIGHT
+        self._clear_ceil_segments(r, c)
+        return True
+
+    def _toggle_ceiling(self, *, add_only: bool = False,
+                        remove_only: bool = False) -> bool:
+        """T key: toggle ceiling on/off.  Selection-aware.
+
+        With selection:
+          *add_only*    — only add ceilings where missing (T)
+          *remove_only* — only remove existing ceilings (Shift+T)
+          both False    — pure toggle (fallback)
+        """
+        if self._has_selection():
+            self._push_undo()
+            if add_only:
+                self._apply_to_selection(self._add_ceiling_at)
+            elif remove_only:
+                self._apply_to_selection(self._remove_ceiling_at)
+            else:
+                self._apply_to_selection(self._toggle_ceiling_at)
+            self.dirty = True
+            return True
+        hit = self.aimed
+        if not hit:
+            return False
+        self._push_undo()
+        self._toggle_ceiling_at(hit.row, hit.col)
         self.dirty = True
         return True
 
@@ -291,6 +356,78 @@ class SculptMixin:
             new = uwh - self.snap_y
             zone.upper_wall_height[r][c] = new if new > ch + 0.01 else 0.0
         self.dirty = True
+
+    # ── Batch upper-wall height (selection-aware) ─────────────────
+
+    def _raise_upper_wall_at(self, r: int, c: int) -> bool:
+        """Raise upper wall height at *(r, c)* by ``snap_y``."""
+        zone = self.zone
+        td = tile_def(zone.tiles[r][c])
+        if td and td.wall:
+            return False
+        ch = zone.ceil_heights[r][c]
+        if ch >= SKY_HEIGHT:
+            return False  # no ceiling to extend
+        uwh = zone.upper_wall_height[r][c]
+        if uwh <= ch:
+            uwh = self._ceil_mass_top(r, c)
+        new = min(CEIL_MAX, uwh + self.snap_y)
+        zone.upper_wall_height[r][c] = new
+        return True
+
+    def _lower_upper_wall_at(self, r: int, c: int) -> bool:
+        """Lower upper wall height at *(r, c)* by ``snap_y``."""
+        zone = self.zone
+        td = tile_def(zone.tiles[r][c])
+        if td and td.wall:
+            return False
+        ch = zone.ceil_heights[r][c]
+        uwh = zone.upper_wall_height[r][c]
+        if uwh <= ch:
+            return False
+        new = uwh - self.snap_y
+        zone.upper_wall_height[r][c] = new if new > ch + 0.01 else 0.0
+        return True
+
+    def _reset_upper_wall_at(self, r: int, c: int) -> bool:
+        """Reset upper wall height at *(r, c)* to auto (0.0)."""
+        zone = self.zone
+        if zone.upper_wall_height[r][c] == 0.0:
+            return False
+        zone.upper_wall_height[r][c] = 0.0
+        return True
+
+    def _batch_raise_upper_wall(self) -> bool:
+        """Raise upper wall height for all selected cells."""
+        if not self._has_selection():
+            return self._adjust_upper_wall_height(0)
+        self._push_undo()
+        self._ensure_face_textures()
+        if self._apply_to_selection(self._raise_upper_wall_at):
+            self.dirty = True
+        return True
+
+    def _batch_lower_upper_wall(self) -> bool:
+        """Lower upper wall height for all selected cells."""
+        if not self._has_selection():
+            import pygame
+            return self._adjust_upper_wall_height(pygame.KMOD_SHIFT)
+        self._push_undo()
+        self._ensure_face_textures()
+        if self._apply_to_selection(self._lower_upper_wall_at):
+            self.dirty = True
+        return True
+
+    def _batch_reset_upper_wall(self) -> bool:
+        """Reset upper wall height for all selected cells to auto."""
+        if not self._has_selection():
+            import pygame
+            return self._adjust_upper_wall_height(pygame.KMOD_CTRL)
+        self._push_undo()
+        self._ensure_face_textures()
+        if self._apply_to_selection(self._reset_upper_wall_at):
+            self.dirty = True
+        return True
 
     # ── Scroll-extend floor ───────────────────────────────────────
 
@@ -452,3 +589,131 @@ class SculptMixin:
             zone.wall_textures[r][c] = ""
         if zone.wall_segments and len(zone.wall_segments) > r:
             zone.wall_segments[r][c] = [[], [], [], []]
+
+    # ── Batch wall/open conversion (H / Shift+H) ─────────────────
+
+    def _make_wall_at(self, r: int, c: int) -> bool:
+        """Convert cell to wall.  Returns True if it was changed."""
+        td = tile_def(self.zone.tiles[r][c])
+        if td and td.wall:
+            return False
+        self._make_wall(r, c)
+        return True
+
+    def _make_open_at(self, r: int, c: int) -> bool:
+        """Convert cell to open.  Returns True if it was changed."""
+        td = tile_def(self.zone.tiles[r][c])
+        if td and not td.wall:
+            return False
+        self._make_open(r, c)
+        return True
+
+    def _batch_make_wall(self) -> bool:
+        """H key: convert to wall.  Selection-aware."""
+        if self._has_selection():
+            self._push_undo()
+            self._ensure_face_textures()
+            self._apply_to_selection(self._make_wall_at)
+            self.dirty = True
+            return True
+        hit = self.aimed
+        if not hit:
+            return False
+        self._push_undo()
+        self._ensure_face_textures()
+        self._make_wall(hit.row, hit.col)
+        self.dirty = True
+        return True
+
+    def _batch_make_open(self) -> bool:
+        """Shift+H: convert to open.  Selection-aware."""
+        if self._has_selection():
+            self._push_undo()
+            self._ensure_face_textures()
+            self._apply_to_selection(self._make_open_at)
+            self.dirty = True
+            return True
+        hit = self.aimed
+        if not hit:
+            return False
+        self._push_undo()
+        self._ensure_face_textures()
+        self._make_open(hit.row, hit.col)
+        self.dirty = True
+        return True
+
+    # ── Batch flatten (L / Shift+L) ──────────────────────────────
+
+    def _flatten_floors(self) -> bool:
+        """L key with selection + aimed: set all selected floors to aimed floor height."""
+        hit = self.aimed
+        if not hit or not self._has_selection():
+            return False
+        target_fh = self.zone.floor_heights[hit.row][hit.col]
+        def _set_floor(r: int, c: int) -> bool:
+            zone = self.zone
+            if abs(zone.floor_heights[r][c] - target_fh) < 0.001:
+                return False
+            zone.floor_heights[r][c] = target_fh
+            self._sync_tile_type(r, c)
+            return True
+        self._push_undo()
+        self._apply_to_selection(_set_floor)
+        self.dirty = True
+        return True
+
+    def _flatten_ceilings(self) -> bool:
+        """Shift+L with selection + aimed: set all selected ceilings to aimed ceiling height."""
+        hit = self.aimed
+        if not hit or not self._has_selection():
+            return False
+        target_ch = self.zone.ceil_heights[hit.row][hit.col]
+        def _set_ceil(r: int, c: int) -> bool:
+            zone = self.zone
+            if abs(zone.ceil_heights[r][c] - target_ch) < 0.001:
+                return False
+            zone.ceil_heights[r][c] = target_ch
+            self._sync_tile_type(r, c)
+            return True
+        self._push_undo()
+        self._apply_to_selection(_set_ceil)
+        self.dirty = True
+        return True
+
+    # ── Apply aimed cell properties to selection ─────────────────
+
+    def _apply_cell_to_selection(self) -> bool:
+        """Copy aimed cell's heights, tile, and textures to all selected cells."""
+        hit = self.aimed
+        if not hit or not self._has_selection():
+            return False
+        zone = self.zone
+        src_r, src_c = hit.row, hit.col
+        src_fh = zone.floor_heights[src_r][src_c]
+        src_ch = zone.ceil_heights[src_r][src_c]
+        src_tile = zone.tiles[src_r][src_c]
+        src_ft = zone.floor_textures[src_r][src_c] if zone.floor_textures else ""
+        src_ct = zone.ceil_textures[src_r][src_c] if zone.ceil_textures else ""
+        src_wt = zone.wall_textures[src_r][src_c] if zone.wall_textures else ""
+        src_ll = (zone.light_levels[src_r][src_c]
+                  if zone.light_levels and len(zone.light_levels) > src_r else 1.0)
+
+        def _apply(r: int, c: int) -> bool:
+            zone.tiles[r][c] = src_tile
+            zone.floor_heights[r][c] = src_fh
+            zone.ceil_heights[r][c] = src_ch
+            if zone.floor_textures:
+                zone.floor_textures[r][c] = src_ft
+            if zone.ceil_textures:
+                zone.ceil_textures[r][c] = src_ct
+            if zone.wall_textures and len(zone.wall_textures) > r:
+                zone.wall_textures[r][c] = src_wt
+            if zone.light_levels and len(zone.light_levels) > r:
+                zone.light_levels[r][c] = src_ll
+            return True
+
+        self._push_undo()
+        self._ensure_face_textures()
+        self._apply_to_selection(_apply)
+        self.dirty = True
+        return True

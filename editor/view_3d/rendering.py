@@ -10,6 +10,7 @@ from core.tiles import TILE_COLORS, tile_def
 from core.fonts import get_font as _get_font
 from editor.view_3d.math3d import (
     _perspective, _mat4_mul, _build_view_matrix, _project_poly,
+    _extract_frustum_planes, _visible_cell_set,
     NEAR_CLIP, FAR_CLIP, FOV_DEG,
 )
 from editor.view_3d.picking import _CellHit
@@ -24,7 +25,6 @@ from editor.view_3d.constants import (
     TOOL_LABELS, TOOL_COLORS, TOOL_HINTS,
     COL_TOOL_SELECT,
     COL_TOOL_CEILING,
-    COL_TOOL_SLOPE,
     COL_TOOL_LAYER2, COL_TOOL_QUAD, COL_TOOL_PORTAL,
     COL_TOOL_CURVE, COL_TOOL_BOX,
     HOTBAR_SIZE,
@@ -92,13 +92,16 @@ class RenderingMixin:
         zone = self.zone
         W, H = zone.width, zone.height
 
-        self._draw_grids(surface, vp, hw, hh, W, H)
+        # Pre-compute the set of cells whose AABB intersects the view frustum.
+        frustum = _extract_frustum_planes(vp)
+        visible = _visible_cell_set(frustum, W, H)
+
         self._draw_axes(surface, vp, hw, hh)
-        self._draw_cell_boxes(surface, vp, hw, hh, zone, W, H)
-        self._draw_surface_markers(surface, vp, hw, hh, zone, W, H)
-        self._draw_seg_boundary_rings(surface, vp, hw, hh, zone, W, H)
+        self._draw_cell_boxes(surface, vp, hw, hh, zone, W, H, visible)
+        self._draw_surface_markers(surface, vp, hw, hh, zone, W, H, visible)
+        self._draw_seg_boundary_rings(surface, vp, hw, hh, zone, W, H, visible)
         # ── Per-cell tool overlays ──
-        self._draw_layer2_slabs(surface, vp, hw, hh, zone, W, H)
+        self._draw_layer2_slabs(surface, vp, hw, hh, zone, W, H, visible)
         self._draw_entities(surface, vp, hw, hh, zone)
         self._draw_boxes(surface, vp, hw, hh, zone)
         # ── Discrete object overlays ──
@@ -113,9 +116,6 @@ class RenderingMixin:
         self._draw_hud(surface, sw, sh)
 
     # ── Sub-methods ───────────────────────────────────────────────
-
-    def _draw_grids(self, surface, vp, hw, hh, W, H):
-        pass  # static grids removed; cell edges on walls provide structure
 
     def _draw_axes(self, surface, vp, hw, hh):
         if not self.show_axes:
@@ -368,21 +368,31 @@ class RenderingMixin:
             alpha=80,
         )
 
-    def _draw_cell_boxes(self, surface, vp, hw, hh, zone, W, H):
+    def _draw_cell_boxes(self, surface, vp, hw, hh, zone, W, H, visible):
         aimed = self.aimed
         cam = (self.cam_x, self.cam_y, self.cam_z)
         box_list: list[tuple[float, int, int, str, float, float]] = []
 
-        for r in range(H):
-            for c in range(W):
-                for part, yb, yt in self._cell_boxes(r, c):
-                    mx = c + 0.5
-                    my = (yb + yt) * 0.5
-                    mz = r + 0.5
-                    d = ((cam[0]-mx)**2 + (cam[1]-my)**2 + (cam[2]-mz)**2)
-                    box_list.append((d, r, c, part, yb, yt))
+        # Layer ghosting state
+        active_layer = getattr(self, 'active_layer', 1)
+        isolating = getattr(self, 'isolate_layer', False)
+
+        for r, c in visible:
+            for part, yb, yt in self._cell_boxes(r, c):
+                mx = c + 0.5
+                my = (yb + yt) * 0.5
+                mz = r + 0.5
+                d = ((cam[0]-mx)**2 + (cam[1]-my)**2 + (cam[2]-mz)**2)
+                box_list.append((d, r, c, part, yb, yt))
 
         box_list.sort(reverse=True)
+
+        # When L2 is active: ghost L1 (translucent); when isolating to L2: hide L1.
+        hide_l1 = isolating and (active_layer == 2)
+        ghost_l1 = (active_layer == 2) and not isolating
+
+        if hide_l1:
+            return  # L1 geometry entirely hidden — L2 slabs drawn separately
 
         for _, r, c, part, yb, yt in box_list:
             is_aimed = (aimed is not None
@@ -396,7 +406,9 @@ class RenderingMixin:
                 continue
             if part == "ceiling" and not self.show_ceilings:
                 continue
-            alpha = 255
+
+            # Ghost L1 when L2 is active (but not isolating)
+            alpha = 60 if ghost_l1 else 255
 
             fcols = self._get_face_colors(r, c, part)
             bcol = self._get_box_color(r, c, part)
@@ -420,104 +432,119 @@ class RenderingMixin:
             self._draw_cell_segments(
                 surface, vp, hw, hh, r, c, part, alpha)
 
-    def _draw_surface_markers(self, surface, vp, hw, hh, zone, W, H):
+    def _draw_surface_markers(self, surface, vp, hw, hh, zone, W, H, visible):
         COL_FLOOR_SURF = (180, 230, 140)
         COL_CEIL_SURF  = (140, 170, 230)
-        for r in range(H):
-            for c in range(W):
-                td = tile_def(zone.tiles[r][c])
-                if td and td.wall:
-                    continue
-                fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
-                ch = zone.ceil_heights[r][c] if zone.ceil_heights else 1.0
-                if self.show_floors and abs(fh) > 0.01:
-                    self._line3d(surface, vp, hw, hh, c, fh, r, c+1, fh, r, COL_FLOOR_SURF, 2)
-                    self._line3d(surface, vp, hw, hh, c+1, fh, r, c+1, fh, r+1, COL_FLOOR_SURF, 2)
-                    self._line3d(surface, vp, hw, hh, c+1, fh, r+1, c, fh, r+1, COL_FLOOR_SURF, 2)
-                    self._line3d(surface, vp, hw, hh, c, fh, r+1, c, fh, r, COL_FLOOR_SURF, 2)
-                if self.show_ceilings and ch < SKY_HEIGHT - 0.01:
-                    self._line3d(surface, vp, hw, hh, c, ch, r, c+1, ch, r, COL_CEIL_SURF, 2)
-                    self._line3d(surface, vp, hw, hh, c+1, ch, r, c+1, ch, r+1, COL_CEIL_SURF, 2)
-                    self._line3d(surface, vp, hw, hh, c+1, ch, r+1, c, ch, r+1, COL_CEIL_SURF, 2)
-                    self._line3d(surface, vp, hw, hh, c, ch, r+1, c, ch, r, COL_CEIL_SURF, 2)
+        cam_r, cam_c = int(self.cam_z), int(self.cam_x)
+        _MAX_MARKER_DIST_SQ = 144  # 12-cell radius
+        for r, c in visible:
+            if (r - cam_r) ** 2 + (c - cam_c) ** 2 > _MAX_MARKER_DIST_SQ:
+                continue
+            td = tile_def(zone.tiles[r][c])
+            if td and td.wall:
+                continue
+            fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
+            ch = zone.ceil_heights[r][c] if zone.ceil_heights else 1.0
+            if self.show_floors and abs(fh) > 0.01:
+                self._line3d(surface, vp, hw, hh, c, fh, r, c+1, fh, r, COL_FLOOR_SURF, 2)
+                self._line3d(surface, vp, hw, hh, c+1, fh, r, c+1, fh, r+1, COL_FLOOR_SURF, 2)
+                self._line3d(surface, vp, hw, hh, c+1, fh, r+1, c, fh, r+1, COL_FLOOR_SURF, 2)
+                self._line3d(surface, vp, hw, hh, c, fh, r+1, c, fh, r, COL_FLOOR_SURF, 2)
+            if self.show_ceilings and ch < SKY_HEIGHT - 0.01:
+                self._line3d(surface, vp, hw, hh, c, ch, r, c+1, ch, r, COL_CEIL_SURF, 2)
+                self._line3d(surface, vp, hw, hh, c+1, ch, r, c+1, ch, r+1, COL_CEIL_SURF, 2)
+                self._line3d(surface, vp, hw, hh, c+1, ch, r+1, c, ch, r+1, COL_CEIL_SURF, 2)
+                self._line3d(surface, vp, hw, hh, c, ch, r+1, c, ch, r, COL_CEIL_SURF, 2)
 
     _ZONE_FI_FACE = {0: "north", 1: "south", 2: "east", 3: "west"}
 
-    def _draw_seg_boundary_rings(self, surface, vp, hw, hh, zone, W, H):
+    def _draw_seg_boundary_rings(self, surface, vp, hw, hh, zone, W, H, visible):
         """Draw segment boundaries as per-face edges (not full-cell rings)."""
         if not self.show_walls:
             return
-        def _draw_seg_edges(seg_grid: list) -> None:
-            if not seg_grid:
-                return
-            for r2 in range(H):
-                for c2 in range(W):
-                    if r2 >= len(seg_grid) or c2 >= len(seg_grid[r2]):
+        grids = [g for g in (zone.wall_segments,
+                             zone.floor_step_segments,
+                             zone.ceil_step_segments) if g]
+        if not grids:
+            return
+        for r2, c2 in visible:
+            for seg_grid in grids:
+                if r2 >= len(seg_grid) or c2 >= len(seg_grid[r2]):
+                    continue
+                for fi2, segs2 in enumerate(seg_grid[r2][c2]):
+                    if len(segs2) < 2:
                         continue
-                    for fi2, segs2 in enumerate(seg_grid[r2][c2]):
-                        if len(segs2) < 2:
-                            continue
-                        face = self._ZONE_FI_FACE.get(fi2)
-                        if face is None:
-                            continue
-                        for si2 in range(len(segs2) - 1):
-                            y2 = segs2[si2][1]
-                            pts = _face_edge_pts(c2, r2, y2, face)
-                            if pts:
-                                self._line3d(surface, vp, hw, hh,
-                                             *pts[0], *pts[1], COL_SEG_LINE, 2)
-
-        _draw_seg_edges(zone.wall_segments)
-        _draw_seg_edges(zone.floor_step_segments)
-        _draw_seg_edges(zone.ceil_step_segments)
+                    face = self._ZONE_FI_FACE.get(fi2)
+                    if face is None:
+                        continue
+                    for si2 in range(len(segs2) - 1):
+                        y2 = segs2[si2][1]
+                        pts = _face_edge_pts(c2, r2, y2, face)
+                        if pts:
+                            self._line3d(surface, vp, hw, hh,
+                                         *pts[0], *pts[1], COL_SEG_LINE, 2)
 
     # ── Per-cell tool overlays ────────────────────────────────────
 
-    def _draw_light_overlay(self, surface, vp, hw, hh, zone, W, H):
-        """Draw tinted floor quads showing light levels (removed — now a no-op)."""
-        return
 
-    def _draw_reflect_overlay(self, surface, vp, hw, hh, zone, W, H):
-        """Draw blue-tinted floor quads showing reflectivity (removed — now a no-op)."""
-        return
 
-    def _draw_layer2_slabs(self, surface, vp, hw, hh, zone, W, H):
-        """Draw secondary floor/ceiling surfaces as wireframe rectangles."""
+    def _draw_layer2_slabs(self, surface, vp, hw, hh, zone, W, H, visible):
+        """Draw secondary floor/ceiling surfaces.
+
+        When Layer 2 is active, slabs render at higher opacity (solid).
+        When Layer 1 is active, they render as translucent wireframe.
+        When isolating to Layer 1, they are hidden entirely.
+        """
         f2 = getattr(zone, 'floor2_heights', None)
         c2 = getattr(zone, 'ceil2_heights', None)
         if not f2 and not c2:
             return
+
+        active_layer = getattr(self, 'active_layer', 1)
+        isolating = getattr(self, 'isolate_layer', False)
+
+        # Hide L2 when isolating to L1
+        if isolating and active_layer == 1:
+            return
+
         from editor.view_3d.tools_layer2 import LAYER_NONE
         aimed = self.aimed
-        is_layer2_mode = getattr(self, '_sculpt_layer2', False)
+        is_layer2_active = (active_layer == 2)
         target = getattr(self, '_layer2_target', 'floor2')
-        for r in range(H):
-            for c in range(W):
-                is_aim = (aimed and aimed.row == r and aimed.col == c) and is_layer2_mode
-                # Floor2
-                if f2:
-                    fv = f2[r][c]
-                    if fv > LAYER_NONE + 1.0:
-                        col = COL_TOOL_LAYER2 if (is_aim and target == "floor2") else (160, 120, 200)
+        for r, c in visible:
+            is_aim = (aimed and aimed.row == r and aimed.col == c) and is_layer2_active
+            # Floor2
+            if f2:
+                fv = f2[r][c]
+                if fv > LAYER_NONE + 1.0:
+                    if is_layer2_active:
+                        col = COL_TOOL_LAYER2 if (is_aim and target == "floor2") else (180, 140, 220)
                         w = 3 if is_aim else 2
-                        self._filled_box(surface, vp, hw, hh,
-                                         float(c), fv, float(r),
-                                         c + 1.0, fv + 0.04, r + 1.0,
-                                         col, col, w, alpha=80 if is_aim else 50)
-                # Ceil2
-                if c2:
-                    cv = c2[r][c]
-                    if cv > LAYER_NONE + 1.0:
-                        col = (180, 140, 240) if (is_aim and target == "ceil2") else (130, 100, 180)
+                        a = 180 if is_aim else 140
+                    else:
+                        col = (160, 120, 200)
+                        w = 2
+                        a = 50
+                    self._filled_box(surface, vp, hw, hh,
+                                     float(c), fv, float(r),
+                                     c + 1.0, fv + 0.04, r + 1.0,
+                                     col, col, w, alpha=a)
+            # Ceil2
+            if c2:
+                cv = c2[r][c]
+                if cv > LAYER_NONE + 1.0:
+                    if is_layer2_active:
+                        col = (200, 160, 255) if (is_aim and target == "ceil2") else (160, 130, 210)
                         w = 3 if is_aim else 2
-                        self._filled_box(surface, vp, hw, hh,
-                                         float(c), cv - 0.04, float(r),
-                                         c + 1.0, cv, r + 1.0,
-                                         col, col, w, alpha=80 if is_aim else 50)
-
-    def _draw_fog_overlay(self, surface, vp, hw, hh, zone, W, H):
-        """Draw semi-transparent volumes showing fog density (removed — now a no-op)."""
-        return
+                        a = 180 if is_aim else 140
+                    else:
+                        col = (130, 100, 180)
+                        w = 2
+                        a = 50
+                    self._filled_box(surface, vp, hw, hh,
+                                     float(c), cv - 0.04, float(r),
+                                     c + 1.0, cv, r + 1.0,
+                                     col, col, w, alpha=a)
 
     # ── Discrete object overlays ──────────────────────────────────
 
@@ -916,14 +943,18 @@ class RenderingMixin:
         tool = self.tool
 
         if tool == "select":
-            if self._sel_start is not None and self._sel_end is not None:
+            if self._has_selection():
                 ctx_key = "active"
+            elif getattr(self, 'selection', None) and self.selection.rect_in_progress:
+                ctx_key = "started"
             elif self._sel_start is not None:
                 ctx_key = "started"
             else:
                 ctx_key = "none"
         elif tool == "sculpt":
-            if getattr(self, '_sculpt_layer2', False):
+            if self._has_selection():
+                ctx_key = "selection"
+            elif getattr(self, '_sculpt_layer2', False):
                 ctx_key = "layer2"
             elif part == "ceiling":
                 ctx_key = "ceiling"
@@ -937,7 +968,7 @@ class RenderingMixin:
             ctx_key = "any"
 
         actions = actions_dict.get(ctx_key, actions_dict.get("any", {}))
-        if not actions:
+        if not actions and not self._has_selection():
             return
 
         font = _get_font(12)
@@ -947,10 +978,20 @@ class RenderingMixin:
 
         tool_col = TOOL_COLORS.get(self.tool, COL_HUD_TEXT)
         dim_col = (180, 180, 180)
+        sel_col = COL_TOOL_SELECT
 
         lines: list[tuple[str, tuple[int, int, int]]] = []
-        for key, desc in actions.items():
+        for key, desc in (actions or {}).items():
             lines.append((f"{key}: {desc}", dim_col))
+
+        # Append batch-selection hints for tools that don't already show them
+        if self._has_selection() and tool not in ("sculpt", "select"):
+            if lines:
+                lines.append(("\u2500 Selection \u2500", sel_col))
+            lines.append(("T: Add ceilings  Sh+T=remove", sel_col))
+            lines.append(("H: Make wall  Sh+H=open", sel_col))
+            lines.append(("L: Flatten  Sh+L=ceilings", sel_col))
+            lines.append(("Del: Reset cells", sel_col))
 
         if not lines:
             return
@@ -980,16 +1021,81 @@ class RenderingMixin:
     # ── Selection highlight ───────────────────────────────────────
 
     def _draw_selection_highlight(self, surface: pygame.Surface, vp, hw, hh, zone) -> None:
-        """Draw highlighted cells for the rectangular selection tool."""
-        bounds = getattr(self, '_sel_bounds', None)
-        if bounds is None:
-            return
+        """Draw highlighted cells for the selection (actual cells, not just bbox)."""
         ceiling_mode = getattr(self, '_sel_ceiling_mode', False)
         col = COL_TOOL_CEILING if ceiling_mode else COL_TOOL_SELECT
 
-        result = bounds()
+        # 1. If we have actual selected cells in the universal selection, draw each one
+        sel = getattr(self, 'selection', None)
+        if sel is not None and sel.has_cells():
+            for r, c in sel.iter_cells():
+                if ceiling_mode:
+                    ch = zone.ceil_heights[r][c]
+                    h = ch - 0.05
+                else:
+                    h = zone.floor_heights[r][c]
+                self._filled_box(surface, vp, hw, hh,
+                                 float(c), h, float(r),
+                                 c + 1.0, h + 0.05, r + 1.0,
+                                 col, col, 1, alpha=60)
+
+            # Also draw in-progress rectangle preview if dragging
+            preview = sel.rect_preview
+            if preview is not None:
+                rmin, cmin, rmax, cmax = preview
+                preview_col = (col[0], col[1], col[2])
+                for r in range(rmin, rmax + 1):
+                    for c in range(cmin, cmax + 1):
+                        if (r, c) not in sel.cells:  # don't double-draw
+                            if ceiling_mode:
+                                ch = zone.ceil_heights[r][c]
+                                h = ch - 0.05
+                            else:
+                                h = zone.floor_heights[r][c]
+                            self._filled_box(surface, vp, hw, hh,
+                                             float(c), h, float(r),
+                                             c + 1.0, h + 0.05, r + 1.0,
+                                             preview_col, preview_col, 1, alpha=35)
+            return
+
+        # 2. In-progress rectangle (first corner set, dragging to second)
+        if sel is not None and sel.rect_in_progress:
+            preview = sel.rect_preview
+            if preview is not None:
+                rmin, cmin, rmax, cmax = preview
+                for r in range(rmin, rmax + 1):
+                    for c in range(cmin, cmax + 1):
+                        if ceiling_mode:
+                            ch = zone.ceil_heights[r][c]
+                            h = ch - 0.05
+                        else:
+                            h = zone.floor_heights[r][c]
+                        self._filled_box(surface, vp, hw, hh,
+                                         float(c), h, float(r),
+                                         c + 1.0, h + 0.05, r + 1.0,
+                                         col, col, 1, alpha=35)
+            else:
+                # Only start corner — highlight just that cell
+                start = sel._rect_origin
+                if start:
+                    r, c = start
+                    if ceiling_mode:
+                        ch = zone.ceil_heights[r][c]
+                        h = ch - 0.05
+                    else:
+                        h = zone.floor_heights[r][c]
+                    self._filled_box(surface, vp, hw, hh,
+                                     float(c), h, float(r),
+                                     c + 1.0, h + 0.05, r + 1.0,
+                                     col, col, 2, alpha=100)
+            return
+
+        # 3. Legacy fallback — bounding box from _sel_bounds
+        bounds_fn = getattr(self, '_sel_bounds', None)
+        if bounds_fn is None:
+            return
+        result = bounds_fn()
         if result is None:
-            # Partial selection: just highlight start corner
             start = getattr(self, '_sel_start', None)
             if start is None:
                 return
@@ -1077,12 +1183,46 @@ class RenderingMixin:
 
         lines: list[tuple[str, tuple[int, int, int]]] = []
 
+        # Layer indicator
+        active_layer = getattr(self, 'active_layer', 1)
+        isolating = getattr(self, 'isolate_layer', False)
+        if active_layer == 2:
+            layer_str = "[L2: Upper]"
+            layer_col = (200, 160, 255)
+        else:
+            layer_str = "[L1: Ground]"
+            layer_col = (140, 200, 140)
+        if isolating:
+            layer_str += " ISOLATED"
+        lines.append((layer_str, layer_col))
+
+        # Mode indicator
+        from editor.view_3d.constants import MODE_LABELS as _ML
+        mode = getattr(self, 'mode', 'arch')
+        mode_label = _ML.get(mode, mode.upper())
+
         tool_label = TOOL_LABELS.get(self.tool, self.tool.upper())
         tool_col = TOOL_COLORS.get(self.tool, COL_HUD_TEXT)
-        lines.append((f"Tool: {tool_label}", tool_col))
-        if self.tool == "select":
-            mode = "Ceiling" if getattr(self, '_sel_ceiling_mode', False) else "Floor"
-            lines.append((f"Mode: {mode}  (X to toggle)", COL_HUD_VAL))
+        lines.append((f"Mode: {mode_label}  |  Tool: {tool_label}", tool_col))
+        # Selection indicator (visible in any tool when selection is active)
+        if self._has_selection():
+            sel = getattr(self, 'selection', None)
+            n_cells = sel.cell_count() if sel else 0
+            _sb = self._sel_bounds()
+            if _sb:
+                _rmin, _cmin, _rmax, _cmax = _sb
+                _sw, _sh = _cmax - _cmin + 1, _rmax - _rmin + 1
+                _ceil = getattr(self, '_sel_ceiling_mode', False)
+                _mode = "Ceil" if _ceil else "Floor"
+                _col = COL_TOOL_CEILING if _ceil else COL_TOOL_SELECT
+                lines.append((f"[Sel: {n_cells} cells  {_mode}]  X=mode  Esc=clear", _col))
+        elif self.tool == "select":
+            sel = getattr(self, 'selection', None)
+            in_progress = sel and sel.rect_in_progress
+            if in_progress or getattr(self, '_sel_start', None) is not None:
+                lines.append(("Click to complete selection...", COL_TOOL_SELECT))
+            else:
+                lines.append(("Click to start selection", COL_TOOL_SELECT))
         lines.append((f"Snap: {self.snap_y}", COL_HUD_VAL))
         lines.append((f"Tex: {self.current_texture}", COL_HUD_VAL))
         if self.tool == "stamp":

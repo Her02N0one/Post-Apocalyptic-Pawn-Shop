@@ -63,9 +63,16 @@ from editor.view_3d.constants import (  # noqa: F401
     COL_TOOL_CURVE,
     COL_FACE_HL,
     TOOLS, UTIL_TOOLS, ALL_TOOLS,
-    TOOL_LABELS, TOOL_COLORS, TOOL_KEYS, UTIL_KEYS,
-    HOTBAR_SIZE, HOTBAR_KEYS,
+    TOOL_LABELS, TOOL_COLORS, UTIL_KEYS,
+    HOTBAR_SIZE,
     TOOL_HINTS,
+    MODES, MODE_LABELS, MODE_ICONS, MODE_COLORS,
+    MODE_DESCRIPTIONS, MODE_TOOLS, MODE_SELECTION_TARGET,
+    VIEW_LIT, VIEW_PATHING, VIEW_MODES, VIEW_LABELS,
+    PASTE_MASK_ALL,
+    MODE_ARCH, MODE_SURF, MODE_PROPS, MODE_LOGIC,
+    PASTE_MASK_HEIGHTS, PASTE_MASK_TEXTURES, PASTE_MASK_ENTITIES,
+    PASTE_MASK_SEGMENTS, PASTE_MASK_LIGHTING,
     _FACE_DEFS,
     FLY_SPEED, FLY_SPRINT,
     MOUSE_SENS, KB_TURN_SPEED,
@@ -73,6 +80,8 @@ from editor.view_3d.constants import (  # noqa: F401
 )
 
 # Mixins
+from editor.keybinds import create_default_registry, _simplify_mods, MOD_SHIFT, MOD_CTRL, MOD_ALT
+from editor.view_3d.selection import SelectionState
 from editor.view_3d.undo import UndoMixin
 from editor.view_3d.geometry import GeometryMixin
 from editor.view_3d.tools_sculpt import SculptMixin
@@ -88,6 +97,7 @@ from editor.view_3d.tools_layer2 import Layer2Mixin
 from editor.view_3d.tools_quad import QuadMixin
 from editor.view_3d.tools_portal import PortalMixin
 from editor.view_3d.tools_curve import CurveMixin
+from editor.view_3d.objects import ObjectLayer
 from editor.view_3d.save import SaveMixin
 from editor.view_3d.primitives import DrawPrimitivesMixin
 from editor.view_3d.rendering import RenderingMixin
@@ -127,8 +137,25 @@ class Zone3DEditor(
     _wall_tile: str = ""
     _open_tile: str = ""
 
+    @property
+    def _sculpt_layer2(self) -> bool:
+        """Compatibility shim — delegates to active_layer."""
+        return getattr(self, 'active_layer', 1) == 2
+
+    @_sculpt_layer2.setter
+    def _sculpt_layer2(self, value: bool) -> None:
+        """Compatibility shim — sets active_layer from bool."""
+        self.active_layer = 2 if value else 1
+
     def __init__(self, zone: Zone) -> None:
         self.zone = zone
+
+        # ── Keybind registry (central source of truth) ────────────
+        self.kb = create_default_registry()
+        # Load user overrides if config exists
+        import os
+        _kb_path = os.path.join(os.path.dirname(__file__), '..', '..', 'keybinds.json')
+        self.kb.load_overrides(_kb_path)
 
         # Camera
         self.cam_x = zone.width / 2.0
@@ -153,19 +180,47 @@ class Zone3DEditor(
         self.tool: str = "sculpt"  # one of ALL_TOOLS
         self._prev_tool: str = "sculpt"  # tool to return to from utility modes
 
+        # ── Unified mode system (state machine) ───────────────────
+        # Elevation (Layer) → Mode → Selection → Operation
+        from editor.view_3d.constants import (
+            MODE_ARCH, MODE_TOOLS, VIEW_LIT, PASTE_MASK_ALL,
+        )
+        self.mode: str = MODE_ARCH   # one of MODES
+        self.view_mode_3d: str = VIEW_LIT  # viewport rendering mode
+
         # Continuous paint state
         self._lmb_held: bool = False
 
-        # Layer 2 sub-mode (integrated into sculpt)
-        self._sculpt_layer2: bool = False
+        # ── First-class active layer system ───────────────────────
+        # 1 = primary (floor/ceil/walls), 2 = secondary (floor2/ceil2)
+        self.active_layer: int = 1
+        self.isolate_layer: bool = False  # Alt+I: hide inactive layer
 
-        # Selection state (for select tool)
+        # ── State clipboard (Ctrl+C / Ctrl+V) ────────────────────
+        self._clipboard: dict | None = None  # copied cell state dict
+        self._paste_mask: set[str] = set(PASTE_MASK_ALL)  # active mask flags
+
+        # ── Universal selection layer ─────────────────────────────
+        self.selection = SelectionState()
+
+        # ── Unified object layer ──────────────────────────────────
+        self.objects = ObjectLayer(self)
+
+        # Legacy compat — old code that reads _sel_start/_sel_end still
+        # works through these properties until fully migrated.
+        # _sel_ceiling_mode is also delegated.
         self._sel_start: tuple[int, int] | None = None
         self._sel_end: tuple[int, int] | None = None
         self._sel_ceiling_mode: bool = False
 
         # Aimed cell
         self.aimed: _CellHit | None = None
+
+        # Cell box cache (cleared each frame tick in update())
+        self._cell_box_cache: dict = {}
+
+        # Reusable scratch surface for alpha-blended polygon faces
+        self._alpha_scratch: pygame.Surface | None = None
 
         # Preview indicators
         # (col, row, y, color) or (col, row, y, color, face_name)
@@ -202,7 +257,53 @@ class Zone3DEditor(
         self.dirty = False
         self._undo_stack.clear()
         self._redo_stack.clear()
+        self.selection.clear()
         self._ensure_face_textures()
+
+    # -- Batch dispatch helper --------------------------------------
+
+    def batch_or_single(self, cell_fn, push_undo: bool = True) -> bool:
+        """Apply *cell_fn(r, c)→bool* to the selection or aimed cell.
+
+        If the universal selection has cells, iterate all of them.
+        Otherwise fall back to legacy ``_sel_start/_sel_end`` rectangle.
+        If neither exists, apply to the single aimed cell.
+        Returns True if anything changed.
+        """
+        # 1. Universal selection
+        if self.selection.has_cells():
+            if push_undo:
+                self._push_undo()
+                self._ensure_face_textures()
+            changed = False
+            for r, c in self.selection.iter_cells():
+                if cell_fn(r, c):
+                    changed = True
+            if changed:
+                self.dirty = True
+            return changed
+
+        # 2. Legacy rectangle selection (compat)
+        if self._has_selection():
+            if push_undo:
+                self._push_undo()
+                self._ensure_face_textures()
+            changed = self._apply_to_selection(cell_fn)
+            if changed:
+                self.dirty = True
+            return changed
+
+        # 3. Single aimed cell
+        hit = self.aimed
+        if not hit:
+            return False
+        if push_undo:
+            self._push_undo()
+            self._ensure_face_textures()
+        if cell_fn(hit.row, hit.col):
+            self.dirty = True
+            return True
+        return False
 
     # -- Helpers ----------------------------------------------------
 
@@ -309,6 +410,8 @@ class Zone3DEditor(
 
     def _leave_tool(self, old_tool: str) -> None:
         """Clean up state when switching away from *old_tool*."""
+        if old_tool == "select":
+            self.selection.cancel_rect()  # cancel in-progress rectangle drag
         if old_tool == "stamp":
             self._capture_pending = False
             self._capture_name = ""
@@ -335,200 +438,320 @@ class Zone3DEditor(
             return self._on_scroll(event)
         return False
 
+    # ── B-key tri-state helper ────────────────────────────────
+
+    def _handle_b_key(self) -> bool:
+        """B key: tri-state select tool toggle.
+
+        * In select tool with active selection → exit select, keep selection
+        * In select tool with no selection    → exit select to previous tool
+        * Not in select tool                  → enter select tool
+
+        Selection is preserved on exit so you can select, press B, and
+        operate on the selection in sculpt/paint.  Press Escape to clear.
+        """
+        if self.tool == "select":
+            # Exit select — keep selection intact so other tools can use it
+            self._leave_tool(self.tool)
+            self.tool = self._prev_tool
+        else:
+            self._prev_tool = self.tool  # save ANY tool, not just TOOLS
+            self._leave_tool(self.tool)
+            self.tool = "select"
+        return True
+
+    # ── Keydown dispatch (priority-ordered) ────────────────────
+
     def _on_keydown(self, event: pygame.event.Event) -> bool:
         key = event.key
         mod = pygame.key.get_mods()
+        kb = self.kb   # keybind registry shorthand
 
         # Stamp capture naming mode intercepts all keys
         if self.tool == "stamp" and getattr(self, '_capture_pending', False):
             return self._stamp_capture_key(key, event.unicode)
 
-        # ── Core tool selection (F5/F6/F7) ────────────────────────
-        if key in TOOL_KEYS:
-            new_tool = TOOL_KEYS[key]
-            if self.tool == "select":
-                self._sel_cancel()
-            self._leave_tool(self.tool)
-            self.tool = new_tool
-            self._prev_tool = new_tool
+        # ── 1. Ctrl / Alt modifier combos (highest priority) ─────
+        if kb.check("file.save", key, mod):
+            self._save()
+            return True
+        if kb.check("edit.redo_cz", key, mod):
+            self._redo()
+            return True
+        if kb.check("edit.undo", key, mod):
+            self._undo()
+            return True
+        if kb.check("edit.redo_cy", key, mod):
+            self._redo()
+            return True
+        if kb.check("select.all", key, mod):
+            self.selection.select_all_cells(self.zone.width, self.zone.height)
+            self._sel_start = (0, 0)
+            self._sel_end = (self.zone.height - 1, self.zone.width - 1)
+            return True
+        if kb.check("select.duplicate", key, mod):
+            return True  # TODO: implement
+        if kb.check("edit.copy", key, mod):
+            self._clipboard_copy()
+            return True
+        if kb.check("edit.paste", key, mod):
+            self._clipboard_paste()
+            return True
+        if kb.check("display.walls_c", key, mod):
+            self.show_walls = not self.show_walls
+            return True
+        if kb.check("display.floors_c", key, mod):
+            self.show_floors = not self.show_floors
+            return True
+        if kb.check("display.ceilings_c", key, mod):
+            self.show_ceilings = not self.show_ceilings
+            return True
+        if kb.check("display.entities_c", key, mod):
+            self.show_entities = not self.show_entities
+            return True
+        if kb.check("display.wireframe_c", key, mod):
+            self.wireframe = not self.wireframe
+            return True
+        if kb.check("display.isolate", key, mod):
+            self.isolate_layer = not self.isolate_layer
             return True
 
-        # ── Utility mode toggles (B=select, P=stamp) ─────────────
-        if key in UTIL_KEYS:
-            target = UTIL_KEYS[key]
-            if self.tool == target:
-                # Toggle off → return to previous core tool
-                if target == "select":
-                    self._sel_cancel()
-                self._leave_tool(self.tool)
-                self.tool = self._prev_tool
-            else:
-                # Enter utility mode, remember what we came from
-                if self.tool in TOOLS:
+        # ── 1b. Alt+0..9 = hotbar texture slots ──────────────────
+        for _i in range(10):
+            if kb.check(f"hotbar.alt_{_i}", key, mod):
+                self.hotbar_slot = _i
+                self.current_texture = self.hotbar[_i]
+                palette = _ensure_palette()
+                if self.current_texture in palette:
+                    self.tex_idx = palette.index(self.current_texture)
+                return True
+
+        # ── 1c. PageUp/PageDown = switch active layer ─────────────
+        if kb.check("layer.up", key, mod):
+            self.active_layer = 2
+            return True
+        if kb.check("layer.down", key, mod):
+            self.active_layer = 1
+            return True
+
+        # ── 1d. F1-F4 = switch primary mode ───────────────────────
+        from editor.view_3d.constants import MODES, MODE_TOOLS
+        _MODE_ACTIONS = [
+            ("mode.arch",    MODES[0]),
+            ("mode.surface", MODES[1]),
+            ("mode.props",   MODES[2]),
+            ("mode.logic",   MODES[3]),
+        ]
+        for _act, _new_mode in _MODE_ACTIONS:
+            if kb.check(_act, key, mod):
+                self.mode = _new_mode
+                mode_tools = MODE_TOOLS[_new_mode]
+                if self.tool not in mode_tools:
+                    self._leave_tool(self.tool)
+                    self.tool = mode_tools[0]
+                    self._prev_tool = mode_tools[0]
+                return True
+
+        # ── 2. Number keys 1-5 = select tool within current mode ──
+        for _i in range(1, 6):
+            if kb.check(f"subtool.{_i}", key, mod):
+                idx = _i - 1
+                mode_tools = MODE_TOOLS[self.mode]
+                if idx < len(mode_tools):
+                    new_tool = mode_tools[idx]
+                    if new_tool != self.tool:
+                        self._leave_tool(self.tool)
+                        self.tool = new_tool
+                        self._prev_tool = new_tool
+                return True
+
+        # ── 3. B key — select tool toggle ─────────────────────────
+        if kb.check("tool.select", key, mod):
+            return self._handle_b_key()
+
+        # ── 4. Utility mode toggles (P, I, O, ;) ─────────────────
+        _UTIL_ACTIONS = [
+            ("tool.stamp",  "stamp"),
+            ("tool.quad",   "quad"),
+            ("tool.portal", "portal"),
+            ("tool.curve",  "curve"),
+        ]
+        for _act, _target in _UTIL_ACTIONS:
+            if kb.check(_act, key, mod):
+                if self.tool == _target:
+                    self._leave_tool(self.tool)
+                    self.tool = self._prev_tool
+                else:
                     self._prev_tool = self.tool
-                if self.tool == "select":
-                    self._sel_cancel()
-                self._leave_tool(self.tool)
-                self.tool = target
-            return True
+                    self._leave_tool(self.tool)
+                    self.tool = _target
+                return True
 
-        # ── Tab = cycle core tools ─────────────────────────────
+        # ── 5. Tab = cycle tools within current mode ──────────────
         if key == pygame.K_TAB:
-            if self.tool == "select":
-                self._sel_cancel()
+            mode_tools = MODE_TOOLS[self.mode]
             self._leave_tool(self.tool)
-            idx = TOOLS.index(self.tool) if self.tool in TOOLS else 0
-            self.tool = TOOLS[(idx + 1) % len(TOOLS)]
+            idx = mode_tools.index(self.tool) if self.tool in mode_tools else 0
+            self.tool = mode_tools[(idx + 1) % len(mode_tools)]
             self._prev_tool = self.tool
             return True
 
-        # ── Hotbar: 1-0 select texture slot ───────────────────────
-        if key in HOTBAR_KEYS:
-            slot = HOTBAR_KEYS[key]
-            self.hotbar_slot = slot
-            self.current_texture = self.hotbar[slot]
-            palette = _ensure_palette()
-            if self.current_texture in palette:
-                self.tex_idx = palette.index(self.current_texture)
-            return True
-
-        # ── Display toggles ──
-        if key == pygame.K_F10:
-            self.show_axes = not self.show_axes; return True
-
-        # Upper wall adjust
-        if key == pygame.K_u:
-            return self._adjust_upper_wall_height(mod)
-
-        # Reset height (global — works in any tool when aiming)
-        # Box tool overrides R for 90° rotation
-        if key == pygame.K_r:
-            if self.tool == "box":
-                self._box_rotate_90()
+        # ── 6. Hotbar: bare 6-0 select texture slot ──────────────
+        for _slot in range(5, 10):
+            if kb.check(f"hotbar.bare_{_slot}", key, mod):
+                self.hotbar_slot = _slot
+                self.current_texture = self.hotbar[_slot]
+                palette = _ensure_palette()
+                if self.current_texture in palette:
+                    self.tex_idx = palette.index(self.current_texture)
                 return True
-            if self.aimed:
-                if self.aimed.part == "ceiling":
-                    return self._reset_ceiling()
-                else:
-                    return self._reset_floor()
-            return False
 
-        # Toggle ceiling (T key — C is now fly-down)
-        if key == pygame.K_t and self.tool == "sculpt" and self.aimed:
-            return self._toggle_ceiling()
-
-        # Delete / Backspace — select-tool batch delete takes priority
-        if key in (pygame.K_DELETE, pygame.K_BACKSPACE):
-            if self.tool == "select" and self._sel_start is not None and self._sel_end is not None:
+        # ── 7. Cross-tool selection keys (when selection active) ──
+        #    Only active in sculpt / select / paint.
+        _sel_tools = ("sculpt", "select", "paint")
+        if self._has_selection() and self.tool in _sel_tools:
+            if kb.check("sel.ceil_mode", key, mod):
+                self._sel_toggle_ceiling_mode()
+                return True
+            if kb.check("sel.remove_ceilings", key, mod):
+                return self._toggle_ceiling(remove_only=True)
+            if kb.check("sel.add_ceilings", key, mod):
+                return self._toggle_ceiling(add_only=True)
+            if kb.check("sel.make_open", key, mod):
+                return self._batch_make_open()
+            if kb.check("sel.make_wall", key, mod):
+                return self._batch_make_wall()
+            if kb.check("sel.flatten_ceilings", key, mod):
+                return self._flatten_ceilings()
+            if kb.check("sel.flatten_floors", key, mod):
+                return self._flatten_floors()
+            if kb.check("sel.reset_upper_wall", key, mod):
+                return self._batch_reset_upper_wall()
+            if kb.check("sel.raise_upper_wall", key, mod):
+                return self._batch_raise_upper_wall()
+            if kb.check("sel.lower_upper_wall", key, mod):
+                return self._batch_lower_upper_wall()
+            if kb.check("sel.reset", key, mod):
                 return self._sel_delete()
-            if self.tool == "entity" and self._ent_selected is not None:
-                self._ent_delete()
-                return True
-            if self.tool == "box" and self._box_selected is not None:
-                self._box_delete()
-                return True
-            if self.tool == "quad" and self._quad_selected is not None:
-                self._quad_delete()
-                return True
-            if self.tool == "curve" and self._curve_selected is not None:
-                self._curve_delete()
-                return True
-            return self._clear_cell()
 
-        # Cycle snap grid
-        if key == pygame.K_g:
-            if self.tool == "box":
-                self._box_toggle_snap()
-                return True
-            if self.tool == "quad":
-                # Cycle quad snap: 0.25 → 0.5 → 1.0 → 0.0 (off) → 0.25
-                _QUAD_SNAPS = [0.25, 0.5, 1.0, 0.0]
-                cur = getattr(self, '_quad_snap', 0.25)
-                try:
-                    idx = _QUAD_SNAPS.index(cur)
-                except ValueError:
-                    idx = -1
-                self._quad_snap = _QUAD_SNAPS[(idx + 1) % len(_QUAD_SNAPS)]
-                return True
-            self.snap_idx = (self.snap_idx + 1) % len(SNAP_Y_OPTIONS)
-            self.snap_y = SNAP_Y_OPTIONS[self.snap_idx]
-            return True
-
-        # Save
-        if key == pygame.K_s and (mod & pygame.KMOD_CTRL):
-            self._save()
-            return True
-
-        # Cancel aim / selection
+        # ── 8. Escape — cancel / deselect (layered) ──────────────
         if key == pygame.K_ESCAPE:
-            if self.tool == "entity" and self._ent_selected is not None:
-                self._ent_deselect()
+            if self.objects.any_selected():
+                self.objects.deselect_all()
                 return True
-            if self.tool == "box" and self._box_selected is not None:
-                self._box_deselect()
+            if self.selection.has_cells() or self.selection.has_objects():
+                self.selection.clear()
+                self._sel_start = None
+                self._sel_end = None
                 return True
-            if self.tool == "quad" and self._quad_selected is not None:
-                self._quad_deselect()
-                return True
-            if self.tool == "curve" and self._curve_selected is not None:
-                self._curve_deselect()
-                return True
-            if self.tool == "portal" and self._portal_selected is not None:
-                self._portal_deselect()
-                return True
-            if self.tool == "select" and (self._sel_start is not None or self._sel_end is not None):
+            if self._sel_start is not None or self._sel_end is not None:
                 self._sel_cancel()
                 return True
             self.aimed = None
             return True
 
-        # Entity tool: cycle state
-        if key == pygame.K_t and self.tool == "entity":
-            self._ent_cycle_state()
+        # ── 9. Display toggles ───────────────────────────────────
+        if kb.check("display.axes", key, mod):
+            self.show_axes = not self.show_axes
             return True
-
-        # Toggle ceiling mode in select tool
-        if key == pygame.K_x and self.tool == "select":
-            self._sel_toggle_ceiling_mode()
-            return True
-        # Toggle layer2 sub-mode in sculpt tool
-        if key == pygame.K_x and self.tool == "sculpt":
-            self._sculpt_layer2 = not self._sculpt_layer2
-            return True
-
-        # Undo / redo
-        if key == pygame.K_z and (mod & pygame.KMOD_CTRL):
-            if mod & pygame.KMOD_SHIFT:
-                self._redo()
-            else:
-                self._undo()
-            return True
-        if key == pygame.K_y and (mod & pygame.KMOD_CTRL):
-            self._redo()
-            return True
-
-        # Toggle wall drawing
-        if key == pygame.K_v:
+        if kb.check("display.walls", key, mod):
             self.show_walls = not self.show_walls
             return True
-
-        # Toggle floor / ceiling / wireframe rendering
-        if key == pygame.K_f:
+        if kb.check("display.floors", key, mod):
             self.show_floors = not self.show_floors
             return True
-        if key == pygame.K_j:
+        if kb.check("display.ceilings", key, mod):
             self.show_ceilings = not self.show_ceilings
             return True
-        if key == pygame.K_n:
+        if kb.check("display.entities", key, mod):
             self.show_entities = not self.show_entities
             return True
-        if key == pygame.K_BACKSLASH:
+        if kb.check("display.wireframe", key, mod):
             self.wireframe = not self.wireframe
             return True
 
-        # Cycle stamp apply mode
-        if key == pygame.K_m and self.tool == "stamp":
+        # ── 10. Tool-specific keys ───────────────────────────────
+
+        # Upper wall adjust (U key — single cell, no selection, sculpt only)
+        if self.tool == "sculpt":
+            if kb.check("sculpt.reset_upper_wall", key, mod):
+                return self._adjust_upper_wall_height(pygame.KMOD_CTRL)
+            if kb.check("sculpt.raise_upper_wall", key, mod):
+                return self._adjust_upper_wall_height(0)
+            if kb.check("sculpt.lower_upper_wall", key, mod):
+                return self._adjust_upper_wall_height(pygame.KMOD_SHIFT)
+
+        # Reset (R key) — box tool overrides for 90° rotation
+        if self.tool == "box" and kb.check("box.rotate", key, mod):
+            self._box_rotate_90()
+            return True
+        if self.tool == "sculpt":
+            if kb.check("sculpt.reset_ceiling", key, mod) or kb.check("sculpt.reset_floor", key, mod):
+                if self.aimed:
+                    if self.aimed.part == "ceiling":
+                        return self._reset_ceiling()
+                    else:
+                        return self._reset_floor()
+                return False
+
+        # Toggle ceiling (T key — single cell when no selection)
+        if self.tool == "entity" and kb.check("entity.cycle_state", key, mod):
+            self._ent_cycle_state()
+            return True
+        if self.tool == "sculpt" and kb.check("sculpt.toggle_ceiling", key, mod):
+            if self.aimed:
+                return self._toggle_ceiling()
+
+        # Wall / open conversion (H key — single cell when no selection)
+        if self.tool == "sculpt":
+            if kb.check("sculpt.make_open", key, mod):
+                return self._batch_make_open()
+            if kb.check("sculpt.make_wall", key, mod):
+                return self._batch_make_wall()
+
+        # Delete (no selection — unified object layer then cell fallback)
+        if kb.check("delete.aimed", key, mod):
+            if self.objects.delete_selected():
+                return True
+            return self._clear_cell()
+
+        # Snap grid (G key) / Shift+G = select similar
+        if kb.check("select.similar", key, mod):
+            self._select_similar()
+            return True
+        if self.tool == "box" and kb.check("box.toggle_grid", key, mod):
+            self._box_toggle_snap()
+            return True
+        if self.tool == "quad" and kb.check("quad.cycle_snap", key, mod):
+            _QUAD_SNAPS = [0.25, 0.5, 1.0, 0.0]
+            cur = getattr(self, '_quad_snap', 0.25)
+            try:
+                idx = _QUAD_SNAPS.index(cur)
+            except ValueError:
+                idx = -1
+            self._quad_snap = _QUAD_SNAPS[(idx + 1) % len(_QUAD_SNAPS)]
+            return True
+        if kb.check("sculpt.cycle_grid", key, mod):
+            self.snap_idx = (self.snap_idx + 1) % len(SNAP_Y_OPTIONS)
+            self.snap_y = SNAP_Y_OPTIONS[self.snap_idx]
+            return True
+
+        # X key (no selection — tool-specific)
+        if self.tool == "sculpt" and kb.check("sculpt.toggle_layer", key, mod):
+            self.active_layer = 1 if self.active_layer == 2 else 2
+            return True
+        if self.tool == "select" and kb.check("select.ceil_mode", key, mod):
+            self._sel_toggle_ceiling_mode()
+            return True
+
+        # Stamp mode cycle (M key)
+        if self.tool == "stamp" and kb.check("stamp.cycle_mode", key, mod):
             self._stamp_cycle_mode()
+            return True
+
+        # ── ? key — toggle keyboard shortcut help overlay ─────────
+        if kb.check("help.toggle", key, mod):
+            self._show_help = not getattr(self, '_show_help', False)
             return True
 
         return False
@@ -547,25 +770,56 @@ class Zone3DEditor(
         if tool == "sculpt":
             if btn == 2:
                 self._pick_texture()  # universal eyedropper
+            elif self._has_selection() and not self._sculpt_layer2:
+                # Selection active — Shift XORs with ceiling mode:
+                # plain click = floor (or ceiling if X toggled),
+                # Shift+click = ceiling (or floor if X toggled).
+                ceiling = shift != self._sel_ceiling_mode
+                if ceiling:
+                    if btn == 1:
+                        self._tool_ceiling_lower()
+                    elif btn == 3:
+                        self._tool_ceiling_raise()
+                else:
+                    if btn == 1:
+                        self._tool_floor_raise()
+                    elif btn == 3:
+                        self._tool_floor_lower()
             elif self._sculpt_layer2:
                 # Layer 2 sub-mode
                 if btn == 1:
                     self._layer2_raise(shift, ctrl)
                 elif btn == 3:
                     self._layer2_lower(shift)
+            elif shift and part in ("floor", "wall", "ground"):
+                # Shift on floor/ground = ceiling operation (no need
+                # to aim at ceiling surface specifically)
+                if btn == 1:
+                    self._tool_ceiling_lower()
+                elif btn == 3:
+                    self._tool_ceiling_raise()
             elif part in ("floor", "wall", "ground"):
                 if btn == 1:
                     self._tool_floor_raise()
                 elif btn == 3:
                     self._tool_floor_lower()
-                elif part == "ceiling":
-                    if btn == 1:
-                        self._tool_ceiling_lower()
-                    elif btn == 3:
-                        self._tool_ceiling_raise()
+            elif part == "ceiling":
+                if btn == 1:
+                    self._tool_ceiling_lower()
+                elif btn == 3:
+                    self._tool_ceiling_raise()
             return True
 
         if tool == "paint":
+            # Batch paint when selection is active
+            if self._has_selection():
+                if btn == 1:
+                    self._sel_fill_texture()
+                elif btn == 3:
+                    self._sel_clear_textures()
+                elif btn == 2:
+                    self._pick_texture()
+                return True
             # Check per-frame aim: prism or quad closer than cell?
             aimed_prism = self._paint_aimed_prism
             aimed_face = self._paint_aimed_prism_face
@@ -632,8 +886,13 @@ class Zone3DEditor(
             aimed_ent = self._ent_find_aimed()
             if btn == 1:
                 if aimed_ent is not None:
-                    # Click on an entity → select it
-                    self._ent_select(aimed_ent)
+                    # Ctrl+click = toggle in selection set
+                    if ctrl:
+                        self.objects.toggle_select(("entity", aimed_ent))
+                    elif shift:
+                        self.objects.select(("entity", aimed_ent), add=True)
+                    else:
+                        self._ent_select(aimed_ent)
                 elif self._ent_selected is not None:
                     # Click on ground with selection → move it there
                     self._ent_move_to_aimed()
@@ -653,7 +912,12 @@ class Zone3DEditor(
             aimed_box = self._box_find_aimed()
             if btn == 1:
                 if aimed_box is not None:
-                    self._box_select(aimed_box)
+                    if ctrl:
+                        self.objects.toggle_select(("prism", aimed_box))
+                    elif shift:
+                        self.objects.select(("prism", aimed_box), add=True)
+                    else:
+                        self._box_select(aimed_box)
                 elif self._box_selected is not None:
                     self._box_move_to_aimed()
                 else:
@@ -671,7 +935,12 @@ class Zone3DEditor(
             aimed_quad = self._quad_find_aimed()
             if btn == 1:
                 if aimed_quad is not None:
-                    self._quad_select(aimed_quad)
+                    if ctrl:
+                        self.objects.toggle_select(("quad", aimed_quad))
+                    elif shift:
+                        self.objects.select(("quad", aimed_quad), add=True)
+                    else:
+                        self._quad_select(aimed_quad)
                 elif self._quad_selected is not None:
                     self._quad_move_to_aimed()
                 else:
@@ -696,7 +965,12 @@ class Zone3DEditor(
             aimed_curve = self._curve_find_aimed()
             if btn == 1:
                 if aimed_curve is not None:
-                    self._curve_select(aimed_curve)
+                    if ctrl:
+                        self.objects.toggle_select(("curve", aimed_curve))
+                    elif shift:
+                        self.objects.select(("curve", aimed_curve), add=True)
+                    else:
+                        self._curve_select(aimed_curve)
                 elif self._curve_selected is not None:
                     self._curve_move_to_aimed()
                 else:
@@ -811,8 +1085,10 @@ class Zone3DEditor(
 
         if tool == "select":
             # When selection is active, scroll raises/lowers floors (or ceilings)
-            if self._sel_start is not None and self._sel_end is not None:
-                return self._sel_scroll(event.y)
+            if self._has_selection():
+                shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
+                ceiling = shift != self._sel_ceiling_mode  # Shift XORs mode
+                return self._sel_scroll(event.y, ceiling=ceiling)
             # No active selection — cycle texture palette
             palette = _ensure_palette()
             if not palette:
@@ -824,6 +1100,10 @@ class Zone3DEditor(
 
         if tool == "sculpt":
             shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
+            # Selection active → batch raise/lower via _sel_scroll
+            if self._has_selection() and not self._sculpt_layer2:
+                ceiling = shift != self._sel_ceiling_mode  # Shift XORs mode
+                return self._sel_scroll(event.y, ceiling=ceiling)
             # Layer 2 sub-mode: scroll cycles texture palette
             if self._sculpt_layer2:
                 palette = _ensure_palette()
@@ -864,6 +1144,7 @@ class Zone3DEditor(
 
     def update(self, dt: float, mouse_captured: bool) -> None:
         """Tick camera movement, mouse-look, and re-aim."""
+        self._cell_box_cache.clear()
         keys = pygame.key.get_pressed()
         speed = FLY_SPEED
         if keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]:
@@ -874,19 +1155,19 @@ class Zone3DEditor(
             self.yaw += mx * MOUSE_SENS
             self.pitch = clamp_pitch(self.pitch - my * MOUSE_SENS)
 
-        if keys[pygame.K_q]:
+        if keys[self.kb.key_for("camera.yaw_left")]:
             self.yaw -= KB_TURN_SPEED * dt
-        if keys[pygame.K_e]:
+        if keys[self.kb.key_for("camera.yaw_right")]:
             self.yaw += KB_TURN_SPEED * dt
 
         dx, dy, dz = wasd_3d(
             self.yaw, self.pitch,
-            forward=keys[pygame.K_w],
-            backward=keys[pygame.K_s],
-            strafe_left=keys[pygame.K_a],
-            strafe_right=keys[pygame.K_d],
-            up=keys[pygame.K_SPACE],
-            down=keys[pygame.K_c],
+            forward=keys[self.kb.key_for("camera.forward")],
+            backward=keys[self.kb.key_for("camera.backward")],
+            strafe_left=keys[self.kb.key_for("camera.left")],
+            strafe_right=keys[self.kb.key_for("camera.right")],
+            up=keys[self.kb.key_for("camera.up")],
+            down=keys[self.kb.key_for("camera.down")],
             speed=speed,
             dt=dt,
         )
@@ -974,7 +1255,11 @@ class Zone3DEditor(
     # -- Raycasting / picking ---------------------------------------
 
     def _update_aim(self) -> None:
-        """Cast a ray from camera forward; find nearest cell box or ground."""
+        """Cast a ray from camera forward; find nearest cell box or ground.
+
+        Uses ``_layer_cell_boxes`` so the ray respects the active layer
+        and isolation setting.
+        """
         fx, fy, fz = self._forward()
         ox, oy, oz = self.cam_x, self.cam_y, self.cam_z
         zone = self.zone
@@ -982,8 +1267,12 @@ class Zone3DEditor(
 
         best: _CellHit | None = None
 
-        # Ground-plane hit
-        if abs(fy) > 1e-10:
+        # Ground-plane hit (only relevant when L1 is active or not isolated)
+        active_l = getattr(self, 'active_layer', 1)
+        isolating = getattr(self, 'isolate_layer', False)
+        show_ground = not (isolating and active_l == 2)
+
+        if show_ground and abs(fy) > 1e-10:
             t = (0.0 - oy) / fy
             if 0.01 < t < FAR_CLIP:
                 hx = ox + fx * t
@@ -992,7 +1281,7 @@ class Zone3DEditor(
                 r = int(math.floor(hz))
                 if 0 <= c < W and 0 <= r < H:
                     blocked = False
-                    for part, yb, yt in self._cell_boxes(r, c):
+                    for part, yb, yt in self._layer_cell_boxes(r, c):
                         tb = _ray_vs_aabb(ox, oy, oz, fx, fy, fz,
                                           float(c), yb, float(r),
                                           c + 1.0, yt, r + 1.0)
@@ -1007,14 +1296,14 @@ class Zone3DEditor(
         # Search cells near camera
         cam_c = int(math.floor(ox))
         cam_r = int(math.floor(oz))
-        search = min(int(FAR_CLIP) + 1, 24)
+        search = min(int(FAR_CLIP) + 1, 16)
         r_lo = max(0, cam_r - search)
         r_hi = min(H, cam_r + search)
         c_lo = max(0, cam_c - search)
         c_hi = min(W, cam_c + search)
         for r in range(r_lo, r_hi):
             for c in range(c_lo, c_hi):
-                for part, yb, yt in self._cell_boxes(r, c):
+                for part, yb, yt in self._layer_cell_boxes(r, c):
                     result = _ray_vs_aabb(
                         ox, oy, oz, fx, fy, fz,
                         float(c), yb, float(r),
@@ -1030,6 +1319,11 @@ class Zone3DEditor(
         self.aimed = best
         self._compute_preview()
         self._paint_update_aim()
+
+        # Update rectangle preview for select tool live feedback
+        if self.tool == "select" and best is not None:
+            if self.selection.rect_in_progress:
+                self.selection.update_rect(best.row, best.col)
 
     def _compute_preview(self) -> None:
         """Compute preview indicators showing what the next click will do."""
@@ -1090,3 +1384,184 @@ class Zone3DEditor(
                 target_dn = max(ch - snap, min_ch)
                 self.preview_line = (c, r, target_dn, COL_TOOL_CEILING)
             return
+
+    # -- State clipboard (Ctrl+C / Ctrl+V) -------------------------
+
+    def _clipboard_copy(self) -> None:
+        """Copy the aimed cell's full state to the clipboard."""
+        hit = self.aimed
+        if not hit:
+            return
+        z = self.zone
+        r, c = hit.row, hit.col
+        from editor.view_3d.tools_layer2 import LAYER_NONE
+        state: dict = {
+            "floor_height": z.floor_heights[r][c],
+            "ceil_height": z.ceil_heights[r][c],
+            "tile": z.tiles[r][c],
+            "floor_texture": z.floor_textures[r][c] if z.floor_textures else "",
+            "ceil_texture": z.ceil_textures[r][c] if z.ceil_textures else "",
+            "wall_texture": z.wall_textures[r][c] if z.wall_textures else "",
+        }
+        if z.face_textures and r < len(z.face_textures) and c < len(z.face_textures[r]):
+            state["face_textures"] = list(z.face_textures[r][c])
+        if z.light_levels and r < len(z.light_levels):
+            state["light_level"] = z.light_levels[r][c]
+        if z.reflect_map and r < len(z.reflect_map):
+            state["reflect"] = z.reflect_map[r][c]
+        if z.upper_wall_height and r < len(z.upper_wall_height):
+            state["upper_wall_height"] = z.upper_wall_height[r][c]
+        if z.wall_segments and r < len(z.wall_segments):
+            import copy
+            state["wall_segments"] = copy.deepcopy(z.wall_segments[r][c])
+        if z.floor_step_segments and r < len(z.floor_step_segments):
+            import copy
+            state["floor_step_segments"] = copy.deepcopy(z.floor_step_segments[r][c])
+        if z.ceil_step_segments and r < len(z.ceil_step_segments):
+            import copy
+            state["ceil_step_segments"] = copy.deepcopy(z.ceil_step_segments[r][c])
+        # Layer 2
+        f2 = getattr(z, 'floor2_heights', None)
+        c2 = getattr(z, 'ceil2_heights', None)
+        if f2 and r < len(f2):
+            state["floor2_height"] = f2[r][c]
+        if c2 and r < len(c2):
+            state["ceil2_height"] = c2[r][c]
+        f2t = getattr(z, 'floor2_textures', None)
+        c2t = getattr(z, 'ceil2_textures', None)
+        if f2t and r < len(f2t):
+            state["floor2_texture"] = f2t[r][c]
+        if c2t and r < len(c2t):
+            state["ceil2_texture"] = c2t[r][c]
+        if hasattr(z, 'fog_density') and z.fog_density and r < len(z.fog_density):
+            state["fog_density"] = z.fog_density[r][c]
+        self._clipboard = state
+
+    def _clipboard_paste(self) -> None:
+        """Paste the clipboard state onto the selection or aimed cell,
+        respecting the active paste mask."""
+        if not self._clipboard:
+            return
+        from editor.view_3d.constants import (
+            PASTE_MASK_HEIGHTS, PASTE_MASK_TEXTURES,
+            PASTE_MASK_SEGMENTS, PASTE_MASK_LIGHTING,
+        )
+        mask = self._paste_mask
+        state = self._clipboard
+        z = self.zone
+
+        self._push_undo()
+        self._ensure_face_textures()
+
+        def _apply(r: int, c: int) -> bool:
+            changed = False
+            if PASTE_MASK_HEIGHTS in mask:
+                if "floor_height" in state:
+                    z.floor_heights[r][c] = state["floor_height"]
+                    changed = True
+                if "ceil_height" in state:
+                    z.ceil_heights[r][c] = state["ceil_height"]
+                    changed = True
+                if "upper_wall_height" in state and z.upper_wall_height:
+                    z.upper_wall_height[r][c] = state["upper_wall_height"]
+                if "tile" in state:
+                    z.tiles[r][c] = state["tile"]
+                if "floor2_height" in state:
+                    self._layer2_ensure_grids()
+                    z.floor2_heights[r][c] = state["floor2_height"]
+                if "ceil2_height" in state:
+                    self._layer2_ensure_grids()
+                    z.ceil2_heights[r][c] = state["ceil2_height"]
+            if PASTE_MASK_TEXTURES in mask:
+                if "floor_texture" in state and z.floor_textures:
+                    z.floor_textures[r][c] = state["floor_texture"]
+                    changed = True
+                if "ceil_texture" in state and z.ceil_textures:
+                    z.ceil_textures[r][c] = state["ceil_texture"]
+                    changed = True
+                if "wall_texture" in state and z.wall_textures:
+                    z.wall_textures[r][c] = state["wall_texture"]
+                if "face_textures" in state and z.face_textures:
+                    z.face_textures[r][c] = list(state["face_textures"])
+                if "floor2_texture" in state and getattr(z, 'floor2_textures', None):
+                    z.floor2_textures[r][c] = state["floor2_texture"]
+                if "ceil2_texture" in state and getattr(z, 'ceil2_textures', None):
+                    z.ceil2_textures[r][c] = state["ceil2_texture"]
+            if PASTE_MASK_SEGMENTS in mask:
+                import copy
+                if "wall_segments" in state and z.wall_segments:
+                    z.wall_segments[r][c] = copy.deepcopy(state["wall_segments"])
+                    changed = True
+                if "floor_step_segments" in state and z.floor_step_segments:
+                    z.floor_step_segments[r][c] = copy.deepcopy(state["floor_step_segments"])
+                if "ceil_step_segments" in state and z.ceil_step_segments:
+                    z.ceil_step_segments[r][c] = copy.deepcopy(state["ceil_step_segments"])
+            if PASTE_MASK_LIGHTING in mask:
+                if "light_level" in state and z.light_levels:
+                    z.light_levels[r][c] = state["light_level"]
+                    changed = True
+                if "reflect" in state and z.reflect_map:
+                    z.reflect_map[r][c] = state["reflect"]
+                if "fog_density" in state and hasattr(z, 'fog_density') and z.fog_density:
+                    z.fog_density[r][c] = state["fog_density"]
+            return changed
+
+        if self._has_selection():
+            self._apply_to_selection(_apply)
+        elif self.aimed:
+            _apply(self.aimed.row, self.aimed.col)
+        self.dirty = True
+
+    # -- Smart selection helpers ------------------------------------
+
+    def _select_contiguous(self, r: int, c: int) -> None:
+        """Flood-fill select cells sharing the same Z-height as (r, c)."""
+        z = self.zone
+        fh = z.floor_heights[r][c]
+        ch = z.ceil_heights[r][c]
+        tile = z.tiles[r][c]
+        W, H = z.width, z.height
+        visited: set[tuple[int, int]] = set()
+        stack = [(r, c)]
+        while stack:
+            cr, cc = stack.pop()
+            if (cr, cc) in visited:
+                continue
+            if not (0 <= cr < H and 0 <= cc < W):
+                continue
+            if abs(z.floor_heights[cr][cc] - fh) > 0.01:
+                continue
+            if abs(z.ceil_heights[cr][cc] - ch) > 0.01:
+                continue
+            if z.tiles[cr][cc] != tile:
+                continue
+            visited.add((cr, cc))
+            stack.extend([(cr-1, cc), (cr+1, cc), (cr, cc-1), (cr, cc+1)])
+        self.selection.cells.update(visited)
+
+    def _select_similar(self) -> None:
+        """Select all cells on the active layer sharing exact properties
+        of the aimed cell (Shift+G)."""
+        hit = self.aimed
+        if not hit:
+            return
+        z = self.zone
+        r, c = hit.row, hit.col
+        fh = z.floor_heights[r][c]
+        ch = z.ceil_heights[r][c]
+        tile = z.tiles[r][c]
+        ft = z.floor_textures[r][c] if z.floor_textures else ""
+        wt = z.wall_textures[r][c] if z.wall_textures else ""
+        for rr in range(z.height):
+            for cc in range(z.width):
+                if abs(z.floor_heights[rr][cc] - fh) > 0.01:
+                    continue
+                if abs(z.ceil_heights[rr][cc] - ch) > 0.01:
+                    continue
+                if z.tiles[rr][cc] != tile:
+                    continue
+                zft = z.floor_textures[rr][cc] if z.floor_textures else ""
+                zwt = z.wall_textures[rr][cc] if z.wall_textures else ""
+                if zft != ft or zwt != wt:
+                    continue
+                self.selection.add_cell(rr, cc)

@@ -17,6 +17,7 @@ WINDOW_TITLE  = "Zone Editor"
 LEFT_PANEL_W  = 280
 RIGHT_PANEL_W = 250
 MENU_BAR_H    = 22
+STATE_BAR_H   = 32   # global state bar (layer + view mode)
 STATUS_BAR_H  = 28
 
 # ── Raycaster preview ────────────────────────────────────────────

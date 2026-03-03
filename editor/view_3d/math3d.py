@@ -9,6 +9,73 @@ NEAR_CLIP = 0.05
 FAR_CLIP  = 80.0
 FOV_DEG   = 75.0
 
+# ─── Conservative cell-AABB Y range for frustum culling ──────────
+_CELL_Y_MIN = -6.0
+_CELL_Y_MAX = 12.0
+
+
+def _extract_frustum_planes(
+    vp: list[float],
+) -> list[tuple[float, float, float, float]]:
+    """Extract 6 frustum planes from a column-major VP matrix.
+
+    Returns list of 6 normalised (a, b, c, d) planes where
+    ``ax + by + cz + d >= 0`` is *inside* the frustum.
+    Order: left, right, bottom, top, near, far.
+    """
+    # Row i of a column-major flat-16 matrix: vp[i], vp[i+4], vp[i+8], vp[i+12]
+    planes: list[tuple[float, float, float, float]] = []
+    row = (
+        (vp[3] + vp[0], vp[7] + vp[4], vp[11] + vp[8],  vp[15] + vp[12]),   # left
+        (vp[3] - vp[0], vp[7] - vp[4], vp[11] - vp[8],  vp[15] - vp[12]),   # right
+        (vp[3] + vp[1], vp[7] + vp[5], vp[11] + vp[9],  vp[15] + vp[13]),   # bottom
+        (vp[3] - vp[1], vp[7] - vp[5], vp[11] - vp[9],  vp[15] - vp[13]),   # top
+        (vp[3] + vp[2], vp[7] + vp[6], vp[11] + vp[10], vp[15] + vp[14]),   # near
+        (vp[3] - vp[2], vp[7] - vp[6], vp[11] - vp[10], vp[15] - vp[14]),   # far
+    )
+    for a, b, c, d in row:
+        length = math.sqrt(a * a + b * b + c * c)
+        if length > 1e-10:
+            inv = 1.0 / length
+            planes.append((a * inv, b * inv, c * inv, d * inv))
+        else:
+            planes.append((a, b, c, d))
+    return planes
+
+
+def _aabb_in_frustum(
+    planes: list[tuple[float, float, float, float]],
+    x0: float, y0: float, z0: float,
+    x1: float, y1: float, z1: float,
+) -> bool:
+    """Conservative AABB-vs-frustum test (may return True for edge cases)."""
+    for a, b, c, d in planes:
+        # P-vertex: the AABB corner most in the direction of the plane normal
+        px = x1 if a >= 0 else x0
+        py = y1 if b >= 0 else y0
+        pz = z1 if c >= 0 else z0
+        if a * px + b * py + c * pz + d < 0:
+            return False
+    return True
+
+
+def _visible_cell_set(
+    planes: list[tuple[float, float, float, float]],
+    W: int, H: int,
+    y_min: float = _CELL_Y_MIN,
+    y_max: float = _CELL_Y_MAX,
+) -> set[tuple[int, int]]:
+    """Return {(r, c)} for cells whose AABB intersects the view frustum."""
+    vis: set[tuple[int, int]] = set()
+    _aabb = _aabb_in_frustum
+    for r in range(H):
+        z0 = float(r)
+        z1 = z0 + 1.0
+        for c in range(W):
+            if _aabb(planes, float(c), y_min, z0, c + 1.0, y_max, z1):
+                vis.add((r, c))
+    return vis
+
 
 def _perspective(fov_rad: float, aspect: float, near: float, far: float):
     """Return a 4x4 perspective projection matrix as a flat list[16]."""

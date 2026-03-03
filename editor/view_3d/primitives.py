@@ -132,7 +132,16 @@ class DrawPrimitivesMixin:
                     tw = max_x - min_x + 1
                     th = max_y - min_y + 1
                     if tw > 0 and th > 0:
-                        tmp = pygame.Surface((tw, th), pygame.SRCALPHA)
+                        scratch = getattr(self, '_alpha_scratch', None)
+                        if (scratch is None
+                                or scratch.get_width() < tw
+                                or scratch.get_height() < th):
+                            scratch = pygame.Surface(
+                                (max(tw, 512), max(th, 512)),
+                                pygame.SRCALPHA)
+                            self._alpha_scratch = scratch
+                        tmp = scratch.subsurface((0, 0, tw, th))
+                        tmp.fill((0, 0, 0, 0))
                         off = [(px - min_x, py - min_y) for px, py in poly]
                         pygame.draw.polygon(tmp, (r, g, b, alpha), off)
                         surface.blit(tmp, (min_x, min_y))
@@ -241,7 +250,16 @@ class DrawPrimitivesMixin:
                     tw = max_x - min_x + 1
                     th = max_y - min_y + 1
                     if tw > 0 and th > 0:
-                        tmp = pygame.Surface((tw, th), pygame.SRCALPHA)
+                        scratch = getattr(self, '_alpha_scratch', None)
+                        if (scratch is None
+                                or scratch.get_width() < tw
+                                or scratch.get_height() < th):
+                            scratch = pygame.Surface(
+                                (max(tw, 512), max(th, 512)),
+                                pygame.SRCALPHA)
+                            self._alpha_scratch = scratch
+                        tmp = scratch.subsurface((0, 0, tw, th))
+                        tmp.fill((0, 0, 0, 0))
                         off = [(px - min_x, py - min_y) for px, py in poly]
                         pygame.draw.polygon(tmp, (r, g, b, alpha), off)
                         surface.blit(tmp, (min_x, min_y))

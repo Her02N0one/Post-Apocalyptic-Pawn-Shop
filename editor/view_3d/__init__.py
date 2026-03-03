@@ -4,6 +4,12 @@ Re-exports every public name so existing ``from editor.view_3d import …``
 statements continue to work unchanged.
 """
 
+# Selection layer (new — universal selection system)
+from editor.view_3d.selection import SelectionState  # noqa: F401
+
+# Unified object layer
+from editor.view_3d.objects import ObjectLayer  # noqa: F401
+
 # Math helpers
 from editor.view_3d.math3d import (          # noqa: F401
     _perspective, _mat4_mul, _build_view_matrix, _project, _project_line,
@@ -31,9 +37,13 @@ from editor.view_3d.editor import (          # noqa: F401
     COL_TOOL_WALL, COL_TOOL_FLOOR, COL_TOOL_CEILING,
     COL_TOOL_PAINT, COL_TOOL_SEGMENT, COL_FACE_HL,
     TOOLS, UTIL_TOOLS, ALL_TOOLS,
-    TOOL_LABELS, TOOL_COLORS, TOOL_KEYS, UTIL_KEYS,
-    HOTBAR_SIZE, HOTBAR_KEYS,
+    TOOL_LABELS, TOOL_COLORS, UTIL_KEYS,
+    HOTBAR_SIZE,
     TOOL_HINTS,
+    MODES, MODE_LABELS, MODE_ICONS, MODE_COLORS,
+    MODE_DESCRIPTIONS, MODE_TOOLS, MODE_SELECTION_TARGET,
+    VIEW_LIT, VIEW_PATHING, VIEW_MODES, VIEW_LABELS,
+    PASTE_MASK_ALL,
     FLY_SPEED, FLY_SPRINT,
     MOUSE_SENS, KB_TURN_SPEED,
     _ensure_palette,

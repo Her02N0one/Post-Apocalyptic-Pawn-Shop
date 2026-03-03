@@ -18,6 +18,7 @@ import math
 import os
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -34,7 +35,7 @@ _screen = pygame.display.set_mode((320, 240))
 from core.zones import Zone, load_zone
 from core.tiles import TILE_REGISTRY, tile_def
 from editor.view_3d.editor import (
-    Zone3DEditor, TOOLS, TOOL_KEYS,
+    Zone3DEditor, TOOLS,
     COL_GHOST, COL_GHOST_BAD, COL_TOOL_FLOOR, COL_TOOL_CEILING, COL_SEG_LINE,
     SKY_HEIGHT, DEFAULT_CEIL,
 )
@@ -69,13 +70,25 @@ class TestToolSystem:
 
     def test_tool_selection_keys(self):
         ed, z = _make_editor()
-        # Core tools: F5=sculpt, F6=paint, F7=segment
-        expected = ["sculpt", "paint", "segment"]
-        keys = [pygame.K_F5, pygame.K_F6, pygame.K_F7]
-        for key, tool in zip(keys, expected):
-            ev = pygame.event.Event(pygame.KEYDOWN, key=key)
+        # F1-F4 switch modes; number keys select tools within current mode
+        # F1 = arch mode (tools: sculpt, segment)
+        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F1)
+        ed.handle_event(ev)
+        assert ed.mode == "arch"
+        assert ed.tool == "sculpt"
+
+        # Number key 2 selects second tool in current mode (segment)
+        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_2)
+        with patch("pygame.key.get_mods", return_value=0):
             ed.handle_event(ev)
-            assert ed.tool == tool, f"Key should select tool={tool}"
+        assert ed.tool == "segment"
+
+        # F2 = surface mode (tools: paint)
+        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F2)
+        ed.handle_event(ev)
+        assert ed.mode == "surface"
+        assert ed.tool == "paint"
+
         # Utility toggles: B=select, P=stamp
         ev_b = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_b)
         ed.handle_event(ev_b)
@@ -87,18 +100,36 @@ class TestToolSystem:
     def test_all_tools_present(self):
         assert TOOLS == ("sculpt", "paint", "segment", "entity", "box")
 
-    def test_display_toggle_keys_moved_to_f8_f9_f10(self):
+    def test_ctrl_number_display_toggles(self):
+        """Ctrl+1..5 toggle display layers: walls, floors, ceilings, entities, wireframe."""
         ed, z = _make_editor()
-        assert ed.show_grid is True
-        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F8)
-        ed.handle_event(ev)
-        assert ed.show_grid is False
 
-        assert ed.show_ceiling_grid is True
-        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F9)
-        ed.handle_event(ev)
-        assert ed.show_ceiling_grid is False
+        def _send_ctrl(k):
+            with patch("pygame.key.get_mods", return_value=pygame.KMOD_CTRL):
+                ev = pygame.event.Event(pygame.KEYDOWN, key=k, mod=pygame.KMOD_CTRL)
+                ed.handle_event(ev)
 
+        # Ctrl+1 = show_walls
+        assert ed.show_walls is True
+        _send_ctrl(pygame.K_1)
+        assert ed.show_walls is False
+
+        # Ctrl+2 = show_floors
+        assert ed.show_floors is True
+        _send_ctrl(pygame.K_2)
+        assert ed.show_floors is False
+
+        # Ctrl+3 = show_ceilings
+        assert ed.show_ceilings is True
+        _send_ctrl(pygame.K_3)
+        assert ed.show_ceilings is False
+
+        # Ctrl+4 = show_entities
+        assert ed.show_entities is True
+        _send_ctrl(pygame.K_4)
+        assert ed.show_entities is False
+
+        # F10 = show_axes (unchanged)
         assert ed.show_axes is True
         ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F10)
         ed.handle_event(ev)
@@ -1641,7 +1672,8 @@ class TestBoxTool:
 
     def test_tool_switch_to_box(self):
         ed, z = _make_editor()
-        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F9)
+        # Switch to props mode (F3) — box is the first tool
+        ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F3)
         ed.handle_event(ev)
         assert ed.tool == "box"
 

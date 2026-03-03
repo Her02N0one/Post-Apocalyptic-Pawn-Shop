@@ -13,6 +13,18 @@ class GeometryMixin:
 
     def _cell_boxes(self, r: int, c: int
                     ) -> list[tuple[str, float, float]]:
+        """Visual boxes for a cell (cached per frame)."""
+        cache = self._cell_box_cache
+        key = (r, c)
+        hit = cache.get(key)
+        if hit is not None:
+            return hit
+        result = self._compute_cell_boxes(r, c)
+        cache[key] = result
+        return result
+
+    def _compute_cell_boxes(self, r: int, c: int
+                            ) -> list[tuple[str, float, float]]:
         """Visual boxes for a cell: list of (part, y_bot, y_top).
 
         For open cells the editor shows two solid masses:
@@ -70,3 +82,45 @@ class GeometryMixin:
         if uwh > ch:
             return min(uwh + S, 10.0)
         return ch + S
+
+    def _layer_cell_boxes(self, r: int, c: int
+                          ) -> list[tuple[str, float, float]]:
+        """Return cell boxes filtered by active layer + isolate state.
+
+        When ``active_layer == 2``, prefers Layer 2 floor/ceil slabs.
+        When ``isolate_layer`` is True, only returns boxes for the active layer.
+        """
+        active = getattr(self, 'active_layer', 1)
+        isolate = getattr(self, 'isolate_layer', False)
+
+        # Always include L1 unless isolating to L2
+        l1_boxes: list[tuple[str, float, float]] = []
+        if not (isolate and active == 2):
+            l1_boxes = self._cell_boxes(r, c)
+
+        # Add L2 boxes if the layer data exists
+        l2_boxes: list[tuple[str, float, float]] = []
+        LAYER_NONE = -1000.0
+        zone = self.zone
+        f2 = getattr(zone, 'floor2_heights', None)
+        c2 = getattr(zone, 'ceil2_heights', None)
+        if f2 and c2 and len(f2) > r and len(c2) > r:
+            f2v = f2[r][c]
+            c2v = c2[r][c]
+            S = self._SLAB
+            has_f2 = f2v > LAYER_NONE + 1.0
+            has_c2 = c2v > LAYER_NONE + 1.0
+            if has_f2:
+                l2_boxes.append(("floor2", f2v - S, f2v + S))
+            if has_c2:
+                l2_boxes.append(("ceiling2", c2v - S, c2v + S))
+            if has_f2 and has_c2 and c2v > f2v:
+                pass  # The gap between is open space, no box
+
+        if isolate:
+            return l2_boxes if active == 2 else l1_boxes
+
+        # When editing L2, put L2 boxes first (higher hit priority)
+        if active == 2:
+            return l2_boxes + l1_boxes
+        return l1_boxes + l2_boxes

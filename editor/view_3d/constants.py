@@ -54,19 +54,93 @@ COL_TOOL_SEGMENT = (255, 180, 60)
 COL_TOOL_SELECT  = (255, 220, 100)
 COL_TOOL_ENTITY  = (60, 200, 255)
 COL_TOOL_BOX     = (255, 180, 60)
-COL_TOOL_LIGHT   = (255, 240, 120)
-COL_TOOL_SLOPE   = (180, 200, 100)
-COL_TOOL_REFLECT = (120, 200, 255)
 COL_TOOL_LAYER2  = (200, 160, 255)
 COL_TOOL_QUAD    = (255, 140, 180)
 COL_TOOL_PORTAL  = (80, 255, 220)
 COL_TOOL_CURVE   = (255, 200, 100)
-COL_TOOL_FOG     = (160, 160, 200)
 COL_FACE_HL      = (255, 255, 255, 90)  # face highlight overlay alpha
 
 # ─── Tool definitions ─────────────────────────────────────────────
 # ─── Stamp tool colour ────────────────────────────────────────────
 COL_TOOL_STAMP   = (180, 140, 255)
+
+# ─── Primary Modes (state machine) ────────────────────────────────
+# The editor is a strict state machine:
+#   Elevation (Layer) → Mode → Selection → Operation
+#
+# Four foundational modes based on user intent:
+MODE_ARCH   = "arch"     # Architecture: grid BSP, walkable space
+MODE_SURF   = "surface"  # Surface: texturing faces / materials
+MODE_PROPS  = "props"    # Props & Geometry: freeform set dressing
+MODE_LOGIC  = "logic"    # Logic: entities, portals, gameplay
+
+MODES = (MODE_ARCH, MODE_SURF, MODE_PROPS, MODE_LOGIC)
+
+MODE_LABELS = {
+    MODE_ARCH:  "ARCH",
+    MODE_SURF:  "SURFACE",
+    MODE_PROPS: "PROPS",
+    MODE_LOGIC: "LOGIC",
+}
+
+MODE_ICONS = {
+    MODE_ARCH:  "\u25a4",   # ▤
+    MODE_SURF:  "\u25a9",   # ▩
+    MODE_PROPS: "\u25a7",   # ▧
+    MODE_LOGIC: "\u235f",   # ⍟
+}
+
+MODE_COLORS = {
+    MODE_ARCH:  (220, 160, 60),   # amber
+    MODE_SURF:  (200, 120, 220),  # purple
+    MODE_PROPS: (255, 180, 60),   # orange
+    MODE_LOGIC: (60, 200, 255),   # cyan
+}
+
+MODE_DESCRIPTIONS = {
+    MODE_ARCH:  "Define walkable BSP: Z-heights, walls, segments",
+    MODE_SURF:  "Paint faces: textures, materials, lighting",
+    MODE_PROPS: "Place geometry: prisms, quads, curves",
+    MODE_LOGIC: "Place logic: entities, portals, spawners",
+}
+
+# Mode → available sub-tools mapping
+MODE_TOOLS = {
+    MODE_ARCH:  ("sculpt", "segment"),
+    MODE_SURF:  ("paint",),
+    MODE_PROPS: ("box", "quad", "curve"),
+    MODE_LOGIC: ("entity", "portal"),
+}
+
+# Mode → selection target description
+MODE_SELECTION_TARGET = {
+    MODE_ARCH:  "2D Grid Cells",
+    MODE_SURF:  "Individual Faces (N/S/E/W/Floor/Ceil)",
+    MODE_PROPS: "Prop Objects",
+    MODE_LOGIC: "Logic Nodes",
+}
+
+# ─── View modes (viewport rendering) ──────────────────────────────
+VIEW_LIT      = "lit"       # Normal textured/coloured view
+VIEW_PATHING  = "pathing"   # Pathable surface heatmap
+VIEW_MODES    = (VIEW_LIT, VIEW_PATHING)
+
+VIEW_LABELS = {
+    VIEW_LIT:     "Lit",
+    VIEW_PATHING: "Pathing",
+}
+
+# ─── Paste masking flags ──────────────────────────────────────────
+PASTE_MASK_HEIGHTS   = "heights"
+PASTE_MASK_TEXTURES  = "textures"
+PASTE_MASK_ENTITIES  = "entities"
+PASTE_MASK_SEGMENTS  = "segments"
+PASTE_MASK_LIGHTING  = "lighting"
+PASTE_MASK_ALL = (
+    PASTE_MASK_HEIGHTS, PASTE_MASK_TEXTURES,
+    PASTE_MASK_ENTITIES, PASTE_MASK_SEGMENTS,
+    PASTE_MASK_LIGHTING,
+)
 
 # Core tools (F-keys / Tab) + utility modes (letter keys)
 TOOLS = ("sculpt", "paint", "segment", "entity", "box")
@@ -98,50 +172,47 @@ TOOL_COLORS = {
     "portal":  COL_TOOL_PORTAL,
     "curve":   COL_TOOL_CURVE,
 }
-# F-key → core tool
-TOOL_KEYS = {
-    pygame.K_F5: "sculpt",
-    pygame.K_F6: "paint",
-    pygame.K_F7: "segment",
-    pygame.K_F8: "entity",
-    pygame.K_F9: "box",
-}
+# Number-key → select tool within current mode (handled in _on_keydown)
+# 1..N = tools in MODE_TOOLS[mode], Tab = cycle
+
 # Letter key → utility mode (toggles in/out)
-# NOTE: these must NOT collide with Ctrl/Alt combos (Ctrl+Y = redo, etc.).
-# The event handler guards against modifiers before checking this dict.
+# NOTE: these must NOT collide with tool-specific keys (H=wall, etc.)
+# or with Ctrl combos (Ctrl+Y = redo).
 UTIL_KEYS = {
     pygame.K_b: "select",
     pygame.K_p: "stamp",
-    pygame.K_h: "quad",
-    pygame.K_y: "portal",
+    pygame.K_i: "quad",        # was H — freed H for wall conversion
+    pygame.K_o: "portal",      # was Y — freed Ctrl+Y for redo
     pygame.K_SEMICOLON: "curve",
 }
-# Hotbar: 10 texture quick-access slots (keys 1-0)
+# Hotbar: 10 texture quick-access slots
+# With new layout: bare 6-0 works directly, Alt+1-0 works for all 10,
+# bare 1-5 are now tool selection.
 HOTBAR_SIZE = 10
-HOTBAR_KEYS = {
-    pygame.K_1: 0, pygame.K_2: 1, pygame.K_3: 2, pygame.K_4: 3, pygame.K_5: 4,
-    pygame.K_6: 5, pygame.K_7: 6, pygame.K_8: 7, pygame.K_9: 8, pygame.K_0: 9,
-}
 
 TOOL_HINTS = {
     "sculpt": {
         "title": "Sculpt",
         "actions": {
+            "selection": {
+                "LMB": "Raise floor / Sh=lower ceil",
+                "RMB": "Lower floor / Sh=raise ceil",
+                "Scroll": "Adjust floor / Sh=ceil",
+                "T": "Add ceilings  Sh+T=remove",
+                "H": "Make wall  Sh+H=open",
+                "L": "Flatten  Sh+L=ceilings",
+            },
             "floor": {
-                "LMB": "Raise floor",
-                "RMB": "Lower floor",
+                "LMB": "Raise floor  Sh=lower ceil",
+                "RMB": "Lower floor  Sh=raise ceil",
                 "Scroll": "Extend",
                 "Sh+Scrl": "Snap grid",
-                "Sh+LMB": "Raise floor2",
-                "Sh+RMB": "Lower floor2",
             },
             "ceiling": {
                 "LMB": "Lower ceiling",
                 "RMB": "Raise ceiling",
                 "Scroll": "Upper wall",
                 "Sh+Scrl": "Snap grid",
-                "Sh+LMB": "Raise ceil2",
-                "Sh+RMB": "Lower ceil2",
             },
             "layer2": {
                 "LMB": "Raise floor2",
@@ -155,7 +226,7 @@ TOOL_HINTS = {
                 "LMB": "Aim at surface",
             },
         },
-        "keys": "T=ceil  R=reset  Del=clear  G=snap  V=walls  X=layer2",
+        "keys": "Sh=ceiling  T=add ceil  R=reset  Del=clear  G=snap  X=layer2  H=wall  L=flatten",
     },
     "paint": {
         "title": "Paint",
@@ -171,7 +242,7 @@ TOOL_HINTS = {
                 "Scroll": "Cycle palette",
             },
         },
-        "keys": "T=tile picker  1-0=hotbar",
+        "keys": "T=tile picker  6-0=hotbar  Alt+1-0=hotbar",
     },
     "segment": {
         "title": "Detail",
@@ -186,7 +257,7 @@ TOOL_HINTS = {
         "keys": "Aim at wall/step face",
     },
     "select": {
-        "title": "Select  (B=exit)",
+        "title": "Select  (B=exit/clear)",
         "actions": {
             "none": {
                 "LMB": "First corner",
@@ -200,12 +271,14 @@ TOOL_HINTS = {
             "active": {
                 "LMB": "Fill texture",
                 "RMB": "Clear textures",
-                "Scroll": "Adjust height",
+                "Scroll": "Adjust floor / Sh=ceil",
+                "T": "Add ceilings  Sh+T=remove",
+                "H": "Make wall  Sh+H=open",
+                "L": "Flatten  Sh+L=ceilings",
                 "Del": "Reset cells",
-                "Esc": "Deselect",
             },
         },
-        "keys": "X=floor/ceil  B=exit select",
+        "keys": "X=floor/ceil  T=ceil  H=wall  L=flatten  Ct+A=all  B=exit/clear",
     },
     "stamp": {
         "title": "Preset  (P=exit)",
@@ -253,7 +326,7 @@ TOOL_HINTS = {
     },
 
     "quad": {
-        "title": "Quad  (H=exit)",
+        "title": "Quad  (I=exit)",
         "actions": {
             "any": {
                 "LMB": "Place / select quad",
@@ -267,7 +340,7 @@ TOOL_HINTS = {
         "keys": "Del=delete  Esc=deselect  MMB=toggle 2-sided",
     },
     "portal": {
-        "title": "Portal  (Y=exit)",
+        "title": "Portal  (O=exit)",
         "actions": {
             "any": {
                 "LMB": "Place portal on face",
@@ -275,7 +348,7 @@ TOOL_HINTS = {
                 "Scroll": "Cycle portals",
             },
         },
-        "keys": "Edit dest in inspector  Y=exit portal",
+        "keys": "Edit dest in inspector  O=exit portal",
     },
     "curve": {
         "title": "Curve  (;=exit)",

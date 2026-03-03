@@ -145,6 +145,12 @@ class ZoneEditorApp(
         self._transient_time: float = 0.0
         self._transient_color: tuple = (0.95, 0.90, 0.75, 1.0)
 
+        # Keybind editor window state
+        self.show_keybind_editor: bool = False
+        self._kb_capturing: str = ""   # action being rebound (empty = not capturing)
+        self._kb_filter: str = ""      # search filter text
+        self._kb_show_conflicts: bool = False  # filter to conflicts only
+
         # Performance
         self.frame_ms: float = 0.0
         self.fps: float = 60.0
