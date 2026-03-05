@@ -26,6 +26,8 @@ LOGS_DIR      = PROJECT_ROOT / "logs"
 # ── Assets sub-paths ─────────────────────────────────────────────
 TEXTURES_DIR      = ASSETS_DIR / "textures"
 TILE_TEX_DIR      = TEXTURES_DIR / "tiles"
+SKYBOXES_DIR      = TEXTURES_DIR / "skyboxes"
+BILLBOARDS_DIR    = TEXTURES_DIR / "billboards"
 MODELS_DIR        = ASSETS_DIR / "models"
 TILES_TOML_DIR    = MODELS_DIR / "tiles"
 

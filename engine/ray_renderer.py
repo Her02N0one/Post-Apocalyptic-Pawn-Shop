@@ -178,6 +178,12 @@ class RayRenderer:
         self._map_h = zone.height
         self._is_interior = int(zone.first_person)
 
+        # ── Per-zone skybox override ──
+        self._skybox_buf: bytes | None = None
+        self._sky_w: int = 0
+        self._sky_h: int = 0
+        self._load_skybox(zone.skybox if hasattr(zone, "skybox") else "")
+
         # ── Tile grid (flat int32) ──
         _s2i = tile_str_to_int
         self._tiles_buf = array.array(
@@ -547,11 +553,8 @@ class RayRenderer:
             al.extend([len(al) // 4, 1, 1, 1])
         self._anim_buf = array.array("i", al[:num_tiles * 4]).tobytes()
 
-        # ── Skybox panorama (optional RGB buffer) ──
-        self._skybox_buf: bytes | None = None
-        self._sky_w: int = 0
-        self._sky_h: int = 0
-        self._load_skybox()
+        # Skybox panorama already loaded by _load_skybox() at top of
+        # _build_buffers.  No further init needed here.
 
         # ── Per-cell fog volumes (optional) ──
         map_cells = zone.height * zone.width
@@ -754,23 +757,43 @@ class RayRenderer:
     #  Skybox loading
     # ──────────────────────────────────────────────────────────────
 
-    def _load_skybox(self) -> None:
-        """Load an optional panoramic skybox from assets/textures/skybox.*
+    def _load_skybox(self, skybox_name: str = "") -> None:
+        """Load a panoramic skybox image into a raw RGB byte buffer.
 
-        Accepts any image format pygame can load.  The image is stored
-        as a raw RGB byte buffer for the C renderer.
+        Resolution order:
+          1. ``assets/textures/skyboxes/{skybox_name}``  (per-zone)
+          2. ``assets/textures/skybox.{png,jpg,bmp}``    (global fallback)
+          3. Give up → C renderer uses procedural gradient.
+
+        Accepts any image format pygame can load.
         """
-        from core.paths import TEXTURES_DIR
+        from core.paths import TEXTURES_DIR, SKYBOXES_DIR
+        from pathlib import Path
 
+        # ── 1. Per-zone skybox name ───────────────────────────────
+        if skybox_name:
+            # Accept with or without extension
+            candidates = [SKYBOXES_DIR / skybox_name]
+            if not Path(skybox_name).suffix:
+                for ext in ("png", "jpg", "bmp"):
+                    candidates.append(SKYBOXES_DIR / f"{skybox_name}.{ext}")
+            for path in candidates:
+                if path.exists():
+                    img = pygame.image.load(str(path)).convert()
+                    self._sky_w, self._sky_h = img.get_size()
+                    self._skybox_buf = pygame.image.tobytes(img, "RGB")
+                    return
+
+        # ── 2. Global fallback ────────────────────────────────────
         for ext in ("png", "jpg", "bmp"):
             path = TEXTURES_DIR / f"skybox.{ext}"
             if path.exists():
                 img = pygame.image.load(str(path)).convert()
                 self._sky_w, self._sky_h = img.get_size()
-                # Extract raw RGB bytes (3 bytes per pixel, row-major)
                 self._skybox_buf = pygame.image.tobytes(img, "RGB")
                 return
-        # No skybox found — C code will use procedural gradient.
+
+        # ── 3. No skybox found — C code will use procedural gradient.
         self._skybox_buf = None
 
     # ──────────────────────────────────────────────────────────────

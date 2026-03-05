@@ -129,6 +129,14 @@ class Zone:
     # fog_density[r][c] = 0.0..1.0, fog_color[r][c] = (R,G,B) 0–255.
     fog_density: list[list[float]] = field(default_factory=list)
     fog_color: list[list[tuple]] = field(default_factory=list)
+    # ── Sky / skybox ────────────────────────────────────────────
+    # skybox: filename (without dir) of a panoramic image in
+    # assets/textures/skyboxes/, or "" for procedural gradient.
+    skybox: str = ""
+    # sky_color: optional override (R,G,B) 0-255 for the gradient
+    # top colour.  Empty tuple = use default.  Only used when
+    # skybox is "" and the zone is exterior.
+    sky_color: tuple = ()
     # ── Portal rendering (same-zone non-Euclidean geometry) ─────
     # Each entry: dict with keys cell (row,col), face (0..3),
     # dest_x, dest_y, angle_offset (radians, 0 = no rotation).
@@ -297,6 +305,8 @@ class Zone:
             fog_density=_grid_or_default("fog_density", 0.0, H, W),
             fog_color=data.get("fog_color", [[(128, 128, 128)] * W for _ in range(H)]),
             render_portals=data.get("render_portals", []),
+            skybox=data.get("skybox", ""),
+            sky_color=tuple(data.get("sky_color", ())),
             compiled=compiled,
         )
 

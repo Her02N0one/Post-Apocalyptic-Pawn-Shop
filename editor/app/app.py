@@ -32,6 +32,7 @@ from editor.app.viewport import ViewportMixin
 from editor.app.raycaster import RaycasterMixin
 from editor.app.panels import PanelsMixin
 from editor.app.dialogs import DialogsMixin
+from editor.app.asset_browser import AssetBrowserMixin
 
 
 class ZoneEditorApp(
@@ -40,16 +41,18 @@ class ZoneEditorApp(
     RaycasterMixin,
     PanelsMixin,
     DialogsMixin,
+    AssetBrowserMixin,
 ):
     """Standalone 3D zone editor with ImGui panels.
 
-    Composed from five focused mixins:
+    Composed from six focused mixins:
 
-    * :class:`EventsMixin`     — input routing and escape chains
-    * :class:`ViewportMixin`   — GL quad rendering dispatch
-    * :class:`RaycasterMixin`  — 2D raycaster preview camera
-    * :class:`PanelsMixin`     — ImGui sidebar panels & overlays
-    * :class:`DialogsMixin`    — modal dialogs (new, save-as, unsaved guard)
+    * :class:`EventsMixin`        — input routing and escape chains
+    * :class:`ViewportMixin`      — GL quad rendering dispatch
+    * :class:`RaycasterMixin`     — 2D raycaster preview camera
+    * :class:`PanelsMixin`        — ImGui sidebar panels & overlays
+    * :class:`DialogsMixin`       — modal dialogs (new, save-as, unsaved guard)
+    * :class:`AssetBrowserMixin`  — floating asset browser window
     """
 
     # ── Init ──────────────────────────────────────────────────────

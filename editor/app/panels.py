@@ -152,6 +152,9 @@ class PanelsMixin:
         # Keybind editor window
         if getattr(self, 'show_keybind_editor', False) and self.editor_3d:
             self._draw_keybind_editor()
+        # Asset browser window
+        if getattr(self, 'show_asset_browser', False):
+            self._draw_asset_browser()
 
     # ── Helpers ───────────────────────────────────────────────────
 
@@ -343,6 +346,15 @@ class PanelsMixin:
                     imgui.separator()
                     _, self.editor_3d.wireframe = imgui.menu_item(
                         "Wireframe", "Ctrl+5", self.editor_3d.wireframe)
+                imgui.end_menu()
+
+            if imgui.begin_menu("Assets"):
+                clicked_ab, _ = imgui.menu_item(
+                    "Asset Browser", "",
+                    getattr(self, 'show_asset_browser', False))
+                if clicked_ab:
+                    self.show_asset_browser = not getattr(
+                        self, 'show_asset_browser', False)
                 imgui.end_menu()
 
             # Right-aligned FPS
@@ -2582,6 +2594,42 @@ class PanelsMixin:
         if changed_fp:
             zone.first_person = new_fp
             self.dirty = True
+
+        # ── Skybox ────────────────────────────────────────────────
+        imgui.spacing()
+        imgui.text_disabled("Skybox")
+        from core.paths import SKYBOXES_DIR
+        _sky_exts = {".png", ".jpg", ".jpeg", ".bmp"}
+        sky_files = ["(none)"]
+        if SKYBOXES_DIR.exists():
+            sky_files += sorted(
+                f.name for f in SKYBOXES_DIR.iterdir()
+                if f.suffix.lower() in _sky_exts
+            )
+        cur_sky = zone.skybox if zone.skybox else "(none)"
+        try:
+            cur_idx = sky_files.index(cur_sky)
+        except ValueError:
+            # Skybox name stored but file deleted — show it as stale
+            sky_files.append(cur_sky)
+            cur_idx = len(sky_files) - 1
+        imgui.push_item_width(self.right_panel_w - 80)
+        changed_sky, new_idx = imgui.combo("##skybox_combo", cur_idx, sky_files)
+        imgui.pop_item_width()
+        if changed_sky:
+            chosen = sky_files[new_idx]
+            zone.skybox = "" if chosen == "(none)" else chosen
+            self.dirty = True
+
+        # ── Sky colour override (when no skybox) ─────────────────
+        if not zone.skybox:
+            sc = zone.sky_color if zone.sky_color else (50, 70, 160)
+            r_f, g_f, b_f = sc[0] / 255.0, sc[1] / 255.0, sc[2] / 255.0
+            changed_sc, (nr, ng, nb) = imgui.color_edit3(
+                "Sky Tint##sky_col", r_f, g_f, b_f)
+            if changed_sc:
+                zone.sky_color = (int(nr * 255), int(ng * 255), int(nb * 255))
+                self.dirty = True
 
     def _draw_camera_info(self) -> None:
         if not imgui.collapsing_header("Camera", imgui.TREE_NODE_DEFAULT_OPEN)[0]:

@@ -192,6 +192,8 @@ def save_binary_zone(
                 "fog_density": zone.fog_density,
                 "fog_color": zone.fog_color,
                 "render_portals": zone.render_portals,
+                "skybox": zone.skybox,
+                "sky_color": list(zone.sky_color) if zone.sky_color else [],
             }
             enty_bytes = msgpack.packb(enty_payload, use_bin_type=True)
             _write_chunk(f, CHUNK_ENTY, enty_bytes)
@@ -373,6 +375,8 @@ def load_binary_zone(
                     result["fog_density"] = enty.get("fog_density", [])
                     result["fog_color"] = enty.get("fog_color", [])
                     result["render_portals"] = enty.get("render_portals", [])
+                    result["skybox"] = enty.get("skybox", "")
+                    result["sky_color"] = tuple(enty.get("sky_color", []))
 
                 # -- Unknown chunk — skip ---------------------------
                 else:
@@ -418,6 +422,8 @@ def load_binary_zone(
             result.setdefault("fog_density", [])
             result.setdefault("fog_color", [])
             result.setdefault("render_portals", [])
+            result.setdefault("skybox", "")
+            result.setdefault("sky_color", ())
 
             return result
 
