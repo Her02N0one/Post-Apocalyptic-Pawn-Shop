@@ -172,12 +172,17 @@ class TestCellBoxGeometry:
         _, yb, yt = floor_boxes[0]
         assert yt - yb < 0.1, f"Ground-level floor should be thin, got {yt - yb}"
 
-    def test_ceiling_thin_slab_by_default(self):
-        """A lowered ceiling slab should be a thin slab (ch-S to ch+S)
-        by default, not extending to neighbour heights."""
+    def test_ceiling_thin_slab_when_neighbors_same(self):
+        """A lowered ceiling slab should be thin when all neighbours
+        have the same ceiling height (no step walls to show)."""
         ed, z = _make_editor()
         r, c = 2, 2
         _open_cell(z, r, c, fh=0.0, ch=0.6)
+        # Set all neighbours to the same ceiling height
+        for nr, nc in [(1, 2), (3, 2), (2, 1), (2, 3)]:
+            if 0 <= nr < z.height and 0 <= nc < z.width:
+                _open_cell(z, nr, nc, fh=0.0, ch=0.6)
+        ed._cell_box_cache.clear()
         boxes = ed._cell_boxes(r, c)
         ceil_boxes = [(p, yb, yt) for p, yb, yt in boxes if p == "ceiling"]
         assert len(ceil_boxes) == 1
@@ -185,6 +190,25 @@ class TestCellBoxGeometry:
         S = ed._SLAB
         assert yb == pytest.approx(0.6 - S)
         assert yt == pytest.approx(0.6 + S), f"Thin slab top should be ch+S, got {yt}"
+
+    def test_ceiling_extends_to_neighbor_step_wall(self):
+        """When a neighbour has a higher ceiling, the ceiling mass
+        extends upward so the step wall face is visible & paintable."""
+        ed, z = _make_editor()
+        r, c = 2, 2
+        _open_cell(z, r, c, fh=0.0, ch=0.6)
+        # Set all neighbours to ch=0.6 except north which is higher
+        for nr, nc in [(3, 2), (2, 1), (2, 3)]:
+            if 0 <= nr < z.height and 0 <= nc < z.width:
+                _open_cell(z, nr, nc, fh=0.0, ch=0.6)
+        _open_cell(z, 1, 2, fh=0.0, ch=1.2)
+        ed._cell_box_cache.clear()
+        boxes = ed._cell_boxes(r, c)
+        ceil_boxes = [(p, yb, yt) for p, yb, yt in boxes if p == "ceiling"]
+        assert len(ceil_boxes) == 1
+        _, yb, yt = ceil_boxes[0]
+        S = ed._SLAB
+        assert yt >= 1.2, f"Ceiling mass should extend to neighbor's ch, got {yt}"
 
     def test_default_ceiling_is_small(self):
         """Ceiling at 0.95 (default) should be a small block (0.91 to 1.0)."""
@@ -284,9 +308,8 @@ class TestFloorTool:
         ed.tool = "sculpt"
         ed.aimed = _CellHit(1.0, c, r, "floor", "top", 0.79)
         ed._tool_floor_raise()
-        # Floor raise no longer auto-converts to wall tile;
-        # clamped to ch - 0.05 = 0.95 - 0.05 = 0.90.
-        assert z.floor_heights[r][c] == pytest.approx(0.90)
+        # Floor raise never converts to wall; clamped to ch - 0.12 = 0.83.
+        assert z.floor_heights[r][c] == pytest.approx(0.83)
         assert not tile_def(z.tiles[r][c]).wall
 
     def test_works_on_wall(self):
@@ -350,9 +373,8 @@ class TestCeilingTool:
         ed.tool = "sculpt"
         ed.aimed = _CellHit(1.0, c, r, "ceiling", "bot", 0.66)
         ed._tool_ceiling_lower()
-        # Ceiling lower no longer auto-converts to wall tile;
-        # it just lowers the height, clamped to fh + 0.05 = 0.55.
-        assert z.ceil_heights[r][c] == pytest.approx(0.55)
+        # Ceiling lower never converts to wall; clamped to fh + 0.12 = 0.62.
+        assert z.ceil_heights[r][c] == pytest.approx(0.62)
         assert not tile_def(z.tiles[r][c]).wall
 
     def test_works_on_wall(self):
@@ -698,15 +720,15 @@ class TestFloorToolCardinal:
         assert z.floor_heights[r][c] == pytest.approx(0.75)
 
     def test_raise_aimed_floor_to_ceiling_becomes_wall(self):
-        """FLOOR tool via cardinal: raising aimed to its ceiling -> geo-solid."""
+        """FLOOR tool via cardinal: raising aimed to its ceiling -> clamped."""
         ed, z = _make_editor()
         r, c = 2, 2
         _open_cell(z, r, c, fh=0.75, ch=0.95)
         ed.tool = "sculpt"
         ed.aimed = _CellHit(1.0, c, r, "floor", "east", 0.5)
         ed._tool_floor_raise()
-        # No longer auto-converts tile type; clamped to ch - 0.05 = 0.90.
-        assert z.floor_heights[r][c] == pytest.approx(0.90)
+        # Clamped to ch - 0.12 = 0.83; stays open.
+        assert z.floor_heights[r][c] == pytest.approx(0.83)
         assert not tile_def(z.tiles[r][c]).wall
 
     def test_lower_aimed_goes_negative(self):
@@ -792,15 +814,15 @@ class TestCeilingToolCardinal:
         assert z.ceil_heights[r][c] == pytest.approx(0.70)
 
     def test_lower_aimed_ceiling_to_floor_becomes_wall(self):
-        """CEILING tool via cardinal: lowering aimed to its floor -> geo-solid."""
+        """CEILING tool via cardinal: lowering aimed to its floor -> clamped."""
         ed, z = _make_editor()
         r, c = 2, 2
         _open_cell(z, r, c, fh=0.5, ch=0.7)
         ed.tool = "sculpt"
         ed.aimed = _CellHit(1.0, c, r, "ceiling", "east", 0.68)
         ed._tool_ceiling_lower()
-        # No longer auto-converts tile type; clamped to fh + 0.05 = 0.55.
-        assert z.ceil_heights[r][c] == pytest.approx(0.55)
+        # Clamped to fh + 0.12 = 0.62; stays open.
+        assert z.ceil_heights[r][c] == pytest.approx(0.62)
         assert not tile_def(z.tiles[r][c]).wall
 
     def test_raise_aimed_clamps_to_10(self):
@@ -936,20 +958,26 @@ class TestPreviewCardinal:
 
 class TestNeighbourAwareCeilingBox:
 
-    def test_ceiling_is_thin_slab_by_default(self):
-        """Ceiling box should be a thin slab, not extending to neighbours."""
+    def test_ceiling_extends_to_neighbour_step_wall(self):
+        """Ceiling box should extend to neighbours with higher ceilings
+        so that ceiling step wall faces are visible and paintable."""
         ed, z = _make_editor()
         r, c = 2, 2
         adj_r, adj_c = 2, 3
         _open_cell(z, r, c, fh=0.0, ch=0.6)
         _open_cell(z, adj_r, adj_c, fh=0.0, ch=1.5)
+        # Set other neighbours to same height so only east extends
+        for nr, nc in [(1, 2), (3, 2), (2, 1)]:
+            if 0 <= nr < z.height and 0 <= nc < z.width:
+                _open_cell(z, nr, nc, fh=0.0, ch=0.6)
+        ed._cell_box_cache.clear()
         boxes = ed._cell_boxes(r, c)
         ceil_boxes = [(p, yb, yt) for p, yb, yt in boxes if p == "ceiling"]
         assert len(ceil_boxes) == 1
         _, yb, yt = ceil_boxes[0]
         S = ed._SLAB
         assert yb == pytest.approx(0.6 - S)
-        assert yt == pytest.approx(0.6 + S), "Thin slab, no neighbour extension"
+        assert yt >= 1.5, f"Ceiling should extend to neighbour ch=1.5, got {yt}"
 
     def test_explicit_upper_wall_extends_ceiling(self):
         """Setting upper_wall_height explicitly extends the ceiling box."""
@@ -1501,8 +1529,8 @@ class TestToggleCeiling:
         ed._compute_preview()
         assert ed.preview_box is None
 
-    def test_scroll_on_ceiling_raises_upper_wall(self):
-        """Scrolling up while aimed at ceiling increases upper_wall_height."""
+    def test_scroll_on_ceiling_raises_ceiling(self):
+        """Scrolling up while aimed at ceiling raises the ceiling height."""
         ed, z = _make_editor()
         r, c = 2, 2
         _open_cell(z, r, c, fh=0.0, ch=0.7)
@@ -1512,10 +1540,11 @@ class TestToggleCeiling:
         ed.snap_y = 0.25
         ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=1)
         ed.handle_event(ev)
-        assert z.upper_wall_height[r][c] == pytest.approx(0.95)
+        assert z.ceil_heights[r][c] == pytest.approx(0.95)
+        assert z.upper_wall_height[r][c] == 0.0  # unchanged
 
-    def test_scroll_on_ceiling_lowers_upper_wall(self):
-        """Scrolling down while aimed at ceiling decreases upper_wall_height."""
+    def test_scroll_on_ceiling_lowers_ceiling(self):
+        """Scrolling down while aimed at ceiling lowers the ceiling height."""
         ed, z = _make_editor()
         r, c = 2, 2
         _open_cell(z, r, c, fh=0.0, ch=0.7)
@@ -1526,10 +1555,13 @@ class TestToggleCeiling:
         ed.snap_y = 0.25
         ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=-1)
         ed.handle_event(ev)
+        # Ceiling lowered from 0.7 to 0.45
+        assert z.ceil_heights[r][c] == pytest.approx(0.45)
+        # UWH shifted by same delta (-0.25): 2.0 → 1.75
         assert z.upper_wall_height[r][c] == pytest.approx(1.75)
 
-    def test_scroll_on_ceiling_resets_at_min(self):
-        """Scrolling down enough resets upper_wall_height to 0 (auto)."""
+    def test_scroll_on_ceiling_shifts_uwh(self):
+        """Scrolling down shifts UWH with the ceiling."""
         ed, z = _make_editor()
         r, c = 2, 2
         _open_cell(z, r, c, fh=0.0, ch=0.7)
@@ -1540,7 +1572,9 @@ class TestToggleCeiling:
         ed.snap_y = 0.25
         ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=-1)
         ed.handle_event(ev)
-        assert z.upper_wall_height[r][c] == 0.0
+        # Ceiling lowered 0.7 → 0.45; UWH shifted 0.8 → 0.55
+        assert z.ceil_heights[r][c] == pytest.approx(0.45)
+        assert z.upper_wall_height[r][c] == pytest.approx(0.55)
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -1588,10 +1622,10 @@ class TestSelectToolHeight:
         self._select_region(ed, z, 2, 2, 2, 2)
         ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=1)
         ed.handle_event(ev)
-        # Floor should clamp at ch - 0.05 = 0.65
-        assert z.floor_heights[2][2] == pytest.approx(0.65)
-        # Ceiling should be pushed up by the delta
-        assert z.ceil_heights[2][2] == pytest.approx(0.85)
+        # Floor should clamp at ch - 0.12 = 0.58
+        assert z.floor_heights[2][2] == pytest.approx(0.58)
+        # Ceiling should be pushed up by the delta (0.08)
+        assert z.ceil_heights[2][2] == pytest.approx(0.78)
 
     def test_ceiling_mode_toggle(self):
         """X key toggles ceiling mode on the select tool."""

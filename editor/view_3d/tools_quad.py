@@ -148,6 +148,7 @@ class QuadMixin:
             return
         self._push_undo()
         zone.quads.pop(idx)
+        self._flash("Quad deleted — Ct+Z to undo", 1.5, (1.0, 0.6, 0.5, 1.0))
         if self._quad_selected is not None:
             if self._quad_selected == idx:
                 self._quad_selected = None

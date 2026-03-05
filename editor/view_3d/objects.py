@@ -338,6 +338,7 @@ class ObjectLayer:
                     zone.render_portals.pop(idx)
                     ed._portal_selected = None
                     ed.dirty = True
+                    ed._flash("Portal deleted — Ct+Z to undo", 1.5, (1.0, 0.6, 0.5, 1.0))
                     deleted = True
 
         return deleted

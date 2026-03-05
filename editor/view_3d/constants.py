@@ -209,9 +209,10 @@ TOOL_HINTS = {
                 "Sh+Scrl": "Snap grid",
             },
             "ceiling": {
-                "LMB": "Lower ceiling",
-                "RMB": "Raise ceiling",
-                "Scroll": "Upper wall",
+                "LMB": "Lower ceiling (room shorter)",
+                "RMB": "Raise ceiling (room taller)",
+                "Scroll": "Raise/lower ceiling",
+                "Ct+Scrl": "Extend/retract wall above",
                 "Sh+Scrl": "Snap grid",
             },
             "layer2": {
@@ -242,7 +243,7 @@ TOOL_HINTS = {
                 "Scroll": "Cycle palette",
             },
         },
-        "keys": "T=tile picker  6-0=hotbar  Alt+1-0=hotbar",
+        "keys": "T=tile picker  Scroll=cycle palette",
     },
     "segment": {
         "title": "Detail",

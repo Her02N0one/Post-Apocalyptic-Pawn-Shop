@@ -126,6 +126,7 @@ class CurveMixin:
             return
         self._push_undo()
         zone.curves.pop(idx)
+        self._flash("Curve deleted — Ct+Z to undo", 1.5, (1.0, 0.6, 0.5, 1.0))
         if self._curve_selected is not None:
             if self._curve_selected == idx:
                 self._curve_selected = None

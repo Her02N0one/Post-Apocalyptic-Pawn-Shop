@@ -176,6 +176,7 @@ class EntityMixin:
 
         self._push_undo()
         zone.entities.pop(idx)
+        self._flash("Entity deleted — Ct+Z to undo", 1.5, (1.0, 0.6, 0.5, 1.0))
 
         # Fix selection index
         if self._ent_selected is not None:

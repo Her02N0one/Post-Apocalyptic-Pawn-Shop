@@ -15,6 +15,38 @@ from editor.view_3d.cell_ops import reset_cell
 class SculptMixin:
     """Floor/ceiling sculpting, cell conversion, and upper-wall adjustment."""
 
+    # ── Ceiling mass coherence ─────────────────────────────────────
+
+    def _shift_ceil_mass(self, r: int, c: int,
+                         old_ch: float, delta: float) -> None:
+        """Shift upper_wall_height and ceiling segment Y values by *delta*.
+
+        Called whenever ``ceil_heights`` changes so the rest of the
+        ceiling mass (UWH extension + segment boundaries) stays in
+        sync with the new ceiling position.
+        """
+        if abs(delta) < 0.001:
+            return
+        zone = self.zone
+        new_ch = zone.ceil_heights[r][c]
+
+        # Shift UWH if it was explicitly set above the old ceiling
+        if zone.upper_wall_height and len(zone.upper_wall_height) > r:
+            uwh = zone.upper_wall_height[r][c]
+            if uwh > old_ch + 0.01:
+                new_uwh = uwh + delta
+                if new_uwh > new_ch + 0.01:
+                    zone.upper_wall_height[r][c] = min(CEIL_MAX, new_uwh)
+                else:
+                    zone.upper_wall_height[r][c] = 0.0  # collapsed → reset
+
+        # Shift ceiling segment boundaries so they stay at the same
+        # relative position within the mass.
+        if zone.ceil_step_segments and len(zone.ceil_step_segments) > r:
+            for fi in range(4):
+                for seg in zone.ceil_step_segments[r][c][fi]:
+                    seg[1] += delta
+
     # ── Tile-type sync ─────────────────────────────────────────────
 
     def _sync_tile_type(self, r: int, c: int) -> None:
@@ -53,14 +85,17 @@ class SculptMixin:
         fh = zone.floor_heights[r][c]
         ch = zone.ceil_heights[r][c]
         is_sky = ch >= SKY_HEIGHT
-        max_fh = FLOOR_MAX if is_sky else min(FLOOR_MAX, ch - 0.05)
+        max_fh = FLOOR_MAX if is_sky else min(FLOOR_MAX, ch - 0.12)
         new_fh = min(fh + self.snap_y, max_fh)
         if abs(new_fh - fh) < 0.001:
             return False
         delta = new_fh - fh
         zone.floor_heights[r][c] = new_fh
         if not is_sky:
+            old_ch = ch
             zone.ceil_heights[r][c] = min(CEIL_MAX, ch + delta)
+            self._shift_ceil_mass(r, c, old_ch,
+                                  zone.ceil_heights[r][c] - old_ch)
         for fi in range(4):
             segs = zone.floor_step_segments[r][c][fi]
             if segs:
@@ -121,12 +156,16 @@ class SculptMixin:
         fh = zone.floor_heights[r][c]
         if ch >= SKY_HEIGHT:
             new_ch = fh + DEFAULT_CEIL
-        else:
-            min_ch = max(CEIL_MIN, fh + 0.05)
-            new_ch = max(ch - self.snap_y, min_ch)
+            zone.ceil_heights[r][c] = new_ch
+            # Coming from sky → no mass to shift
+            self._sync_tile_type(r, c)
+            return True
+        min_ch = max(CEIL_MIN, fh + 0.12)
+        new_ch = max(ch - self.snap_y, min_ch)
         if abs(new_ch - ch) < 0.001:
             return False
         zone.ceil_heights[r][c] = new_ch
+        self._shift_ceil_mass(r, c, ch, new_ch - ch)
         self._sync_tile_type(r, c)
         return True
 
@@ -158,6 +197,8 @@ class SculptMixin:
         zone.ceil_heights[r][c] = new_ch
         if new_ch >= SKY_HEIGHT - 0.01:
             self._clear_ceil_segments(r, c)
+        else:
+            self._shift_ceil_mass(r, c, ch, new_ch - ch)
         self._sync_tile_type(r, c)
         return True
 
@@ -288,6 +329,7 @@ class SculptMixin:
         self._push_undo()
         reset_cell(self.zone, hit.row, hit.col, self._open_tile)
         self.dirty = True
+        self._flash("Cell cleared — Ct+Z to undo", 1.2, (1.0, 0.6, 0.5, 1.0))
         return True
 
     # ── Upper-wall height adjustment ──────────────────────────────
@@ -325,8 +367,26 @@ class SculptMixin:
         self.dirty = True
         return True
 
+    def _scroll_ceiling_height(self, direction: int) -> None:
+        """Scroll while aimed at ceiling: raise/lower the ceiling itself."""
+        hit = self.aimed
+        if not hit or hit.part != "ceiling":
+            return
+        r, c = hit.row, hit.col
+        td = tile_def(self.zone.tiles[r][c])
+        if td and td.wall:
+            return
+        self._push_undo()
+        self._ensure_face_textures()
+        if direction > 0:
+            changed = self._ceiling_raise_at(r, c)
+        else:
+            changed = self._ceiling_lower_at(r, c)
+        if changed:
+            self.dirty = True
+
     def _scroll_upper_wall(self, direction: int) -> None:
-        """Scroll while aimed at ceiling: raise/lower upper wall height (pure shape)."""
+        """Ctrl+Scroll while aimed at ceiling: raise/lower upper wall height."""
         hit = self.aimed
         if not hit or hit.part != "ceiling":
             return
@@ -443,10 +503,8 @@ class SculptMixin:
         ch = zone.ceil_heights[r][c]
 
         if direction > 0:
-            # Raise ceiling to open the wall
             new_ch = min(ch + self.snap_y, SKY_HEIGHT)
         else:
-            # Lower ceiling toward floor
             min_ch = fh
             new_ch = max(ch - self.snap_y, min_ch)
 
@@ -457,6 +515,8 @@ class SculptMixin:
         zone.ceil_heights[r][c] = new_ch
         if new_ch >= SKY_HEIGHT - 0.01:
             self._clear_ceil_segments(r, c)
+        else:
+            self._shift_ceil_mass(r, c, ch, new_ch - ch)
         self._sync_tile_type(r, c)
         self.dirty = True
 
@@ -472,7 +532,7 @@ class SculptMixin:
         ch = zone.ceil_heights[r][c]
         is_sky = ch >= SKY_HEIGHT
         if direction > 0:
-            max_fh = FLOOR_MAX if is_sky else min(FLOOR_MAX, ch - 0.05)
+            max_fh = FLOOR_MAX if is_sky else min(FLOOR_MAX, ch - 0.12)
             new_fh = min(fh + self.snap_y, max_fh)
         else:
             new_fh = max(FLOOR_MIN, fh - self.snap_y)
@@ -484,7 +544,10 @@ class SculptMixin:
         zone.floor_heights[r][c] = new_fh
         # Push ceiling up with floor so the gap is preserved
         if not is_sky and delta > 0:
+            old_ch = ch
             zone.ceil_heights[r][c] = min(CEIL_MAX, ch + delta)
+            self._shift_ceil_mass(r, c, old_ch,
+                                  zone.ceil_heights[r][c] - old_ch)
         # Sync or trim floor step segments
         if direction > 0:
             for fi in range(4):

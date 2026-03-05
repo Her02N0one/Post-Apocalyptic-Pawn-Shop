@@ -144,7 +144,7 @@ class PanelsMixin:
             self._unsaved_guard_dialog()
         if not self.mouse_captured:
             self._capture_hint()
-        if self.mouse_captured and self._transient_time > 0:
+        if self._transient_time > 0:
             self._draw_transient_indicator()
         # Keyboard shortcut help overlay (? key)
         if self.editor_3d and getattr(self.editor_3d, '_show_help', False):
@@ -154,6 +154,17 @@ class PanelsMixin:
             self._draw_keybind_editor()
 
     # ── Helpers ───────────────────────────────────────────────────
+
+    def _kb_label(self, action: str) -> str:
+        """Return the effective keybind label for *action* from the registry.
+
+        Falls back to ``""`` if the editor or action is not available.
+        """
+        ed = getattr(self, 'editor_3d', None)
+        if not ed:
+            return ""
+        kb = ed.kb.get(action)
+        return kb.key_label() if kb else ""
 
     @staticmethod
     def _section_header(label: str, r: float = 0.55, g: float = 0.65,
@@ -322,16 +333,16 @@ class PanelsMixin:
                     _, self.editor_3d.show_axes = imgui.menu_item(
                         "Show Axes", "F10", self.editor_3d.show_axes)
                     _, self.editor_3d.show_walls = imgui.menu_item(
-                        "Show Walls", "V", self.editor_3d.show_walls)
+                        "Show Walls", "Ctrl+1", self.editor_3d.show_walls)
                     _, self.editor_3d.show_floors = imgui.menu_item(
-                        "Show Floors", "F", self.editor_3d.show_floors)
+                        "Show Floors", "Ctrl+2", self.editor_3d.show_floors)
                     _, self.editor_3d.show_ceilings = imgui.menu_item(
-                        "Show Ceilings", "J", self.editor_3d.show_ceilings)
+                        "Show Ceilings", "Ctrl+3", self.editor_3d.show_ceilings)
                     _, self.editor_3d.show_entities = imgui.menu_item(
-                        "Show Entities", "N", self.editor_3d.show_entities)
+                        "Show Entities", "Ctrl+4", self.editor_3d.show_entities)
                     imgui.separator()
                     _, self.editor_3d.wireframe = imgui.menu_item(
-                        "Wireframe", "\\", self.editor_3d.wireframe)
+                        "Wireframe", "Ctrl+5", self.editor_3d.wireframe)
                 imgui.end_menu()
 
             # Right-aligned FPS
@@ -352,10 +363,9 @@ class PanelsMixin:
     # ── Global state bar (Layer + View mode) ──────────────────────
 
     def _global_state_bar(self) -> None:
-        """Draw the global state bar: Layer selector + View mode toggle.
+        """Draw the global state bar — single row:
 
-        This is the Z-Plane Authority — the user must always know which
-        elevation layer they are manipulating.
+        Layer selector | Isolate | View | Tab switch | Undo/Redo/Save | Keybinds | Help | Clipboard
         """
         win_w, _ = self.win_size
         imgui.set_next_window_position(0, MENU_BAR_H)
@@ -369,46 +379,38 @@ class PanelsMixin:
         ed = self.editor_3d
 
         # ── Layer selector ────────────────────────────────────────
-        imgui.text_colored("\u2756", 0.9, 0.75, 0.3, 1.0)  # ❖
-        imgui.same_line()
-        imgui.text_colored("LAYER:", 0.7, 0.7, 0.75, 1.0)
-        imgui.same_line()
-
         active_layer = ed.active_layer if ed else 1
         isolate = ed.isolate_layer if ed else False
 
-        # Layer 1 button
         is_l1 = active_layer == 1
         if is_l1:
             imgui.push_style_color(imgui.COLOR_BUTTON, 0.22, 0.55, 0.30, 1.0)
             imgui.push_style_color(imgui.COLOR_BUTTON_HOVERED, 0.28, 0.65, 0.38, 1.0)
-        if imgui.button("1: Ground##layer1", 90, 22):
+        _l1k = self._kb_label("layer.down")
+        if imgui.button(f"{_l1k} L1##layer1", 0, 20):
             if ed:
                 ed.active_layer = 1
         if is_l1:
             imgui.pop_style_color(2)
         imgui.same_line()
 
-        # Layer 2 button
         is_l2 = active_layer == 2
         if is_l2:
             imgui.push_style_color(imgui.COLOR_BUTTON, 0.50, 0.35, 0.70, 1.0)
             imgui.push_style_color(imgui.COLOR_BUTTON_HOVERED, 0.60, 0.42, 0.80, 1.0)
-        if imgui.button("2: Upper##layer2", 90, 22):
+        _l2k = self._kb_label("layer.up")
+        if imgui.button(f"{_l2k} L2##layer2", 0, 20):
             if ed:
                 ed.active_layer = 2
         if is_l2:
             imgui.pop_style_color(2)
-
-        imgui.same_line()
-        imgui.text("  ")
         imgui.same_line()
 
-        # Isolate toggle
         if isolate:
             imgui.push_style_color(imgui.COLOR_BUTTON, 0.70, 0.25, 0.25, 1.0)
             imgui.push_style_color(imgui.COLOR_BUTTON_HOVERED, 0.80, 0.35, 0.35, 1.0)
-        if imgui.button("Iso Alt+I##iso", 80, 22):
+        _iso_k = self._kb_label("display.isolate")
+        if imgui.button(f"{_iso_k} Iso##iso", 0, 20):
             if ed:
                 ed.isolate_layer = not ed.isolate_layer
         if isolate:
@@ -419,30 +421,87 @@ class PanelsMixin:
         imgui.text_colored("|", 0.3, 0.3, 0.35, 1.0)
         imgui.same_line()
 
-        # ── View mode ─────────────────────────────────────────────
-        imgui.text_colored("\U0001f441", 0.5, 0.7, 0.9, 1.0)  # 👁
-        imgui.same_line()
-        imgui.text_colored("VIEW:", 0.7, 0.7, 0.75, 1.0)
-        imgui.same_line()
-
+        # ── View mode (Lit / Pathing) ─────────────────────────────
         view_3d = ed.view_mode_3d if ed else VIEW_LIT
         for vm in VIEW_MODES:
             is_active = view_3d == vm
             if is_active:
                 imgui.push_style_color(imgui.COLOR_BUTTON, 0.25, 0.45, 0.65, 1.0)
                 imgui.push_style_color(imgui.COLOR_BUTTON_HOVERED, 0.30, 0.55, 0.75, 1.0)
-            if imgui.button(f"{VIEW_LABELS[vm]}##vm_{vm}", 70, 22):
+            if imgui.button(f"{VIEW_LABELS[vm]}##vm_{vm}", 0, 20):
                 if ed:
                     ed.view_mode_3d = vm
             if is_active:
                 imgui.pop_style_color(2)
             imgui.same_line()
 
+        # ── View switch (Tab) ─────────────────────────────────────
+        imgui.text_colored("|", 0.3, 0.3, 0.35, 1.0)
+        imgui.same_line()
+        _tab_k = self._kb_label("view.toggle")
+        mode_label = "\u25b6 Preview" if self.view_mode == "3d" else "\u270e Editor"
+        if imgui.button(f"{_tab_k} {mode_label}##viewswitch", 0, 20):
+            self._toggle_view_mode()
+
+        # ── Separator ─────────────────────────────────────────────
+        imgui.same_line()
+        imgui.text_colored("|", 0.3, 0.3, 0.35, 1.0)
+        imgui.same_line()
+
+        # ── Quick actions: Undo / Redo / Save ─────────────────────
+        imgui.push_style_color(imgui.COLOR_BUTTON, 0.15, 0.15, 0.20, 0.7)
+        imgui.push_style_color(imgui.COLOR_BUTTON_HOVERED, 0.25, 0.25, 0.32, 0.9)
+        _undo_k = self._kb_label("edit.undo")
+        if imgui.button(f"{_undo_k} \u21b6##undo", 0, 20):
+            if ed:
+                ed._undo()
+        imgui.same_line()
+        _redo_k = self._kb_label("edit.redo_cy")
+        if imgui.button(f"{_redo_k} \u21b7##redo", 0, 20):
+            if ed:
+                ed._redo()
+        imgui.same_line()
+        imgui.pop_style_color(2)
+
+        if self.dirty:
+            imgui.push_style_color(imgui.COLOR_BUTTON, 0.55, 0.35, 0.10, 0.9)
+            imgui.push_style_color(imgui.COLOR_BUTTON_HOVERED, 0.65, 0.45, 0.15, 1.0)
+        else:
+            imgui.push_style_color(imgui.COLOR_BUTTON, 0.15, 0.15, 0.20, 0.7)
+            imgui.push_style_color(imgui.COLOR_BUTTON_HOVERED, 0.25, 0.25, 0.32, 0.9)
+        _save_k = self._kb_label("file.save")
+        if imgui.button(f"{_save_k} \U0001f4be##save", 0, 20):
+            self._save_zone()
+        imgui.pop_style_color(2)
+
+        # ── Separator ─────────────────────────────────────────────
+        imgui.same_line()
+        imgui.text_colored("|", 0.3, 0.3, 0.35, 1.0)
+        imgui.same_line()
+
+        # ── Keybind editor + Help ─────────────────────────────────
+        kb_open = getattr(self, 'show_keybind_editor', False)
+        if kb_open:
+            imgui.push_style_color(imgui.COLOR_BUTTON, 0.35, 0.25, 0.55, 0.9)
+            imgui.push_style_color(imgui.COLOR_BUTTON_HOVERED, 0.45, 0.35, 0.65, 1.0)
+        else:
+            imgui.push_style_color(imgui.COLOR_BUTTON, 0.15, 0.15, 0.20, 0.7)
+            imgui.push_style_color(imgui.COLOR_BUTTON_HOVERED, 0.25, 0.25, 0.32, 0.9)
+        if imgui.button("\u2699##kbbtn", 0, 20):
+            self.show_keybind_editor = not kb_open
+        imgui.pop_style_color(2)
+
+        imgui.same_line()
+        if imgui.button("?##helpbtn", 0, 20):
+            if ed:
+                ed._show_help = not getattr(ed, '_show_help', False)
+
         # ── Right side: clipboard indicator ───────────────────────
         if ed and ed._clipboard:
-            spacing = max(0.0, win_w - 200)
-            imgui.same_line(spacing)
-            imgui.text_colored("\U0001f4cb Clipboard", 0.6, 0.6, 0.5, 1.0)
+            imgui.same_line()
+            clip_w = imgui.calc_text_size("\U0001f4cb")[0] + 8
+            imgui.same_line(max(0.0, win_w - clip_w - 8))
+            imgui.text_colored("\U0001f4cb", 0.6, 0.6, 0.5, 1.0)
 
         imgui.end()
         imgui.pop_style_color()
@@ -471,9 +530,6 @@ class PanelsMixin:
         self._draw_brush_or_preset(ed)
         self._draw_controls_section(ed)
         self._draw_selection_info(ed)
-        self._draw_display_section(ed)
-        self._draw_view_mode_button()
-        self._draw_zone_list()
 
         imgui.end()
 
@@ -489,10 +545,13 @@ class PanelsMixin:
         # ── 4 primary mode buttons (2×2 grid) ────────────────────
         n_cols = 2
         btn_w = (avail_w - (n_cols - 1) * spacing_x) / n_cols
-        fkey_label = {0: "F1", 1: "F2", 2: "F3", 3: "F4"}
+        _mode_actions_lp = [
+            (MODES[0], "mode.arch"), (MODES[1], "mode.surface"),
+            (MODES[2], "mode.props"), (MODES[3], "mode.logic"),
+        ]
         active_mode = getattr(ed, 'mode', MODES[0])
 
-        for i, mode in enumerate(MODES):
+        for i, (mode, m_action) in enumerate(_mode_actions_lp):
             if i % n_cols != 0:
                 imgui.same_line()
             is_active = active_mode == mode
@@ -504,8 +563,9 @@ class PanelsMixin:
                 imgui.push_style_color(imgui.COLOR_TEXT, 1.0, 1.0, 1.0, 1.0)
             else:
                 imgui.push_style_color(imgui.COLOR_TEXT, 0.60, 0.60, 0.65, 1.0)
+            _fk = self._kb_label(m_action)
             label = MODE_LABELS[mode]
-            if imgui.button(f"{fkey_label[i]} {label}##{mode}", btn_w, 30):
+            if imgui.button(f"{_fk} {label}##{mode}", btn_w, 30):
                 self._switch_mode(ed, mode)
             if is_active:
                 imgui.pop_style_color(4)
@@ -532,7 +592,8 @@ class PanelsMixin:
                 else:
                     imgui.push_style_color(imgui.COLOR_TEXT, 0.65, 0.65, 0.70, 1.0)
                 tool_label = TOOL_LABELS.get(tool, tool.upper())
-                if imgui.button(f"{ti + 1} {tool_label}##{tool}", sub_w, 24):
+                _stk = self._kb_label(f"subtool.{ti + 1}")
+                if imgui.button(f"{_stk} {tool_label}##{tool}", sub_w, 24):
                     self._switch_tool(ed, tool)
                 if is_tool_active:
                     imgui.pop_style_color(4)
@@ -543,13 +604,12 @@ class PanelsMixin:
         imgui.spacing()
         imgui.separator()
         imgui.text_colored("\u2581 UTILITY", 0.50, 0.55, 0.50, 1.0)
-        _util = [
-            ("select", "B"), ("stamp", "P"),
-            ("quad", "I"), ("portal", "O"), ("curve", ";"),
+        _util_general = [
+            ("select", "tool.select"), ("stamp", "tool.stamp"),
         ]
         n_util_cols = 2
         btn_w2 = (avail_w - spacing_x) / float(n_util_cols)
-        for i, (tool_name, key_lbl) in enumerate(_util):
+        for i, (tool_name, kb_action) in enumerate(_util_general):
             if i % n_util_cols != 0:
                 imgui.same_line()
             is_active = ed.tool == tool_name
@@ -562,7 +622,8 @@ class PanelsMixin:
             else:
                 imgui.push_style_color(imgui.COLOR_TEXT, 0.55, 0.55, 0.60, 1.0)
             tool_label = TOOL_LABELS.get(tool_name, tool_name.upper())
-            if imgui.button(f"{key_lbl} {tool_label}##{tool_name}", btn_w2, 24):
+            _utk = self._kb_label(kb_action)
+            if imgui.button(f"{_utk} {tool_label}##{tool_name}", btn_w2, 24):
                 if ed.tool == tool_name:
                     if tool_name == "select":
                         ed._sel_cancel()
@@ -582,7 +643,7 @@ class PanelsMixin:
 
     def _switch_mode(self, ed, mode: str) -> None:
         """Switch to a primary editor mode and activate its first tool."""
-        from editor.view_3d.constants import MODE_TOOLS as MT, MODES as _MODES
+        from editor.view_3d.constants import MODE_TOOLS as MT, MODES as _MODES, MODE_LABELS
         if ed.tool == "select":
             ed._sel_cancel()
         ed._leave_tool(ed.tool)
@@ -591,6 +652,7 @@ class PanelsMixin:
         if sub_tools:
             ed.tool = sub_tools[0]
             ed._prev_tool = sub_tools[0]
+        ed._flash(f"{MODE_LABELS.get(mode, mode)}", 0.8, (0.85, 0.9, 1.0, 1.0))
 
     def _switch_tool(self, ed, tool: str) -> None:
         """Switch to a sub-tool within the current mode."""
@@ -599,6 +661,8 @@ class PanelsMixin:
         ed._leave_tool(ed.tool)
         ed.tool = tool
         ed._prev_tool = tool
+        from editor.view_3d.constants import TOOL_LABELS
+        ed._flash(f"{TOOL_LABELS.get(tool, tool)}", 0.6, (0.85, 0.9, 1.0, 1.0))
 
     def _draw_snap_buttons(self, ed, spacing_x: float) -> None:
         self._section_header("\u2581 SNAP", 0.55, 0.75, 0.60)
@@ -894,7 +958,11 @@ class PanelsMixin:
                 ed._sel_reset_cells()
 
     def _draw_help_overlay(self) -> None:
-        """Floating keyboard shortcut reference (toggled with ? key)."""
+        """Floating keyboard shortcut reference (toggled with ? key).
+
+        All key labels are pulled dynamically from the keybind registry
+        so they stay correct even after rebinding.
+        """
         win_w, win_h = self.win_size
         ow, oh = min(480, win_w - 100), min(600, win_h - 100)
         imgui.set_next_window_position(
@@ -908,84 +976,86 @@ class PanelsMixin:
             imgui.end()
             return
 
+        k = self._kb_label  # shorthand
+
         _HELP = [
             ("MODES", [
-                ("F1",        "Architecture mode (sculpt, segment)"),
-                ("F2",        "Surface mode (paint)"),
-                ("F3",        "Props mode (prism, quad, curve)"),
-                ("F4",        "Logic mode (entity, portal)"),
+                (k("mode.arch"),    "Architecture mode (sculpt, segment)"),
+                (k("mode.surface"), "Surface mode (paint)"),
+                (k("mode.props"),   "Props mode (prism, quad, curve)"),
+                (k("mode.logic"),   "Logic mode (entity, portal)"),
             ]),
             ("LAYERS", [
-                ("PgUp/PgDn", "Switch active layer (1/2)"),
-                ("Alt+I",     "Isolate active layer"),
+                (f"{k('layer.down')}/{k('layer.up')}", "Switch active layer (1/2)"),
+                (k("display.isolate"), "Isolate active layer"),
             ]),
             ("SELECTION", [
-                ("B",         "Enter/exit select mode"),
-                ("LMB+LMB",  "Rectangle select (two clicks)"),
-                ("Sh+LMB",   "Line select / add to selection"),
-                ("Ct+LMB",   "Toggle individual cell"),
-                ("Ct+A",     "Select all cells"),
-                ("Sh+G",     "Select similar (match properties)"),
-                ("Esc",      "Clear selection"),
-                ("X",        "Toggle floor/ceiling mode"),
+                (k("tool.select"),     "Enter/exit select mode"),
+                ("LMB+LMB",           "Rectangle select (two clicks)"),
+                ("Sh+LMB",            "Line select / add to selection"),
+                ("Ct+LMB",            "Toggle individual cell"),
+                (k("select.all"),      "Select all cells"),
+                (k("select.similar"),  "Select similar (match properties)"),
+                ("Esc",               "Clear selection"),
+                (k("sel.ceil_mode"),   "Toggle floor/ceiling mode"),
             ]),
             ("CLIPBOARD", [
-                ("Ct+C",     "Copy cell state to clipboard"),
-                ("Ct+V",     "Paste clipboard (respects paste mask)"),
+                (k("edit.copy"),  "Copy cell state to clipboard"),
+                (k("edit.paste"), "Paste clipboard (respects paste mask)"),
             ]),
             ("DISPLAY", [
-                ("Ct+1 / V",  "Toggle walls"),
-                ("Ct+2 / F",  "Toggle floors"),
-                ("Ct+3 / J",  "Toggle ceilings"),
-                ("Ct+4 / N",  "Toggle entities"),
-                ("Ct+5 / \\", "Toggle wireframe"),
-                ("F10",       "Toggle axes"),
+                (k("display.walls_c"),     "Toggle walls"),
+                (k("display.floors_c"),    "Toggle floors"),
+                (k("display.ceilings_c"),  "Toggle ceilings"),
+                (k("display.entities_c"),  "Toggle entities"),
+                (k("display.wireframe_c"), "Toggle wireframe"),
+                (k("display.axes"),        "Toggle axes"),
+                (k("display.isolate"),     "Isolate layer"),
             ]),
             ("GLOBAL", [
-                ("Ct+S",     "Save"),
-                ("Ct+Z",     "Undo"),
-                ("Ct+Y",     "Redo"),
-                ("?",        "This help overlay"),
-                ("Esc",      "Deselect / cancel / release mouse"),
-            ]),
-            ("HOTBAR", [
-                ("6-0",       "Texture slots 6-10"),
-                ("Alt+1-0",   "Texture slots 1-10"),
+                (k("file.save"),  "Save"),
+                (k("edit.undo"),  "Undo"),
+                (k("edit.redo_cy"), "Redo"),
+                (k("view.toggle"), "Toggle 3D / Preview"),
+                ("?",             "This help overlay"),
+                ("Esc",          "Deselect / cancel / release mouse"),
             ]),
             ("SCULPT", [
-                ("LMB/RMB",     "Raise/lower floor"),
-                ("Sh+LMB/RMB",  "Lower/raise ceiling"),
-                ("Scroll",       "Extend / adjust"),
-                ("T / Sh+T",     "Add / remove ceiling"),
-                ("H / Sh+H",     "Make wall / open"),
-                ("L / Sh+L",     "Flatten floor / ceiling"),
-                ("U / Sh+U",     "Raise / lower upper wall"),
-                ("Ct+U",         "Reset upper wall height"),
-                ("R",            "Reset height"),
-                ("G",            "Cycle snap grid"),
+                ("LMB/RMB",         "Raise/lower floor"),
+                ("Sh+LMB/RMB",      "Lower/raise ceiling"),
+                ("Scroll",           "Extend / adjust"),
+                (f"{k('sculpt.toggle_ceiling')}/Sh+{k('sculpt.toggle_ceiling')}", "Add / remove ceiling"),
+                (f"{k('sculpt.make_wall')}/{k('sculpt.make_open')}", "Make wall / open"),
+                (f"{k('sel.flatten_floors')}/{k('sel.flatten_ceilings')}", "Flatten floor / ceiling (sel)"),
+                (f"{k('sculpt.raise_upper_wall')}/{k('sculpt.lower_upper_wall')}", "Raise / lower upper wall"),
+                (k("sculpt.reset_upper_wall"), "Reset upper wall height"),
+                (k("sculpt.reset_floor"),      "Reset height"),
+                (k("sculpt.cycle_grid"),       "Cycle snap grid"),
             ]),
             ("PAINT", [
-                ("LMB",         "Paint face"),
-                ("Sh+LMB",      "Paint whole cell"),
-                ("Ct+LMB",      "Flood fill"),
-                ("RMB",         "Erase texture"),
-                ("MMB",         "Eyedropper"),
-                ("Scroll",      "Cycle palette"),
+                ("LMB",             "Paint face"),
+                ("Sh+LMB",          "Paint whole cell"),
+                ("Ct+LMB",          "Flood fill"),
+                ("RMB",             "Erase texture"),
+                ("MMB",             "Eyedropper"),
+                ("Scroll",          "Cycle palette"),
             ]),
             ("OBJECTS", [
-                ("LMB",          "Place / select"),
-                ("Ct+LMB",       "Toggle multi-select"),
-                ("Sh+LMB",       "Add to selection"),
-                ("RMB",          "Deselect / delete"),
-                ("Del",          "Delete selected (any tool)"),
-                ("R",            "Rotate 90\u00b0 (prism)"),
-                ("Scroll",       "Type-specific adjust"),
+                ("LMB",              "Place / select"),
+                ("Ct+LMB",           "Toggle multi-select"),
+                ("Sh+LMB",           "Add to selection"),
+                ("RMB",              "Deselect / delete"),
+                ("Del",              "Delete selected (any tool)"),
+                ("R",                "Rotate 90\u00b0 (prism)"),
+                ("Scroll",           "Type-specific adjust"),
             ]),
         ]
 
         for section, binds in _HELP:
             if imgui.collapsing_header(section, imgui.TREE_NODE_DEFAULT_OPEN)[0]:
                 for key, desc in binds:
+                    if not key:         # skip if registry returned ""
+                        continue
                     imgui.push_style_color(imgui.COLOR_TEXT, 0.90, 0.80, 0.45, 1.0)
                     imgui.text(f"  {key:14s}")
                     imgui.pop_style_color()
@@ -1194,15 +1264,20 @@ class PanelsMixin:
     def _draw_display_section(self, ed) -> None:
         self._section_header("\u2581 DISPLAY", 0.50, 0.60, 0.65)
         half_w = imgui.get_content_region_available()[0] * 0.5
-        _, ed.show_walls = imgui.checkbox("Walls (Ct+1)", ed.show_walls)
+        _w = self._kb_label("display.walls_c")
+        _f = self._kb_label("display.floors_c")
+        _c = self._kb_label("display.ceilings_c")
+        _e = self._kb_label("display.entities_c")
+        _wf = self._kb_label("display.wireframe_c")
+        _, ed.show_walls = imgui.checkbox(f"Walls ({_w})", ed.show_walls)
         imgui.same_line(half_w)
-        _, ed.show_floors = imgui.checkbox("Floors (Ct+2)", ed.show_floors)
-        _, ed.show_ceilings = imgui.checkbox("Ceilings (Ct+3)", ed.show_ceilings)
+        _, ed.show_floors = imgui.checkbox(f"Floors ({_f})", ed.show_floors)
+        _, ed.show_ceilings = imgui.checkbox(f"Ceilings ({_c})", ed.show_ceilings)
         imgui.same_line(half_w)
         _, ed.show_axes = imgui.checkbox("Axes", ed.show_axes)
-        _, ed.show_entities = imgui.checkbox("Entities (Ct+4)", ed.show_entities)
+        _, ed.show_entities = imgui.checkbox(f"Entities ({_e})", ed.show_entities)
         imgui.same_line(half_w)
-        _, ed.wireframe = imgui.checkbox("Wire (Ct+5)", ed.wireframe)
+        _, ed.wireframe = imgui.checkbox(f"Wire ({_wf})", ed.wireframe)
 
         # FOV slider (visible in raycaster preview mode)
         if self.view_mode == "2d" and self.renderer:
@@ -1218,7 +1293,8 @@ class PanelsMixin:
         full_w = imgui.get_content_region_available()[0]
         mode_label = "Preview" if self.view_mode == "3d" else "Editor"
         mode_icon = "\u25b6" if self.view_mode == "3d" else "\u270e"
-        if imgui.button(f"{mode_icon} Switch to {mode_label} (Tab)", full_w, 26):
+        _tab = self._kb_label("view.toggle")
+        if imgui.button(f"{mode_icon} Switch to {mode_label} ({_tab})", full_w, 26):
             self._toggle_view_mode()
 
     def _draw_zone_list(self) -> None:

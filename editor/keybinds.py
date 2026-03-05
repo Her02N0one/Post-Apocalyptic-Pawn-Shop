@@ -314,13 +314,8 @@ def create_default_registry() -> KeybindRegistry:
     r.register("display.wireframe_c",K.K_5, MOD_CTRL, description="Toggle wireframe (Ctrl+5)",category="Display")
 
     # ═══════════════════════════════════════════════════════════════
-    #  DISPLAY (bare-key variants)
+    #  DISPLAY (additional)
     # ═══════════════════════════════════════════════════════════════
-    r.register("display.walls",    K.K_v,         description="Toggle walls",    category="Display")
-    r.register("display.floors",   K.K_f,         description="Toggle floors",   category="Display")
-    r.register("display.ceilings", K.K_j,         description="Toggle ceilings", category="Display")
-    r.register("display.entities", K.K_n,         description="Toggle entities", category="Display")
-    r.register("display.wireframe",K.K_BACKSLASH, description="Toggle wireframe",category="Display")
     r.register("display.axes",     K.K_F10,       description="Toggle axes",     category="Display")
     r.register("display.isolate",  K.K_i, MOD_ALT,description="Isolate layer",   category="Display")
 
@@ -329,6 +324,7 @@ def create_default_registry() -> KeybindRegistry:
     # ═══════════════════════════════════════════════════════════════
     r.register("layer.up",   K.K_PAGEUP,   description="Active layer 2",  category="Layer")
     r.register("layer.down", K.K_PAGEDOWN, description="Active layer 1",  category="Layer")
+    r.register("view.toggle", K.K_TAB,     description="Toggle 3D/Preview", category="View")
     r.register("mode.arch",    K.K_F1, description="ARCH mode",    category="Mode")
     r.register("mode.surface", K.K_F2, description="SURFACE mode", category="Mode")
     r.register("mode.props",   K.K_F3, description="PROPS mode",   category="Mode")
@@ -350,15 +346,7 @@ def create_default_registry() -> KeybindRegistry:
     r.register("tool.portal", K.K_o,         description="Toggle Portal",  category="Tool Switch")
     r.register("tool.curve",  K.K_SEMICOLON, description="Toggle Curve",   category="Tool Switch")
 
-    # ═══════════════════════════════════════════════════════════════
-    #  HOTBAR (Alt+0..9 = all 10, bare 6..0 = slots 5-9)
-    # ═══════════════════════════════════════════════════════════════
-    for i in range(10):
-        r.register(f"hotbar.alt_{i}", getattr(K, f"K_{i}"), MOD_ALT,
-                   description=f"Hotbar slot {i} (Alt)", category="Hotbar")
-    for i, slot in ((6, 5), (7, 6), (8, 7), (9, 8), (0, 9)):
-        r.register(f"hotbar.bare_{slot}", getattr(K, f"K_{i}"),
-                   description=f"Hotbar slot {slot}", category="Hotbar")
+    # (Hotbar keyboard shortcuts removed — use scroll or palette click)
 
     # ═══════════════════════════════════════════════════════════════
     #  SELECTION OPS (active selection in sculpt/select/paint)

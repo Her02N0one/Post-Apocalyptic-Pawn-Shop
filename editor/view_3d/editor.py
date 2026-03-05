@@ -233,6 +233,9 @@ class Zone3DEditor(
 
         self.dirty = False
 
+        # Flash callback — set by the owning app for visual feedback
+        self.on_flash: callable | None = None
+
         # Undo / redo
         self._undo_stack: list[dict] = []
         self._redo_stack: list[dict] = []
@@ -516,22 +519,14 @@ class Zone3DEditor(
             self.isolate_layer = not self.isolate_layer
             return True
 
-        # ── 1b. Alt+0..9 = hotbar texture slots ──────────────────
-        for _i in range(10):
-            if kb.check(f"hotbar.alt_{_i}", key, mod):
-                self.hotbar_slot = _i
-                self.current_texture = self.hotbar[_i]
-                palette = _ensure_palette()
-                if self.current_texture in palette:
-                    self.tex_idx = palette.index(self.current_texture)
-                return True
-
-        # ── 1c. PageUp/PageDown = switch active layer ─────────────
+        # ── 1b. PageUp/PageDown = switch active layer ─────────────
         if kb.check("layer.up", key, mod):
             self.active_layer = 2
+            self._flash("Layer 2", 0.7, (0.7, 0.85, 1.0, 1.0))
             return True
         if kb.check("layer.down", key, mod):
             self.active_layer = 1
+            self._flash("Layer 1", 0.7, (0.7, 0.85, 1.0, 1.0))
             return True
 
         # ── 1d. F1-F4 = switch primary mode ───────────────────────
@@ -550,6 +545,9 @@ class Zone3DEditor(
                     self._leave_tool(self.tool)
                     self.tool = mode_tools[0]
                     self._prev_tool = mode_tools[0]
+                from editor.view_3d.constants import MODE_LABELS
+                self._flash(f"{MODE_LABELS.get(_new_mode, _new_mode)}", 0.8,
+                            (0.85, 0.9, 1.0, 1.0))
                 return True
 
         # ── 2. Number keys 1-5 = select tool within current mode ──
@@ -563,6 +561,9 @@ class Zone3DEditor(
                         self._leave_tool(self.tool)
                         self.tool = new_tool
                         self._prev_tool = new_tool
+                from editor.view_3d.constants import TOOL_LABELS
+                _tl = TOOL_LABELS.get(self.tool, self.tool)
+                self._flash(f"{_tl}", 0.6, (0.85, 0.9, 1.0, 1.0))
                 return True
 
         # ── 3. B key — select tool toggle ─────────────────────────
@@ -596,17 +597,7 @@ class Zone3DEditor(
             self._prev_tool = self.tool
             return True
 
-        # ── 6. Hotbar: bare 6-0 select texture slot ──────────────
-        for _slot in range(5, 10):
-            if kb.check(f"hotbar.bare_{_slot}", key, mod):
-                self.hotbar_slot = _slot
-                self.current_texture = self.hotbar[_slot]
-                palette = _ensure_palette()
-                if self.current_texture in palette:
-                    self.tex_idx = palette.index(self.current_texture)
-                return True
-
-        # ── 7. Cross-tool selection keys (when selection active) ──
+        # ── 6. Cross-tool selection keys (when selection active) ──
         #    Only active in sculpt / select / paint.
         _sel_tools = ("sculpt", "select", "paint")
         if self._has_selection() and self.tool in _sel_tools:
@@ -650,27 +641,12 @@ class Zone3DEditor(
             self.aimed = None
             return True
 
-        # ── 9. Display toggles ───────────────────────────────────
+        # ── 8. Display toggle: axes (F10) ─────────────────────────
         if kb.check("display.axes", key, mod):
             self.show_axes = not self.show_axes
             return True
-        if kb.check("display.walls", key, mod):
-            self.show_walls = not self.show_walls
-            return True
-        if kb.check("display.floors", key, mod):
-            self.show_floors = not self.show_floors
-            return True
-        if kb.check("display.ceilings", key, mod):
-            self.show_ceilings = not self.show_ceilings
-            return True
-        if kb.check("display.entities", key, mod):
-            self.show_entities = not self.show_entities
-            return True
-        if kb.check("display.wireframe", key, mod):
-            self.wireframe = not self.wireframe
-            return True
 
-        # ── 10. Tool-specific keys ───────────────────────────────
+        # ── 9. Tool-specific keys ────────────────────────────────
 
         # Upper wall adjust (U key — single cell, no selection, sculpt only)
         if self.tool == "sculpt":
@@ -1118,7 +1094,11 @@ class Zone3DEditor(
                 self.snap_idx = (self.snap_idx + event.y) % len(SNAP_Y_OPTIONS)
                 self.snap_y = SNAP_Y_OPTIONS[self.snap_idx]
             elif part == "ceiling":
-                self._scroll_upper_wall(event.y)
+                ctrl = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
+                if ctrl:
+                    self._scroll_upper_wall(event.y)
+                else:
+                    self._scroll_ceiling_height(event.y)
             elif part in ("floor", "wall", "ground"):
                 hit = self.aimed
                 if hit:
@@ -1436,11 +1416,13 @@ class Zone3DEditor(
         if hasattr(z, 'fog_density') and z.fog_density and r < len(z.fog_density):
             state["fog_density"] = z.fog_density[r][c]
         self._clipboard = state
+        self._flash("Copied", 0.8, (0.7, 0.9, 1.0, 1.0))
 
     def _clipboard_paste(self) -> None:
         """Paste the clipboard state onto the selection or aimed cell,
         respecting the active paste mask."""
         if not self._clipboard:
+            self._flash("Nothing to paste", 0.8, (0.6, 0.5, 0.4, 1.0))
             return
         from editor.view_3d.constants import (
             PASTE_MASK_HEIGHTS, PASTE_MASK_TEXTURES,
@@ -1511,6 +1493,7 @@ class Zone3DEditor(
         elif self.aimed:
             _apply(self.aimed.row, self.aimed.col)
         self.dirty = True
+        self._flash("Pasted", 0.8, (0.7, 0.9, 1.0, 1.0))
 
     # -- Smart selection helpers ------------------------------------
 

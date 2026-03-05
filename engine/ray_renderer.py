@@ -1042,6 +1042,23 @@ class RayRenderer:
                         t = cell[fi] if cell and fi < len(cell) else ""
                         if t:
                             cst_vals[(r * W + c) * 4 + fi] = _s2i(t)
+
+        # Default unset ceiling step faces of non-wall tiles to
+        # "concrete" so ceiling height transitions don't show the
+        # tile's base texture (often grass) on vertical faces.
+        concrete_id = _s2i("concrete")
+        for r in range(H):
+            for c in range(W):
+                td_c = _tdef(zone.tiles[r][c])
+                if td_c and td_c.wall:
+                    continue
+                if zone.ceil_heights[r][c] >= 10.0:
+                    continue  # sky cells have no ceiling mass
+                base = (r * W + c) * 4
+                for fi in range(4):
+                    if cst_vals[base + fi] < 0:
+                        cst_vals[base + fi] = concrete_id
+
         self._cstep_tex_buf = array.array("i", cst_vals).tobytes()
 
         # ── Upper wall height (float64[H*W], 0.0 = auto) ──

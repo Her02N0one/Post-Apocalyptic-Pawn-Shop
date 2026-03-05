@@ -1293,7 +1293,7 @@ class RenderingMixin:
             ceil_str = "SKY" if is_sky else f"{ch:.2f}"
             lines.append((f"Ceil:  {ceil_str}", (140, 170, 230)))
             if uwh > ch + 0.01 and not is_sky:
-                lines.append((f"UWH:   {uwh:.2f}", (200, 180, 120)))
+                lines.append((f"Wall \u2191: {uwh:.2f}", (200, 180, 120)))
             if hit.face and hit.face != "ground":
                 lines.append((f"Face: {hit.face}", COL_HUD_TEXT))
 

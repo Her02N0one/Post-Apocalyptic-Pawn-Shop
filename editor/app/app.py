@@ -171,6 +171,7 @@ class ZoneEditorApp(
         else:
             self.editor_3d = Zone3DEditor(self.zone)
             self.editor_3d.show_hud = False
+        self.editor_3d.on_flash = self._flash_transient
 
         if self.renderer:
             self.renderer.update_zone(self.zone, self.atlas, self.dn)
@@ -224,6 +225,7 @@ class ZoneEditorApp(
         else:
             self.editor_3d = Zone3DEditor(self.zone)
             self.editor_3d.show_hud = False
+        self.editor_3d.on_flash = self._flash_transient
 
         if self.renderer:
             self.renderer.update_zone(self.zone, self.atlas, self.dn)
@@ -263,6 +265,7 @@ class ZoneEditorApp(
         path = ZONES_DIR / f"{name}.zone"
         self.zone.save_to_file(path, self.registry)
         self.dirty = False
+        self._flash_transient(f"Saved {name} \u2713", 1.5, (0.5, 1.0, 0.6, 1.0))
         self.all_zones = list_zones()
         pygame.display.set_caption(f"{WINDOW_TITLE} \u2014 {name}")
 

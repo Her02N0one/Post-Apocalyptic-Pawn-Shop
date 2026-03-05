@@ -197,6 +197,18 @@ class PaintMixin:
                 if old != tex:
                     _maybe_undo()
                     zone.ceil_step_textures[r][c][fi] = tex
+                    # Also paint the neighbor's face_textures so the
+                    # 2.5D renderer (which may draw a wall tile's face
+                    # or use resolve_face_tex fallback) stays in sync.
+                    dr, dc = [(- 1, 0), (1, 0), (0, 1), (0, -1)][fi]
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < zone.height and 0 <= nc < zone.width:
+                        ntd = tile_def(zone.tiles[nr][nc])
+                        opp = fi ^ 1
+                        if ntd and ntd.wall:
+                            zone.face_textures[nr][nc][opp] = tex
+                        else:
+                            zone.ceil_step_textures[nr][nc][opp] = tex
                     changed = True
             else:
                 old = zone.face_textures[r][c][fi]

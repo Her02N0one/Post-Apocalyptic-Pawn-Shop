@@ -63,12 +63,45 @@ class GeometryMixin:
         result.append(("floor", floor_bot, fh + S))
 
         # ── Ceiling mass ──────────────────────────────────────────
+        # Extend upward to include visible step walls (mirrors how
+        # the floor mass extends downward for floor steps).  The FP
+        # renderer draws ceiling step walls between adjacent cells
+        # with different ceiling heights; without this extension the
+        # 3D editor shows only a paper-thin slab that cannot be
+        # targeted for painting.
         if ch < SKY_HEIGHT:
             uwh = zone.upper_wall_height[r][c] if zone.upper_wall_height else 0.0
             if uwh > ch:
                 ceil_top = min(uwh + S, 10.0)
             else:
                 ceil_top = ch + S
+
+            # Check adjacent ceilings — extend to show step walls
+            max_adj_ch = ch
+            sky_adjacent = False
+            for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < H2 and 0 <= nc < W2:
+                    ntd = tile_def(zone.tiles[nr][nc])
+                    if ntd and ntd.wall:
+                        continue  # wall tiles have their own column
+                    nch = zone.ceil_heights[nr][nc] if zone.ceil_heights else 1.0
+                    if nch >= SKY_HEIGHT:
+                        sky_adjacent = True
+                    elif nch > max_adj_ch:
+                        max_adj_ch = nch
+                else:
+                    # Zone boundary — treat as sky exposure
+                    sky_adjacent = True
+
+            if max_adj_ch > ch:
+                ceil_top = max(ceil_top, max_adj_ch + S)
+            if sky_adjacent:
+                # Small extension so the face is targetable for painting
+                # without creating a visually misleading tall wall.
+                ceil_top = max(ceil_top, ch + 0.2)
+
+            ceil_top = min(ceil_top, SKY_HEIGHT)
             result.append(("ceiling", ch - S, ceil_top))
 
         return result

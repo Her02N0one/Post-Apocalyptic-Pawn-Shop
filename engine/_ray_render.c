@@ -1170,9 +1170,14 @@ py_render_frame(PyObject *self, PyObject *dict)
                             swh->ssy       = step_y;
                         }
                     }
-                    /* Sky-boundary ceiling step: one cell is sky, the
-                     * other has a ceiling with upper wall.  Emit a step
-                     * from ch to uwh so the upper-wall face is visible. */
+                    /* Sky-boundary ceiling step: one cell has a ceiling,
+                     * the other is open sky.  Always emit so the ceiling
+                     * side face is visible; extend to UWH when set.
+                     *
+                     * Store pci/ci so the CEILING cell is always the one
+                     * with the lower pfh — this guarantees lo_ci_pre in
+                     * Phase 3A points at the ceiling cell (which has
+                     * the cstep_tex data), not the sky cell.            */
                     else if (n_cstep[x] < MAX_STEP_HITS) {
                         int prev_sky = (prev_ch >= SKY_THRESHOLD);
                         int cur_sky  = (cch_local >= SKY_THRESHOLD);
@@ -1180,23 +1185,30 @@ py_render_frame(PyObject *self, PyObject *dict)
                             int    c_ci = prev_sky ? cur_ci  : prev_ci;
                             double c_ch = prev_sky ? cch_local : prev_ch;
                             double c_uwh = uwh[c_ci];
-                            if (c_uwh > c_ch + TIER_TOL) {
-                                double wf;
-                                if (side == 0) wf = cam_y + bp * rdy;
-                                else           wf = cam_x + bp * rdx;
-                                wf -= floor(wf);
-                                StepWallHit *swh = &cstep_hits[
-                                    x * MAX_STEP_HITS + n_cstep[x]++];
-                                swh->perp      = bp;
-                                swh->wall_frac = wf;
-                                swh->pfh       = c_ch;
-                                swh->cfh       = c_uwh;
-                                swh->pci       = prev_ci;
-                                swh->ci        = cur_ci;
-                                swh->sd        = side;
-                                swh->ssx       = step_x;
-                                swh->ssy       = step_y;
-                            }
+                            /* Top of the step: UWH if set, else a thin
+                             * slab so the face is at least visible.    */
+                            double step_top = c_ch + 0.04;
+                            if (c_uwh > c_ch + TIER_TOL)
+                                step_top = c_uwh;
+                            double wf;
+                            if (side == 0) wf = cam_y + bp * rdy;
+                            else           wf = cam_x + bp * rdx;
+                            wf -= floor(wf);
+                            StepWallHit *swh = &cstep_hits[
+                                x * MAX_STEP_HITS + n_cstep[x]++];
+                            swh->perp      = bp;
+                            swh->wall_frac = wf;
+                            /* pfh = ceiling cell's ch (the lower value)
+                             * cfh = step_top (the higher value)
+                             * This makes pfh < cfh, so Phase 3A sets
+                             * lo_ci_pre = ci (ceiling cell).           */
+                            swh->pfh       = step_top;
+                            swh->cfh       = c_ch;
+                            swh->pci       = prev_sky ? prev_ci : cur_ci;  /* sky cell  */
+                            swh->ci        = c_ci;                         /* ceil cell */
+                            swh->sd        = side;
+                            swh->ssx       = step_x;
+                            swh->ssy       = step_y;
                         }
                     }
 

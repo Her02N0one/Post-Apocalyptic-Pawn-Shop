@@ -108,14 +108,27 @@ class UndoMixin:
             self._undo_stack.pop(0)
         self._redo_stack.clear()
 
+    def _flash(self, text: str, duration: float = 1.2,
+               color: tuple = (0.95, 0.90, 0.75, 1.0)) -> None:
+        """Trigger a visual flash via the owning app's callback."""
+        cb = getattr(self, 'on_flash', None)
+        if cb:
+            cb(text, duration, color)
+
     def _undo(self) -> None:
         if not self._undo_stack:
+            self._flash("Nothing to undo", 1.0, (0.6, 0.5, 0.4, 1.0))
             return
         self._redo_stack.append(self._snapshot())
         self._restore(self._undo_stack.pop())
+        n = len(self._undo_stack)
+        self._flash(f"Undo  ({n} left)", 1.0, (0.8, 0.85, 1.0, 1.0))
 
     def _redo(self) -> None:
         if not self._redo_stack:
+            self._flash("Nothing to redo", 1.0, (0.6, 0.5, 0.4, 1.0))
             return
         self._undo_stack.append(self._snapshot())
         self._restore(self._redo_stack.pop())
+        n = len(self._redo_stack)
+        self._flash(f"Redo  ({n} left)", 1.0, (0.8, 0.85, 1.0, 1.0))

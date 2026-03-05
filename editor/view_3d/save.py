@@ -24,3 +24,4 @@ class SaveMixin:
         path = _core_paths.ZONES_DIR / f"{zone.name}.zone"
         zone.save_to_file(path, self._registry)
         self.dirty = False
+        self._flash("Saved \u2713", 1.5, (0.5, 1.0, 0.6, 1.0))

@@ -209,6 +209,7 @@ class BoxMixin:
 
         self._push_undo()
         zone.boxes.pop(idx)
+        self._flash("Prism deleted — Ct+Z to undo", 1.5, (1.0, 0.6, 0.5, 1.0))
 
         if self._box_selected is not None:
             if self._box_selected == idx:

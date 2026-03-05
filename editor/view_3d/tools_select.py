@@ -156,16 +156,20 @@ class SelectMixin:
                         if ch >= SKY_HEIGHT:
                             new_ch = fh + DEFAULT_CEIL
                         else:
-                            min_ch = max(CEIL_MIN, fh + 0.05)
+                            min_ch = max(CEIL_MIN, fh + 0.12)
                             new_ch = max(ch - snap, min_ch)
                     if abs(new_ch - ch) < 0.001:
                         continue
                     zone.ceil_heights[r][c] = new_ch
+                    if new_ch >= SKY_HEIGHT - 0.01:
+                        self._clear_ceil_segments(r, c)
+                    elif ch < SKY_HEIGHT:
+                        self._shift_ceil_mass(r, c, ch, new_ch - ch)
                     changed = True
                 else:
                     # --- Floor adjustment ---
                     if direction > 0:
-                        max_fh = FLOOR_MAX if is_sky else min(FLOOR_MAX, ch - 0.05)
+                        max_fh = FLOOR_MAX if is_sky else min(FLOOR_MAX, ch - 0.12)
                         new_fh = min(fh + snap, max_fh)
                     else:
                         new_fh = max(FLOOR_MIN, fh - snap)
@@ -175,7 +179,11 @@ class SelectMixin:
                     zone.floor_heights[r][c] = new_fh
                     # Push ceiling up with floor to preserve gap
                     if not is_sky and delta > 0:
+                        old_ch = ch
                         zone.ceil_heights[r][c] = min(CEIL_MAX, ch + delta)
+                        self._shift_ceil_mass(
+                            r, c, old_ch,
+                            zone.ceil_heights[r][c] - old_ch)
                     # Keep segment top-edges in sync
                     for fi in range(4):
                         segs = zone.floor_step_segments[r][c][fi]
@@ -282,6 +290,7 @@ class SelectMixin:
                     reset_cell(self.zone, r, c, self._open_tile)
 
         self.dirty = True
+        self._flash("Selection cleared — Ct+Z to undo", 1.2, (1.0, 0.6, 0.5, 1.0))
         return True
 
     # ── Selection query helpers ────────────────────────────────────

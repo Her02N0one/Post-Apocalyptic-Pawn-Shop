@@ -80,6 +80,7 @@ class PortalMixin:
 
         self._push_undo()
         self.zone.render_portals.pop(existing)
+        self._flash("Portal deleted — Ct+Z to undo", 1.5, (1.0, 0.6, 0.5, 1.0))
         if self._portal_selected is not None:
             if self._portal_selected == existing:
                 self._portal_selected = None
