@@ -1530,7 +1530,7 @@ class TestToggleCeiling:
         assert ed.preview_box is None
 
     def test_scroll_on_ceiling_raises_ceiling(self):
-        """Scrolling up while aimed at ceiling raises the ceiling height."""
+        """Scrolling up while aimed at ceiling raises the upper wall height."""
         ed, z = _make_editor()
         r, c = 2, 2
         _open_cell(z, r, c, fh=0.0, ch=0.7)
@@ -1540,11 +1540,12 @@ class TestToggleCeiling:
         ed.snap_y = 0.25
         ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=1)
         ed.handle_event(ev)
-        assert z.ceil_heights[r][c] == pytest.approx(0.95)
-        assert z.upper_wall_height[r][c] == 0.0  # unchanged
+        # Ceiling unchanged; upper wall raised from 0 → 0.95 (snaps to ch then + snap)
+        assert z.ceil_heights[r][c] == pytest.approx(0.7)
+        assert z.upper_wall_height[r][c] == pytest.approx(0.95)
 
     def test_scroll_on_ceiling_lowers_ceiling(self):
-        """Scrolling down while aimed at ceiling lowers the ceiling height."""
+        """Scrolling down while aimed at ceiling lowers the upper wall height."""
         ed, z = _make_editor()
         r, c = 2, 2
         _open_cell(z, r, c, fh=0.0, ch=0.7)
@@ -1555,13 +1556,12 @@ class TestToggleCeiling:
         ed.snap_y = 0.25
         ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=-1)
         ed.handle_event(ev)
-        # Ceiling lowered from 0.7 to 0.45
-        assert z.ceil_heights[r][c] == pytest.approx(0.45)
-        # UWH shifted by same delta (-0.25): 2.0 → 1.75
+        # Ceiling unchanged; UWH lowered from 2.0 → 1.75
+        assert z.ceil_heights[r][c] == pytest.approx(0.7)
         assert z.upper_wall_height[r][c] == pytest.approx(1.75)
 
     def test_scroll_on_ceiling_shifts_uwh(self):
-        """Scrolling down shifts UWH with the ceiling."""
+        """Scrolling down on ceiling with low UWH clears it to zero."""
         ed, z = _make_editor()
         r, c = 2, 2
         _open_cell(z, r, c, fh=0.0, ch=0.7)
@@ -1572,9 +1572,9 @@ class TestToggleCeiling:
         ed.snap_y = 0.25
         ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=-1)
         ed.handle_event(ev)
-        # Ceiling lowered 0.7 → 0.45; UWH shifted 0.8 → 0.55
-        assert z.ceil_heights[r][c] == pytest.approx(0.45)
-        assert z.upper_wall_height[r][c] == pytest.approx(0.55)
+        # UWH 0.8 - 0.25 = 0.55, which is ≤ ch(0.7)+0.01, so snaps to 0
+        assert z.ceil_heights[r][c] == pytest.approx(0.7)
+        assert z.upper_wall_height[r][c] == pytest.approx(0.0)
 
 
 # ═════════════════════════════════════════════════════════════════════

@@ -147,9 +147,16 @@ class GeometryMixin:
             if has_f2:
                 l2_boxes.append(("floor2", f2v - S, f2v + S))
             if has_c2:
-                l2_boxes.append(("ceiling2", c2v - S, c2v + S))
-            if has_f2 and has_c2 and c2v > f2v:
-                pass  # The gap between is open space, no box
+                # Extend ceiling2 slab upward to include upper wall
+                # extension, mirroring how L1 ceiling extends into
+                # the ceiling mass via upper_wall_height.
+                uwh2_grid = getattr(zone, 'upper_wall_height2', None)
+                uwh2 = uwh2_grid[r][c] if (uwh2_grid and len(uwh2_grid) > r) else 0.0
+                if uwh2 > c2v:
+                    c2_top = min(uwh2 + S, 10.0)
+                else:
+                    c2_top = c2v + 0.3
+                l2_boxes.append(("ceiling2", c2v - S, c2_top))
 
         if isolate:
             return l2_boxes if active == 2 else l1_boxes

@@ -359,12 +359,18 @@ class ToolboxMixin:
                 ctx_key = "none"
         elif ed.tool == "sculpt":
             part = ed.aimed.part if ed.aimed else None
-            if part == "ceiling":
-                ctx_key = "ceiling"
-            elif part in ("floor", "wall", "ground"):
-                ctx_key = "floor"
+            if ed._has_selection():
+                ctx_key = "selection"
+            elif ed._sculpt_layer2:
+                ctx_key = "layer2"
             else:
-                ctx_key = "none"
+                p = {"floor2": "floor", "ceiling2": "ceiling"}.get(part, part)
+                if p == "ceiling":
+                    ctx_key = "ceiling"
+                elif p in ("floor", "wall", "ground"):
+                    ctx_key = "floor"
+                else:
+                    ctx_key = "none"
         else:
             ctx_key = "any"
 
@@ -380,7 +386,8 @@ class ToolboxMixin:
             imgui.text(desc)
             imgui.pop_text_wrap_pos()
 
-        extra = hint.get("keys", "")
+        extra_key = "keys_layer2" if (ed.tool == "sculpt" and ed._sculpt_layer2) else "keys"
+        extra = hint.get(extra_key, hint.get("keys", ""))
         if extra:
             imgui.spacing()
             imgui.push_text_wrap_pos(wrap_x)

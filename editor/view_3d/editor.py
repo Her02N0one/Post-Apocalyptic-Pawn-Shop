@@ -584,29 +584,54 @@ class Zone3DEditor(
         #    Only active in sculpt / select / paint.
         _sel_tools = ("sculpt", "select", "paint")
         if self._has_selection() and self.tool in _sel_tools:
-            if kb.check("sel.ceil_mode", key, mod):
-                self._sel_toggle_ceiling_mode()
-                return True
-            if kb.check("sel.remove_ceilings", key, mod):
-                return self._toggle_ceiling(remove_only=True)
-            if kb.check("sel.add_ceilings", key, mod):
-                return self._toggle_ceiling(add_only=True)
-            if kb.check("sel.make_open", key, mod):
-                return self._batch_make_open()
-            if kb.check("sel.make_wall", key, mod):
-                return self._batch_make_wall()
-            if kb.check("sel.flatten_ceilings", key, mod):
-                return self._flatten_ceilings()
-            if kb.check("sel.flatten_floors", key, mod):
-                return self._flatten_floors()
-            if kb.check("sel.reset_upper_wall", key, mod):
-                return self._batch_reset_upper_wall()
-            if kb.check("sel.raise_upper_wall", key, mod):
-                return self._batch_raise_upper_wall()
-            if kb.check("sel.lower_upper_wall", key, mod):
-                return self._batch_lower_upper_wall()
-            if kb.check("sel.reset", key, mod):
-                return self._sel_delete()
+            if self._sculpt_layer2:
+                # ── L2 selection operations ────────────────────────
+                if kb.check("sel.ceil_mode", key, mod):
+                    self._layer2_toggle_target()
+                    return True
+                if kb.check("sel.flatten_floors", key, mod):
+                    return self._layer2_flatten_floors()
+                if kb.check("sel.flatten_ceilings", key, mod):
+                    return self._layer2_flatten_ceilings()
+                if kb.check("sel.add_ceilings", key, mod):
+                    return self._layer2_toggle_ceil()
+                if kb.check("sel.remove_ceilings", key, mod):
+                    self._layer2_ensure_grids()
+                    self._push_undo()
+                    self._apply_to_selection(self._layer2_reset_at)
+                    self.dirty = True
+                    return True
+                if kb.check("sel.reset", key, mod):
+                    self._layer2_ensure_grids()
+                    self._push_undo()
+                    self._apply_to_selection(self._layer2_reset_at)
+                    self.dirty = True
+                    return True
+            else:
+                # ── L1 selection operations ────────────────────────
+                if kb.check("sel.ceil_mode", key, mod):
+                    self._sel_toggle_ceiling_mode()
+                    return True
+                if kb.check("sel.remove_ceilings", key, mod):
+                    return self._toggle_ceiling(remove_only=True)
+                if kb.check("sel.add_ceilings", key, mod):
+                    return self._toggle_ceiling(add_only=True)
+                if kb.check("sel.make_open", key, mod):
+                    return self._batch_make_open()
+                if kb.check("sel.make_wall", key, mod):
+                    return self._batch_make_wall()
+                if kb.check("sel.flatten_ceilings", key, mod):
+                    return self._flatten_ceilings()
+                if kb.check("sel.flatten_floors", key, mod):
+                    return self._flatten_floors()
+                if kb.check("sel.reset_upper_wall", key, mod):
+                    return self._batch_reset_upper_wall()
+                if kb.check("sel.raise_upper_wall", key, mod):
+                    return self._batch_raise_upper_wall()
+                if kb.check("sel.lower_upper_wall", key, mod):
+                    return self._batch_lower_upper_wall()
+                if kb.check("sel.reset", key, mod):
+                    return self._sel_delete()
 
         # ── 8. Escape — cancel / deselect (layered) ──────────────
         if key == pygame.K_ESCAPE:
@@ -627,7 +652,8 @@ class Zone3DEditor(
         # ── 9. Tool-specific keys ────────────────────────────────
 
         # Upper wall adjust (U key — single cell, no selection, sculpt only)
-        if self.tool == "sculpt":
+        # U has no effect on L2 (no upper-wall concept)
+        if self.tool == "sculpt" and not self._sculpt_layer2:
             if kb.check("sculpt.reset_upper_wall", key, mod):
                 return self._adjust_upper_wall_height(pygame.KMOD_CTRL)
             if kb.check("sculpt.raise_upper_wall", key, mod):
@@ -641,8 +667,10 @@ class Zone3DEditor(
             return True
         if self.tool == "sculpt":
             if kb.check("sculpt.reset_ceiling", key, mod) or kb.check("sculpt.reset_floor", key, mod):
+                if self._sculpt_layer2:
+                    return self._layer2_reset()
                 if self.aimed:
-                    if self.aimed.part == "ceiling":
+                    if self.aimed.part in ("ceiling", "ceiling2"):
                         return self._reset_ceiling()
                     else:
                         return self._reset_floor()
@@ -653,11 +681,13 @@ class Zone3DEditor(
             self._ent_cycle_state()
             return True
         if self.tool == "sculpt" and kb.check("sculpt.toggle_ceiling", key, mod):
+            if self._sculpt_layer2:
+                return self._layer2_toggle_ceil()
             if self.aimed:
                 return self._toggle_ceiling()
 
-        # Wall / open conversion (H key — single cell when no selection)
-        if self.tool == "sculpt":
+        # Wall / open conversion (H key — L1 only, no equivalent on L2)
+        if self.tool == "sculpt" and not self._sculpt_layer2:
             if kb.check("sculpt.make_open", key, mod):
                 return self._batch_make_open()
             if kb.check("sculpt.make_wall", key, mod):
@@ -666,6 +696,16 @@ class Zone3DEditor(
         # Delete (no selection — unified object layer then cell fallback)
         if kb.check("delete.aimed", key, mod):
             if self.objects.delete_selected():
+                return True
+            if self._sculpt_layer2:
+                # On L2: clear L2 data at aimed cell
+                hit = self.aimed
+                if hit:
+                    self._layer2_ensure_grids()
+                    self._push_undo()
+                    if self._layer2_reset_at(hit.row, hit.col):
+                        self.dirty = True
+                        self._flash("L2 cleared — Ct+Z to undo", 1.2, (0.8, 0.6, 1.0, 1.0))
                 return True
             return self._clear_cell()
 
@@ -756,26 +796,52 @@ class Zone3DEditor(
                     self._layer2_raise(shift, ctrl)
                 elif btn == 3:
                     self._layer2_lower(shift)
-            elif shift and part in ("floor", "wall", "ground"):
-                # Shift on floor/ground = ceiling operation (no need
-                # to aim at ceiling surface specifically)
-                if btn == 1:
-                    self._tool_ceiling_lower()
-                elif btn == 3:
-                    self._tool_ceiling_raise()
-            elif part in ("floor", "wall", "ground"):
-                if btn == 1:
-                    self._tool_floor_raise()
-                elif btn == 3:
-                    self._tool_floor_lower()
-            elif part == "ceiling":
-                if btn == 1:
-                    self._tool_ceiling_lower()
-                elif btn == 3:
-                    self._tool_ceiling_raise()
+            else:
+                # L1 sculpt — map L2 surface hits to L1 equivalents
+                p = {"floor2": "floor", "ceiling2": "ceiling"}.get(part, part)
+                if shift and p in ("floor", "wall", "ground"):
+                    # Shift on floor/ground = ceiling operation (no need
+                    # to aim at ceiling surface specifically)
+                    if btn == 1:
+                        self._tool_ceiling_lower()
+                    elif btn == 3:
+                        self._tool_ceiling_raise()
+                elif p in ("floor", "wall", "ground"):
+                    if btn == 1:
+                        self._tool_floor_raise()
+                    elif btn == 3:
+                        self._tool_floor_lower()
+                elif p == "ceiling":
+                    if btn == 1:
+                        self._tool_ceiling_lower()
+                    elif btn == 3:
+                        self._tool_ceiling_raise()
             return True
 
         if tool == "paint":
+            # Layer 2 paint mode
+            if self._sculpt_layer2:
+                if btn == 2:
+                    self._layer2_pick_texture()
+                elif self._has_selection():
+                    self._layer2_ensure_grids()
+                    self._push_undo()
+                    if btn == 1:
+                        self._apply_to_selection(self._layer2_paint_at)
+                    elif btn == 3:
+                        self._apply_to_selection(self._layer2_erase_at)
+                    self.dirty = True
+                else:
+                    if btn == 1:
+                        self._layer2_paint()
+                    elif btn == 3:
+                        hit = self.aimed
+                        if hit:
+                            self._layer2_ensure_grids()
+                            self._push_undo()
+                            if self._layer2_erase_at(hit.row, hit.col):
+                                self.dirty = True
+                return True
             # Batch paint when selection is active
             if self._has_selection():
                 if btn == 1:
@@ -1103,25 +1169,23 @@ class Zone3DEditor(
             if self._has_selection() and not self._sculpt_layer2:
                 ceiling = shift != self.selection.ceiling_mode  # Shift XORs mode
                 return self._sel_scroll(event.y, ceiling=ceiling)
-            # Layer 2 sub-mode: scroll cycles texture palette
+            # Layer 2 sub-mode: scroll raises/lowers L2 height (Shift = palette)
             if self._sculpt_layer2:
-                palette = _ensure_palette()
-                if palette:
-                    self.tex_idx = (self.tex_idx + event.y) % len(palette)
-                    self.current_texture = palette[self.tex_idx]
-                    self.hotbar[self.hotbar_slot] = self.current_texture
+                if self._has_selection():
+                    self._layer2_sel_scroll(event.y)
+                else:
+                    self._layer2_scroll(event.y)
                 return True
             part = self.aimed.part if self.aimed else None
+            # Map L2 surface hits to L1 equivalents so L2 geometry
+            # doesn't block L1 sculpting.
+            part = {"floor2": "floor", "ceiling2": "ceiling"}.get(part, part)
             if shift:
                 # Shift+Scroll: fine-adjust snap (half steps)
                 self.snap_idx = (self.snap_idx + event.y) % len(SNAP_Y_OPTIONS)
                 self.snap_y = SNAP_Y_OPTIONS[self.snap_idx]
             elif part == "ceiling":
-                ctrl = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
-                if ctrl:
-                    self._scroll_upper_wall(event.y)
-                else:
-                    self._scroll_ceiling_height(event.y)
+                self._scroll_upper_wall(event.y)
             elif part in ("floor", "wall", "ground"):
                 hit = self.aimed
                 if hit:
@@ -1433,6 +1497,9 @@ class Zone3DEditor(
             state["floor2_texture"] = f2t[r][c]
         if c2t and r < len(c2t):
             state["ceil2_texture"] = c2t[r][c]
+        uwh2 = getattr(z, 'upper_wall_height2', None)
+        if uwh2 and r < len(uwh2):
+            state["upper_wall_height2"] = uwh2[r][c]
         if hasattr(z, 'fog_density') and z.fog_density and r < len(z.fog_density):
             state["fog_density"] = z.fog_density[r][c]
         # Entities occupying this cell
@@ -1480,6 +1547,9 @@ class Zone3DEditor(
                 if "ceil2_height" in state:
                     self._layer2_ensure_grids()
                     z.ceil2_heights[r][c] = state["ceil2_height"]
+                if "upper_wall_height2" in state:
+                    self._layer2_ensure_grids()
+                    z.upper_wall_height2[r][c] = state["upper_wall_height2"]
             if PASTE_MASK_TEXTURES in mask:
                 if "floor_texture" in state and z.floor_textures:
                     z.floor_textures[r][c] = state["floor_texture"]
@@ -1617,6 +1687,8 @@ class Zone3DEditor(
                 z.floor2_textures[nr][nc] = z.floor2_textures[r][c]
             if getattr(z, 'ceil2_textures', None):
                 z.ceil2_textures[nr][nc] = z.ceil2_textures[r][c]
+            if getattr(z, 'upper_wall_height2', None):
+                z.upper_wall_height2[nr][nc] = z.upper_wall_height2[r][c]
             new_cells.add((nr, nc))
 
         # Move selection to the duplicated region

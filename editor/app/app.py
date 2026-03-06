@@ -147,7 +147,7 @@ class ZoneEditorApp(
         # If a zone name was given on the command line, load it;
         # otherwise try to restore the last-opened zone from session.
         _restore = zone_name or self._session.get("last_zone", "")
-        if _restore and _restore in self.all_zones:
+        if _restore and _restore != "untitled" and _restore in self.all_zones:
             self._load_zone(_restore)
 
         # New-zone dialog state
@@ -525,7 +525,8 @@ class ZoneEditorApp(
 
     def _save_session(self) -> None:
         """Persist editor session state to disk."""
-        self._session["last_zone"] = self.zone_name
+        if self.zone_name != "untitled":
+            self._session["last_zone"] = self.zone_name
         self._session["left_panel_w"] = self.left_panel_w
         self._session["right_panel_w"] = self.right_panel_w
         self._session["window_w"] = self.win_size[0]

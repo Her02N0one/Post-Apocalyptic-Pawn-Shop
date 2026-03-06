@@ -350,50 +350,54 @@ def create_default_registry() -> KeybindRegistry:
 
     # ═══════════════════════════════════════════════════════════════
     #  SELECTION OPS (active selection in sculpt/select/paint)
+    #  On L1: operates on floor/ceil heights, walls, upper-wall, etc.
+    #  On L2: operates on floor2/ceil2 heights and textures.
     # ═══════════════════════════════════════════════════════════════
     SS = "sculpt|select|paint"
     r.register("sel.ceil_mode", K.K_x, scope=SS, condition="selection",
-               description="Toggle floor/ceiling mode", category="Selection Ops")
+               description="Toggle floor/ceil mode (L2: floor2/ceil2 target)", category="Selection Ops")
     r.register("sel.add_ceilings", K.K_t, scope=SS, condition="selection",
-               description="Add ceilings", category="Selection Ops")
+               description="Add ceilings (L2: toggle ceil2)", category="Selection Ops")
     r.register("sel.remove_ceilings", K.K_t, MOD_SHIFT, scope=SS, condition="selection",
-               description="Remove ceilings", category="Selection Ops")
+               description="Remove ceilings (L2: remove L2)", category="Selection Ops")
     r.register("sel.make_wall", K.K_h, scope=SS, condition="selection",
-               description="Make wall", category="Selection Ops")
+               description="Make wall (L1 only)", category="Selection Ops")
     r.register("sel.make_open", K.K_h, MOD_SHIFT, scope=SS, condition="selection",
-               description="Make open", category="Selection Ops")
+               description="Make open (L1 only)", category="Selection Ops")
     r.register("sel.flatten_floors", K.K_l, scope=SS, condition="selection",
-               description="Flatten floors to aimed", category="Selection Ops")
+               description="Flatten floors to aimed (L2: floor2)", category="Selection Ops")
     r.register("sel.flatten_ceilings", K.K_l, MOD_SHIFT, scope=SS, condition="selection",
-               description="Flatten ceilings to aimed", category="Selection Ops")
+               description="Flatten ceilings to aimed (L2: ceil2)", category="Selection Ops")
     r.register("sel.reset", K.K_DELETE, scope=SS, condition="selection",
-               description="Reset selected cells", category="Selection Ops")
+               description="Reset selected cells (L2: clear L2)", category="Selection Ops")
     r.register("sel.raise_upper_wall", K.K_u, scope=SS, condition="selection",
-               description="Raise upper wall (batch)", category="Selection Ops")
+               description="Raise upper wall (L1 only)", category="Selection Ops")
     r.register("sel.lower_upper_wall", K.K_u, MOD_SHIFT, scope=SS, condition="selection",
-               description="Lower upper wall (batch)", category="Selection Ops")
+               description="Lower upper wall (L1 only)", category="Selection Ops")
     r.register("sel.reset_upper_wall", K.K_u, MOD_CTRL, scope=SS, condition="selection",
-               description="Reset upper wall (batch)", category="Selection Ops")
+               description="Reset upper wall (L1 only)", category="Selection Ops")
 
     # ═══════════════════════════════════════════════════════════════
     #  SCULPT (single cell, no selection)
+    #  Keys are layer-aware: on L2, T/R/Del act on L2 surfaces.
+    #  H (wall/open) and U (upper wall) are L1-only concepts.
     # ═══════════════════════════════════════════════════════════════
     r.register("sculpt.toggle_ceiling", K.K_t, scope="sculpt", condition="no_selection",
-               description="Toggle ceiling", category="Sculpt")
+               description="Toggle ceiling (L2: toggle ceil2)", category="Sculpt")
     r.register("sculpt.make_wall", K.K_h, scope="sculpt", condition="no_selection",
-               description="Make wall", category="Sculpt")
+               description="Make wall (L1 only)", category="Sculpt")
     r.register("sculpt.make_open", K.K_h, MOD_SHIFT, scope="sculpt", condition="no_selection",
-               description="Make open", category="Sculpt")
+               description="Make open (L1 only)", category="Sculpt")
     r.register("sculpt.reset_ceiling", K.K_r, scope="sculpt", condition="aimed_ceiling",
-               description="Reset ceiling to sky", category="Sculpt")
+               description="Reset (L2: clear L2 at cell)", category="Sculpt")
     r.register("sculpt.reset_floor", K.K_r, scope="sculpt", condition="aimed_floor",
-               description="Reset floor to 0", category="Sculpt")
+               description="Reset floor (L2: clear L2 at cell)", category="Sculpt")
     r.register("sculpt.raise_upper_wall", K.K_u, scope="sculpt", condition="no_selection",
-               description="Raise upper wall", category="Sculpt")
+               description="Raise upper wall (L1 only)", category="Sculpt")
     r.register("sculpt.lower_upper_wall", K.K_u, MOD_SHIFT, scope="sculpt", condition="no_selection",
-               description="Lower upper wall", category="Sculpt")
+               description="Lower upper wall (L1 only)", category="Sculpt")
     r.register("sculpt.reset_upper_wall", K.K_u, MOD_CTRL, scope="sculpt", condition="no_selection",
-               description="Reset upper wall", category="Sculpt")
+               description="Reset upper wall (L1 only)", category="Sculpt")
     r.register("sculpt.cycle_grid", K.K_g, scope="sculpt",
                description="Cycle snap grid", category="Sculpt")
     r.register("sculpt.toggle_layer", K.K_x, scope="sculpt", condition="no_selection",

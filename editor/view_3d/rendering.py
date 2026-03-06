@@ -490,10 +490,12 @@ class RenderingMixin:
 
 
     def _draw_layer2_slabs(self, surface, vp, hw, hh, zone, W, H, visible):
-        """Draw secondary floor/ceiling surfaces.
+        """Draw secondary floor/ceiling surfaces with 2.5D face shading.
 
-        When Layer 2 is active, slabs render at higher opacity (solid).
-        When Layer 1 is active, they render as translucent wireframe.
+        Uses floor2_textures / ceil2_textures to derive per-face colours,
+        matching how L1 floor/ceiling masses render.
+        When Layer 2 is active, slabs render at higher opacity.
+        When Layer 1 is active, they render as translucent.
         When isolating to Layer 1, they are hidden entirely.
         """
         f2 = getattr(zone, 'floor2_heights', None)
@@ -512,40 +514,85 @@ class RenderingMixin:
         aimed = self.aimed
         is_layer2_active = (active_layer == 2)
         target = self._layer2_target
+        tc = self._tile_color
+        dk = self._darken
+        f2t = getattr(zone, 'floor2_textures', None)
+        c2t = getattr(zone, 'ceil2_textures', None)
+        uwh2_grid = getattr(zone, 'upper_wall_height2', None)
+
         for r, c in visible:
             is_aim = (aimed and aimed.row == r and aimed.col == c) and is_layer2_active
             # Floor2
             if f2:
                 fv = f2[r][c]
                 if fv > LAYER_NONE + 1.0:
-                    if is_layer2_active:
-                        col = COL_TOOL_LAYER2 if (is_aim and target == "floor2") else (180, 140, 220)
-                        w = 3 if is_aim else 2
-                        a = 180 if is_aim else 140
+                    tex = (f2t[r][c] if f2t and len(f2t) > r else "") or ""
+                    if tex:
+                        base = tc(tex)
+                        # face_colors: top=texture, bot=dark, sides=slightly dark
+                        fcols = [
+                            base,            # top – floor surface
+                            dk(base, 0.5),   # bottom
+                            dk(base, 0.7),   # north
+                            dk(base, 0.7),   # south
+                            dk(base, 0.8),   # west
+                            dk(base, 0.8),   # east
+                        ]
                     else:
-                        col = (160, 120, 200)
-                        w = 2
+                        fcols = None
+                        base = (180, 140, 220)
+
+                    if is_layer2_active:
+                        edge = COL_TOOL_LAYER2 if (is_aim and target == "floor2") else None
+                        w = 3 if is_aim else 1
+                        a = 200 if is_aim else 160
+                    else:
+                        edge = None
+                        w = 1
                         a = 50
                     self._filled_box(surface, vp, hw, hh,
                                      float(c), fv, float(r),
                                      c + 1.0, fv + 0.04, r + 1.0,
-                                     col, col, w, alpha=a)
+                                     base, edge, w, alpha=a,
+                                     face_colors=fcols)
             # Ceil2
             if c2:
                 cv = c2[r][c]
                 if cv > LAYER_NONE + 1.0:
-                    if is_layer2_active:
-                        col = (200, 160, 255) if (is_aim and target == "ceil2") else (160, 130, 210)
-                        w = 3 if is_aim else 2
-                        a = 180 if is_aim else 140
+                    tex = (c2t[r][c] if c2t and len(c2t) > r else "") or ""
+                    if tex:
+                        base = tc(tex)
+                        # face_colors: top=dark (mass above), bot=texture
+                        # (looking up at the ceiling), sides=slightly dark
+                        fcols = [
+                            dk(base, 0.5),   # top
+                            base,            # bottom – ceiling surface
+                            dk(base, 0.7),   # north
+                            dk(base, 0.7),   # south
+                            dk(base, 0.8),   # west
+                            dk(base, 0.8),   # east
+                        ]
                     else:
-                        col = (130, 100, 180)
-                        w = 2
+                        fcols = None
+                        base = (160, 130, 210)
+
+                    # Extend ceiling2 slab upward when uwh2 is set
+                    uwh2 = uwh2_grid[r][c] if (uwh2_grid and len(uwh2_grid) > r) else 0.0
+                    c2_top = uwh2 if uwh2 > cv else cv
+
+                    if is_layer2_active:
+                        edge = COL_TOOL_LAYER2 if (is_aim and target == "ceil2") else None
+                        w = 3 if is_aim else 1
+                        a = 200 if is_aim else 160
+                    else:
+                        edge = None
+                        w = 1
                         a = 50
                     self._filled_box(surface, vp, hw, hh,
                                      float(c), cv - 0.04, float(r),
-                                     c + 1.0, cv, r + 1.0,
-                                     col, col, w, alpha=a)
+                                     c + 1.0, c2_top, r + 1.0,
+                                     base, edge, w, alpha=a,
+                                     face_colors=fcols)
 
     # ── Discrete object overlays ──────────────────────────────────
 
@@ -974,7 +1021,7 @@ class RenderingMixin:
             pygame.draw.polygon(surface, tool_col, pts, 2)
 
             font = _get_font(12)
-            tgt = self._layer2_target
+            tgt = self._layer2_effective_target
             badge = "L2:FLOOR" if tgt == "floor2" else "L2:CEIL"
             badge_img = font.render(badge, True, tool_col)
             bw, bh = badge_img.get_size()
@@ -1026,12 +1073,15 @@ class RenderingMixin:
                 ctx_key = "selection"
             elif self._sculpt_layer2:
                 ctx_key = "layer2"
-            elif part == "ceiling":
-                ctx_key = "ceiling"
-            elif part in ("floor", "wall", "ground"):
-                ctx_key = "floor"
             else:
-                ctx_key = "none"
+                # Map L2 surface hits to L1 equivalents for hint display
+                p = {"floor2": "floor", "ceiling2": "ceiling"}.get(part, part)
+                if p == "ceiling":
+                    ctx_key = "ceiling"
+                elif p in ("floor", "wall", "ground"):
+                    ctx_key = "floor"
+                else:
+                    ctx_key = "none"
         elif tool == "box":
             ctx_key = "selected" if self._box_selected is not None else "unselected"
         else:
@@ -1291,7 +1341,7 @@ class RenderingMixin:
 
         # ── New tool HUD info ─────────────────────────────────────
         if self.tool == "sculpt" and self._sculpt_layer2:
-            tgt = self._layer2_target
+            tgt = self._layer2_effective_target
             lines.append((f"[Layer 2]  Target: {tgt}", COL_TOOL_LAYER2))
         elif self.tool == "quad":
             sel = self._quad_selected
@@ -1369,6 +1419,17 @@ class RenderingMixin:
             lines.append((f"Ceil:  {ceil_str}", (140, 170, 230)))
             if uwh > ch + 0.01 and not is_sky:
                 lines.append((f"Wall \u2191: {uwh:.2f}", (200, 180, 120)))
+
+            # L2 info
+            l2f = getattr(zone, 'floor2_heights', None)
+            l2c = getattr(zone, 'ceil2_heights', None)
+            l2uwh = getattr(zone, 'upper_wall_height2', None)
+            if l2c and len(l2c) > r:
+                c2v = l2c[r][c]
+                if c2v > -999:
+                    uwh2v = l2uwh[r][c] if (l2uwh and len(l2uwh) > r) else 0.0
+                    if uwh2v > c2v + 0.01:
+                        lines.append((f"L2 Wall \u2191: {uwh2v:.2f}", (180, 140, 220)))
             if hit.face and hit.face != "ground":
                 lines.append((f"Face: {hit.face}", COL_HUD_TEXT))
 

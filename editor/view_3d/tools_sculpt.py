@@ -386,9 +386,9 @@ class SculptMixin:
             self.dirty = True
 
     def _scroll_upper_wall(self, direction: int) -> None:
-        """Ctrl+Scroll while aimed at ceiling: raise/lower upper wall height."""
+        """Scroll while aimed at ceiling: raise/lower upper wall height."""
         hit = self.aimed
-        if not hit or hit.part != "ceiling":
+        if not hit or hit.part not in ("ceiling", "ceiling2"):
             return
         zone = self.zone
         r, c = hit.row, hit.col

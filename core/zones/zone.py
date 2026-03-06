@@ -125,6 +125,9 @@ class Zone:
     ceil2_heights: list[list[float]] = field(default_factory=list)
     floor2_textures: list[list[str]] = field(default_factory=list)
     ceil2_textures: list[list[str]] = field(default_factory=list)
+    # Per-cell upper wall height for ceiling2 (same role as upper_wall_height
+    # but for the secondary ceiling layer).  0.0 = no extension.
+    upper_wall_height2: list[list[float]] = field(default_factory=list)
     # ── Per-cell fog volume (density + colour) ─────────────────
     # fog_density[r][c] = 0.0..1.0, fog_color[r][c] = (R,G,B) 0–255.
     fog_density: list[list[float]] = field(default_factory=list)
@@ -302,6 +305,7 @@ class Zone:
             ceil2_heights=_grid_or_default("ceil2_heights", -1000.0, H, W),
             floor2_textures=_grid_or_default("floor2_textures", "", H, W),
             ceil2_textures=_grid_or_default("ceil2_textures", "", H, W),
+            upper_wall_height2=_grid_or_default("upper_wall_height2", 0.0, H, W),
             fog_density=_grid_or_default("fog_density", 0.0, H, W),
             fog_color=data.get("fog_color", [[(128, 128, 128)] * W for _ in range(H)]),
             render_portals=data.get("render_portals", []),

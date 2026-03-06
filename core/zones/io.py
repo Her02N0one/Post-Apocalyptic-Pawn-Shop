@@ -189,6 +189,7 @@ def save_binary_zone(
                 "ceil2_heights": zone.ceil2_heights,
                 "floor2_textures": zone.floor2_textures,
                 "ceil2_textures": zone.ceil2_textures,
+                "upper_wall_height2": zone.upper_wall_height2,
                 "fog_density": zone.fog_density,
                 "fog_color": zone.fog_color,
                 "render_portals": zone.render_portals,
@@ -372,6 +373,7 @@ def load_binary_zone(
                     result["ceil2_heights"] = enty.get("ceil2_heights", [])
                     result["floor2_textures"] = enty.get("floor2_textures", [])
                     result["ceil2_textures"] = enty.get("ceil2_textures", [])
+                    result["upper_wall_height2"] = enty.get("upper_wall_height2", [])
                     result["fog_density"] = enty.get("fog_density", [])
                     result["fog_color"] = enty.get("fog_color", [])
                     result["render_portals"] = enty.get("render_portals", [])
@@ -419,6 +421,7 @@ def load_binary_zone(
             result.setdefault("ceil2_heights", [])
             result.setdefault("floor2_textures", [])
             result.setdefault("ceil2_textures", [])
+            result.setdefault("upper_wall_height2", [])
             result.setdefault("fog_density", [])
             result.setdefault("fog_color", [])
             result.setdefault("render_portals", [])

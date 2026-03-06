@@ -9,6 +9,8 @@ from __future__ import annotations
 from core.tiles import tile_def
 from editor.view_3d.constants import DEFAULT_FLOOR, SKY_HEIGHT
 
+LAYER_NONE = -1000.0
+
 
 def reset_cell(zone, r: int, c: int, open_tile: str) -> None:
     """Reset cell (r, c) to default state: flat ground, open sky, no textures.
@@ -53,3 +55,15 @@ def reset_cell(zone, r: int, c: int, open_tile: str) -> None:
         zone.floor_step_segments[r][c] = [[], [], [], []]
     if zone.ceil_step_segments and len(zone.ceil_step_segments) > r:
         zone.ceil_step_segments[r][c] = [[], [], [], []]
+
+    # Layer 2
+    if hasattr(zone, 'floor2_heights') and zone.floor2_heights and len(zone.floor2_heights) > r:
+        zone.floor2_heights[r][c] = LAYER_NONE
+    if hasattr(zone, 'ceil2_heights') and zone.ceil2_heights and len(zone.ceil2_heights) > r:
+        zone.ceil2_heights[r][c] = LAYER_NONE
+    if hasattr(zone, 'floor2_textures') and zone.floor2_textures and len(zone.floor2_textures) > r:
+        zone.floor2_textures[r][c] = ""
+    if hasattr(zone, 'ceil2_textures') and zone.ceil2_textures and len(zone.ceil2_textures) > r:
+        zone.ceil2_textures[r][c] = ""
+    if hasattr(zone, 'upper_wall_height2') and zone.upper_wall_height2 and len(zone.upper_wall_height2) > r:
+        zone.upper_wall_height2[r][c] = 0.0
