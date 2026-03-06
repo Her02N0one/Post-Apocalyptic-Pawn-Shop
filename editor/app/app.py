@@ -30,9 +30,11 @@ from editor.app.theme import setup_theme
 from editor.app.events import EventsMixin
 from editor.app.viewport import ViewportMixin
 from editor.app.raycaster import RaycasterMixin
-from editor.app.panels import PanelsMixin
+from editor.app.panels_pkg import PanelsMixin
 from editor.app.dialogs import DialogsMixin
 from editor.app.asset_browser import AssetBrowserMixin
+from editor.app.data_viewers import DataViewersMixin
+from editor.app.session_cfg import load_session, save_session, push_recent
 
 
 class ZoneEditorApp(
@@ -42,17 +44,19 @@ class ZoneEditorApp(
     PanelsMixin,
     DialogsMixin,
     AssetBrowserMixin,
+    DataViewersMixin,
 ):
     """Standalone 3D zone editor with ImGui panels.
 
-    Composed from six focused mixins:
+    Composed from seven focused mixins:
 
     * :class:`EventsMixin`        — input routing and escape chains
     * :class:`ViewportMixin`      — GL quad rendering dispatch
     * :class:`RaycasterMixin`     — 2D raycaster preview camera
     * :class:`PanelsMixin`        — ImGui sidebar panels & overlays
-    * :class:`DialogsMixin`       — modal dialogs (new, save-as, unsaved guard)
-    * :class:`AssetBrowserMixin`  — floating asset browser window
+    * :class:`DialogsMixin`       — modal dialogs (new, save-as, unsaved guard, etc.)
+    * :class:`AssetBrowserMixin`  — floating texture browser window
+    * :class:`DataViewersMixin`   — read-only TOML data browsers
     """
 
     # ── Init ──────────────────────────────────────────────────────
@@ -88,6 +92,12 @@ class ZoneEditorApp(
         # Asset registry (for binary .zone saves)
         self.registry = GameRegistry()
 
+        # Session persistence (MRU, layout, bookmarks)
+        self._session = load_session()
+
+        # Mutable state for texture browser (avoids class-level mutable defaults)
+        self._ab_init()
+
         # Zone data
         self.all_zones: list[str] = list_zones()
         self.zone: Zone | None = None
@@ -98,15 +108,17 @@ class ZoneEditorApp(
         self.atlas = TextureAtlas()
         self.atlas.ensure_all()
 
-        # Viewport
-        self.view_mode: str = "3d"       # "3d" = wireframe,  "2d" = raycaster
+        # Viewport — restore layout from session
+        self.view_mode: str = self._session.get("view_mode", "3d")
         self._vp_tex: int = 0
         self._vp_surface: pygame.Surface | None = None
         self._vp_size: tuple[int, int] = (800, 600)
         self.mouse_captured: bool = False
-        self.win_size: tuple[int, int] = (WINDOW_W, WINDOW_H)
-        self.left_panel_w: int = LEFT_PANEL_W
-        self.right_panel_w: int = RIGHT_PANEL_W
+        _sw = self._session.get("window_w", WINDOW_W)
+        _sh = self._session.get("window_h", WINDOW_H)
+        self.win_size: tuple[int, int] = (_sw, _sh)
+        self.left_panel_w: int = self._session.get("left_panel_w", LEFT_PANEL_W)
+        self.right_panel_w: int = self._session.get("right_panel_w", RIGHT_PANEL_W)
         self._dragging_splitter: str = ""
 
         # 3D editor + raycaster (initialized by _load_zone)
@@ -122,11 +134,21 @@ class ZoneEditorApp(
         self.is_interior: bool = True
         self.dn: float = 1.0
 
+        # Restore texture browser visibility from session
+        self.show_texture_browser: bool = self._session.get(
+            "show_texture_browser", False)
+
+        # Camera bookmarks (list of dicts)
+        self._camera_bookmarks: list[dict] = self._session.get(
+            "camera_bookmarks", [])
+
         # Always start with a blank zone
         self._create_default_zone()
-        # If a zone name was given on the command line, load it on top
-        if zone_name and zone_name in self.all_zones:
-            self._load_zone(zone_name)
+        # If a zone name was given on the command line, load it;
+        # otherwise try to restore the last-opened zone from session.
+        _restore = zone_name or self._session.get("last_zone", "")
+        if _restore and _restore in self.all_zones:
+            self._load_zone(_restore)
 
         # New-zone dialog state
         self.show_new_zone: bool = False
@@ -154,6 +176,55 @@ class ZoneEditorApp(
         self._kb_filter: str = ""      # search filter text
         self._kb_show_conflicts: bool = False  # filter to conflicts only
 
+        # Resize Zone dialog state
+        self.show_resize_zone: bool = False
+        self._resize_new_w: int = 20
+        self._resize_new_h: int = 20
+        self._resize_anchor: str = "top-left"  # where old data is placed
+
+        # Find / Replace Texture dialog state
+        self.show_find_replace_tex: bool = False
+        self._frt_find: str = ""
+        self._frt_replace: str = ""
+        self._frt_result: str = ""
+
+        # Validate Zone results window state
+        self.show_validate_zone: bool = False
+        self._validate_results: list[str] = []
+
+        # Zone Settings dialog state
+        self.show_zone_settings: bool = False
+        self._zs_skybox: str = ""
+        self._zs_sky_r: int = 0
+        self._zs_sky_g: int = 0
+        self._zs_sky_b: int = 0
+        self._zs_anchor_r: float = 0.0
+        self._zs_anchor_c: float = 0.0
+
+        # Duplicate Zone dialog state
+        self.show_duplicate_zone: bool = False
+        self._dup_name: str = ""
+
+        # Export Top-Down Image dialog state
+        self.show_export_image: bool = False
+        self._export_scale: int = 8
+        self._export_entities: bool = True
+
+        # Data viewer windows
+        self.show_entity_defs_viewer: bool = False
+        self._entity_defs_cache: dict | None = None
+        self._dv_ent_filter: str = ""
+
+        self.show_items_viewer: bool = False
+        self._items_cache: dict | None = None
+        self._dv_item_filter: str = ""
+
+        self.show_loot_tables_viewer: bool = False
+        self._loot_cache: dict | None = None
+
+        self.show_presets_viewer: bool = False
+        self._presets_cache: dict | None = None
+
         # Performance
         self.frame_ms: float = 0.0
         self.fps: float = 60.0
@@ -164,8 +235,13 @@ class ZoneEditorApp(
         """Create a blank untitled zone in memory (not saved to disk)."""
         self._create_new_zone(20, 20)
 
-    def _load_zone(self, name: str) -> None:
-        self.zone = load_zone(name)
+    def _attach_zone(self, zone: Zone, name: str) -> None:
+        """Wire a zone into the editor and raycaster (shared init logic).
+
+        Sets ``self.zone``, ``self.zone_name``, resets dirty flag, and
+        creates-or-updates both the 3D editor and raycaster renderer.
+        """
+        self.zone = zone
         self.zone_name = name
         self.dirty = False
 
@@ -184,13 +260,25 @@ class ZoneEditorApp(
                 fov=RAY_FOV, dn=self.dn,
             )
 
+        pygame.display.set_caption(f"{WINDOW_TITLE} \u2014 {name}")
+        self._vp_dirty = True
+
+    def _load_zone(self, name: str) -> None:
+        try:
+            zone = load_zone(name)
+        except Exception as exc:                             # noqa: BLE001
+            self._flash_transient(
+                f"Failed to load {name}: {exc}", 3.0, (1.0, 0.4, 0.4, 1.0),
+            )
+            return
+        self._attach_zone(zone, name)
+        push_recent(self._session, name)
+
         self.px, self.py = self._find_spawn()
         self.angle = math.pi * 1.5
         self.player_fh = self.renderer.floor_height_at(self.px, self.py)
         self.cam_h = self.player_fh + EYE_HEIGHT
         self.is_interior = self.zone.first_person
-
-        pygame.display.set_caption(f"{WINDOW_TITLE} \u2014 {name}")
 
     def _find_spawn(self) -> tuple[float, float]:
         zone = self.zone
@@ -200,7 +288,7 @@ class ZoneEditorApp(
 
     def _create_new_zone(self, w: int, h: int) -> None:
         """Create a blank untitled zone in memory (not saved to disk)."""
-        self.zone = Zone(
+        zone = Zone(
             name="untitled", width=w, height=h,
             anchor=(h / 2.0, w / 2.0),
             first_person=True,
@@ -220,23 +308,7 @@ class ZoneEditorApp(
             ceil_step_segments=[[[[], [], [], []] for _ in range(w)] for _ in range(h)],
             upper_wall_height=[[0.0] * w for _ in range(h)],
         )
-        self.zone_name = "untitled"
-        self.dirty = False
-
-        if self.editor_3d:
-            self.editor_3d.set_zone(self.zone)
-        else:
-            self.editor_3d = Zone3DEditor(self.zone)
-            self.editor_3d.show_hud = False
-        self.editor_3d.on_flash = self._flash_transient
-
-        if self.renderer:
-            self.renderer.update_zone(self.zone, self.atlas, self.dn)
-        else:
-            self.renderer = RayRenderer(
-                self.zone, self.atlas, sw=RAY_RES_W, sh=RAY_RES_H,
-                fov=RAY_FOV, dn=self.dn,
-            )
+        self._attach_zone(zone, "untitled")
 
         self.px = w / 2.0
         self.py = h / 2.0
@@ -244,8 +316,6 @@ class ZoneEditorApp(
         self.player_fh = 0.0
         self.cam_h = EYE_HEIGHT
         self.is_interior = True
-
-        pygame.display.set_caption(f"{WINDOW_TITLE} \u2014 untitled")
 
     # ── Save ──────────────────────────────────────────────────────
 
@@ -266,11 +336,28 @@ class ZoneEditorApp(
         self.zone.name = name
         self.zone_name = name
         path = ZONES_DIR / f"{name}.zone"
-        self.zone.save_to_file(path, self.registry)
+        try:
+            self.zone.save_to_file(path, self.registry)
+        except Exception as exc:  # noqa: BLE001
+            self._flash_transient(
+                f"Save failed: {exc}", 3.0, (1.0, 0.3, 0.3, 1.0))
+            return
         self.dirty = False
         self._flash_transient(f"Saved {name} \u2713", 1.5, (0.5, 1.0, 0.6, 1.0))
         self.all_zones = list_zones()
         pygame.display.set_caption(f"{WINDOW_TITLE} \u2014 {name}")
+
+    def _delete_zone_file(self, name: str) -> None:
+        """Delete a .zone file from disk (not the currently loaded zone)."""
+        path = ZONES_DIR / f"{name}.zone"
+        try:
+            path.unlink()
+        except Exception as exc:  # noqa: BLE001
+            self._flash_transient(
+                f"Delete failed: {exc}", 2.0, (1.0, 0.4, 0.4, 1.0))
+            return
+        self.all_zones = list_zones()
+        self._flash_transient(f"Deleted {name}", 1.5, (0.9, 0.6, 0.4, 1.0))
 
     # ── Unsaved changes guard ─────────────────────────────────────
 
@@ -326,9 +413,6 @@ class ZoneEditorApp(
             self.editor_3d._lmb_held = False
             self.editor_3d._capture_pending = False
             self.editor_3d._capture_name = ""
-            if getattr(self.editor_3d, '_capture_pending', False):
-                self.editor_3d._capture_pending = False
-                self.editor_3d._capture_name = ""
         self._clear_imgui_input_state()
 
     def _clear_imgui_input_state(self) -> None:
@@ -377,5 +461,78 @@ class ZoneEditorApp(
 
             pygame.display.flip()
 
+        self._save_session()
         self.imgui_impl.shutdown()
         pygame.quit()
+
+    # ── Camera bookmarks ─────────────────────────────────────────
+
+    def _save_camera_bookmark(self, slot: int) -> None:
+        """Save the current 3D camera pose to bookmark *slot* (0-based)."""
+        ed = self.editor_3d
+        if not ed:
+            return
+        bm = {
+            "slot": slot,
+            "zone": self.zone_name,
+            "cam_x": round(ed.cam_x, 3),
+            "cam_y": round(ed.cam_y, 3),
+            "cam_z": round(ed.cam_z, 3),
+            "yaw": round(ed.yaw, 4),
+            "pitch": round(ed.pitch, 4),
+        }
+        # Replace existing bookmark in same slot, or append
+        bms = self._camera_bookmarks
+        for i, b in enumerate(bms):
+            if b.get("slot") == slot:
+                bms[i] = bm
+                self._flash_transient(
+                    f"Bookmark {slot + 1} saved", 1.2, (0.5, 0.9, 0.6, 1.0))
+                return
+        bms.append(bm)
+        self._flash_transient(
+            f"Bookmark {slot + 1} saved", 1.2, (0.5, 0.9, 0.6, 1.0))
+
+    def _recall_camera_bookmark(self, slot: int) -> None:
+        """Recall camera pose from bookmark *slot* (0-based)."""
+        ed = self.editor_3d
+        if not ed:
+            return
+        for bm in self._camera_bookmarks:
+            if bm.get("slot") == slot:
+                # If bookmark is for a different zone, switch first
+                bm_zone = bm.get("zone", "")
+                if bm_zone and bm_zone != self.zone_name and bm_zone in self.all_zones:
+                    if self._request_guarded("switch", bm_zone):
+                        self._load_zone(bm_zone)
+                    else:
+                        return
+                ed.cam_x = bm.get("cam_x", ed.cam_x)
+                ed.cam_y = bm.get("cam_y", ed.cam_y)
+                ed.cam_z = bm.get("cam_z", ed.cam_z)
+                ed.yaw = bm.get("yaw", ed.yaw)
+                ed.pitch = bm.get("pitch", ed.pitch)
+                self._flash_transient(
+                    f"Bookmark {slot + 1}", 1.0, (0.6, 0.8, 1.0, 1.0))
+                return
+        self._flash_transient(
+            f"Bookmark {slot + 1}: empty", 0.8, (0.7, 0.5, 0.3, 1.0))
+
+    def _delete_camera_bookmark(self, slot: int) -> None:
+        """Remove camera bookmark at *slot*."""
+        bms = self._camera_bookmarks
+        self._camera_bookmarks = [b for b in bms if b.get("slot") != slot]
+
+    def _save_session(self) -> None:
+        """Persist editor session state to disk."""
+        self._session["last_zone"] = self.zone_name
+        self._session["left_panel_w"] = self.left_panel_w
+        self._session["right_panel_w"] = self.right_panel_w
+        self._session["window_w"] = self.win_size[0]
+        self._session["window_h"] = self.win_size[1]
+        self._session["view_mode"] = self.view_mode
+        self._session["show_texture_browser"] = getattr(
+            self, "show_texture_browser", False)
+        self._session["camera_bookmarks"] = getattr(
+            self, "_camera_bookmarks", [])
+        save_session(self._session)

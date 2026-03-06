@@ -1,7 +1,7 @@
-"""editor/app/asset_browser.py — Asset browser panel for zone editor.
+"""editor/app/asset_browser.py — Texture browser panel for zone editor.
 
 Provides a floating ImGui window to browse, preview, and manage
-asset files (textures, skyboxes, billboards) from the project's
+texture files (tiles, skyboxes, billboards) from the project's
 ``assets/`` directory tree.
 
 Exposed as :class:`AssetBrowserMixin` which is mixed into the
@@ -10,6 +10,7 @@ Exposed as :class:`AssetBrowserMixin` which is mixed into the
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -54,29 +55,24 @@ def _list_images(directory: Path) -> list[Path]:
 
 
 class AssetBrowserMixin:
-    """Floating asset browser window for the zone editor."""
+    """Floating texture browser window for the zone editor."""
 
     # ── State ─────────────────────────────────────────────────────
 
-    show_asset_browser: bool = False
+    show_texture_browser: bool = False
 
-    # Thumbnail GL texture cache:  path → (gl_tex_id, w, h)
-    _ab_thumb_cache: dict[str, tuple[int, int, int]] = {}
-
-    # Currently selected category index.
+    # Immutable class defaults (scalars are fine as class attrs)
     _ab_cat_idx: int = 0
-
-    # Selected file path (for the detail panel).
     _ab_selected: str = ""
-
-    # Import source path typed by user.
     _ab_import_path: str = ""
-
-    # Refresh trigger — incremented to force rescan.
     _ab_refresh: int = 0
 
-    # Cached directory listing:  (cat_idx, refresh_id) → list[Path]
-    _ab_dir_cache: dict[tuple[int, int], list[Path]] = {}
+    def _ab_init(self) -> None:
+        """Initialise mutable asset-browser state (call from __init__)."""
+        # Thumbnail GL texture cache:  path → (gl_tex_id, w, h)
+        self._ab_thumb_cache: dict[str, tuple[int, int, int]] = {}
+        # Cached directory listing:  (cat_idx, refresh_id) → list[Path]
+        self._ab_dir_cache: dict[tuple[int, int], list[Path]] = {}
 
     # ── Thumbnail helpers ─────────────────────────────────────────
 
@@ -87,6 +83,7 @@ class AssetBrowserMixin:
             surf = pygame.image.load(str(path))
         except Exception:
             # Unloadable image — return a 1×1 magenta placeholder.
+            logging.getLogger(__name__).debug("Cannot load thumbnail: %s", path)
             tex_id = gl.glGenTextures(1)
             gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
             gl.glTexImage2D(
@@ -129,7 +126,7 @@ class AssetBrowserMixin:
             try:
                 gl.glDeleteTextures([tex_id])
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("GL texture cleanup failed", exc_info=True)
         self._ab_thumb_cache.clear()
         self._ab_dir_cache.clear()
         self._ab_refresh += 1
@@ -152,9 +149,9 @@ class AssetBrowserMixin:
 
     # ── Main draw entry point ─────────────────────────────────────
 
-    def _draw_asset_browser(self) -> None:
-        """Draw the floating asset browser window."""
-        if not self.show_asset_browser:
+    def _draw_texture_browser(self) -> None:
+        """Draw the floating texture browser window."""
+        if not self.show_texture_browser:
             return
 
         win_w, win_h = self.win_size
@@ -162,9 +159,9 @@ class AssetBrowserMixin:
         imgui.set_next_window_position(
             win_w * 0.5 - 260, win_h * 0.5 - 210, imgui.ONCE)
 
-        expanded, opened = imgui.begin("Asset Browser", True)
+        expanded, opened = imgui.begin("Texture Browser", True)
         if not opened:
-            self.show_asset_browser = False
+            self.show_texture_browser = False
             imgui.end()
             return
 
@@ -267,7 +264,7 @@ class AssetBrowserMixin:
                     self._ab_selected = ""
                     self._ab_invalidate_thumbs()
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).warning("Failed to delete %s", sel_path, exc_info=True)
             imgui.pop_style_color(2)
 
         else:
@@ -307,6 +304,7 @@ class AssetBrowserMixin:
         try:
             shutil.copy2(str(src), str(dest))
         except Exception:
+            logging.getLogger(__name__).warning("Import failed: %s", src, exc_info=True)
             return
 
         self._ab_import_path = ""

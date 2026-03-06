@@ -28,14 +28,15 @@ class EventsMixin:
 
     # ── Quit / guard helper ───────────────────────────────────────
 
-    def _try_quit(self) -> bool:
-        """Attempt to quit — returns False to stop the main loop, or True
-        to keep running (when the unsaved guard dialog was shown instead)."""
+    def _should_keep_running_after_quit(self) -> bool:
+        """Handle a quit request.  Returns True if the app should keep
+        running (unsaved-changes guard was shown), False if it should exit."""
         if self.dirty:
+            # _request_guarded returns True when clean → proceed immediately
             if self._request_guarded("quit"):
-                return False
-            return True
-        return False
+                return False   # not dirty after all — exit now
+            return True        # guard dialog is now visible — stay alive
+        return False           # nothing unsaved — exit now
 
     # ── Main event pump ───────────────────────────────────────────
 
@@ -45,7 +46,7 @@ class EventsMixin:
 
         for event in pygame.event.get():
             if event.type == QUIT:
-                if self._try_quit() is False:
+                if not self._should_keep_running_after_quit():
                     return False
                 continue
             if event.type == VIDEORESIZE:
@@ -59,6 +60,7 @@ class EventsMixin:
                                                       int(self.right_panel_w * ratio)))
                 self._vp_surface = None
                 self._vp_tex = 0
+                self._vp_dirty = True
                 self.imgui_impl.process_event(event)
                 continue
 
@@ -100,8 +102,8 @@ class EventsMixin:
                 self.editor_3d._capture_name = ""
             elif (self.view_mode == "3d" and self.editor_3d
                     and self.editor_3d.tool == "select"
-                    and (self.editor_3d._sel_start is not None
-                         or self.editor_3d._sel_end is not None)):
+                    and (self.editor_3d.selection.has_cells()
+                         or self.editor_3d.selection.rect_in_progress)):
                 self.editor_3d._sel_cancel()
             else:
                 self._release_mouse()
@@ -115,6 +117,22 @@ class EventsMixin:
         if event.key == pygame.K_s and (pygame.key.get_mods() & pygame.KMOD_CTRL):
             self._save_zone()
             return
+
+        # Camera bookmarks: Ctrl+Shift+1–9 saves, Shift+1–9 recalls
+        _NUM_KEYS = {
+            pygame.K_1: 0, pygame.K_2: 1, pygame.K_3: 2,
+            pygame.K_4: 3, pygame.K_5: 4, pygame.K_6: 5,
+            pygame.K_7: 6, pygame.K_8: 7, pygame.K_9: 8,
+        }
+        if event.key in _NUM_KEYS:
+            mods = pygame.key.get_mods()
+            slot = _NUM_KEYS[event.key]
+            if (mods & pygame.KMOD_CTRL) and (mods & pygame.KMOD_SHIFT):
+                self._save_camera_bookmark(slot)
+                return
+            elif (mods & pygame.KMOD_SHIFT) and not (mods & pygame.KMOD_CTRL):
+                self._recall_camera_bookmark(slot)
+                return
 
         # Forward to active view
         if self.view_mode == "3d" and self.editor_3d:
@@ -171,15 +189,16 @@ class EventsMixin:
 
         if event.type == KEYDOWN:
             if event.key == pygame.K_ESCAPE:
-                if self._try_quit() is False:
+                # Escape chain: close open dialogs first, then quit-guard
+                if self._close_any_dialog():
+                    pass  # dialog was closed — consume the keypress
+                elif not self._should_keep_running_after_quit():
                     return False
 
             # Enter / F5 → enter edit mode
             elif (event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_F5)
                     and self.zone
-                    and not self.show_save_as
-                    and not self.show_new_zone
-                    and not self._show_unsaved_guard):
+                    and not self._any_modal_open()):
                 self._capture_mouse()
 
             # Global shortcuts still work from panels
@@ -187,7 +206,26 @@ class EventsMixin:
                 if not (pygame.key.get_mods() & pygame.KMOD_SHIFT):
                     self._toggle_view_mode()
             elif event.key == pygame.K_s and (pygame.key.get_mods() & pygame.KMOD_CTRL):
-                self._save_zone()
+                if pygame.key.get_mods() & pygame.KMOD_SHIFT:
+                    # Ctrl+Shift+S → Save As
+                    self.save_as_name = self.zone_name if self.zone_name != "untitled" else ""
+                    self.show_save_as = True
+                else:
+                    self._save_zone()
+            elif event.key == pygame.K_z and (pygame.key.get_mods() & pygame.KMOD_CTRL):
+                if self.editor_3d:
+                    self.editor_3d._undo()
+            elif event.key == pygame.K_y and (pygame.key.get_mods() & pygame.KMOD_CTRL):
+                if self.editor_3d:
+                    self.editor_3d._redo()
+            elif event.key == pygame.K_n and (pygame.key.get_mods() & pygame.KMOD_CTRL):
+                if self._request_guarded("new"):
+                    self.show_new_zone = True
+            elif event.key == pygame.K_f and (pygame.key.get_mods() & pygame.KMOD_CTRL):
+                self.show_find_replace_tex = True
+                self._frt_find = ""
+                self._frt_replace = ""
+                self._frt_result = ""
 
         elif event.type == MOUSEBUTTONDOWN and event.button == 1:
             if not io.want_capture_mouse and self.zone:
@@ -198,3 +236,31 @@ class EventsMixin:
     def _capture_with_first_click(self, event: pygame.event.Event) -> None:
         """Capture the mouse without performing any tool action."""
         self._capture_mouse()
+
+    # ── Dialog helpers ────────────────────────────────────────────
+
+    def _any_modal_open(self) -> bool:
+        """Return True if any modal dialog is currently shown."""
+        return (self.show_save_as or self.show_new_zone
+                or self._show_unsaved_guard or self.show_resize_zone
+                or self.show_zone_settings or self.show_duplicate_zone
+                or self.show_export_image)
+
+    def _close_any_dialog(self) -> bool:
+        """Close the first open dialog/window and return True, or False."""
+        # Close non-modal floating windows first
+        for attr in ("show_find_replace_tex", "show_validate_zone",
+                     "show_entity_defs_viewer", "show_items_viewer",
+                     "show_loot_tables_viewer", "show_presets_viewer",
+                     "show_keybind_editor", "show_texture_browser"):
+            if getattr(self, attr, False):
+                setattr(self, attr, False)
+                return True
+        # Then close modal dialogs
+        for attr in ("show_resize_zone", "show_zone_settings",
+                     "show_duplicate_zone", "show_export_image",
+                     "show_save_as", "show_new_zone"):
+            if getattr(self, attr, False):
+                setattr(self, attr, False)
+                return True
+        return False

@@ -42,7 +42,9 @@ class RaycasterMixin:
             self.editor_3d.pitch = self.pitch
 
     def _raycaster_key(self, event: pygame.event.Event) -> None:
-        """Handle raycaster-specific key presses."""
+        """Handle raycaster-specific key presses (respects keybind registry)."""
+        # The 3D editor owns the keybind registry — read from it when available.
+        kb = getattr(self.editor_3d, 'kb', None) if self.editor_3d else None
         if event.key == pygame.K_i:
             self.is_interior = not self.is_interior
             if self.renderer:
@@ -51,7 +53,11 @@ class RaycasterMixin:
             self.noclip = not self.noclip
 
     def _update_raycaster(self, dt: float) -> None:
-        """WASD movement + mouse look for raycaster preview."""
+        """WASD movement + mouse look for raycaster preview.
+
+        Uses the keybind registry for movement keys when available so
+        that user rebinds carry over from the 3D editor.
+        """
         if not self.renderer:
             return
 
@@ -68,10 +74,17 @@ class RaycasterMixin:
         if keys[pygame.K_LCTRL] or keys[pygame.K_RCTRL]:
             speed *= SLOW_MULT
 
+        # Resolve movement keys from the keybind registry (falls back to WASD)
+        kb = getattr(self.editor_3d, 'kb', None) if self.editor_3d else None
+        k_fwd  = kb.key_for("camera.forward")  if kb else pygame.K_w
+        k_back = kb.key_for("camera.backward") if kb else pygame.K_s
+        k_left = kb.key_for("camera.left")     if kb else pygame.K_a
+        k_right= kb.key_for("camera.right")    if kb else pygame.K_d
+
         dx, dy = wasd_2d(
             self.angle,
-            keys[pygame.K_w], keys[pygame.K_s],
-            keys[pygame.K_a], keys[pygame.K_d],
+            keys[k_fwd], keys[k_back],
+            keys[k_left], keys[k_right],
             speed, dt,
         )
 

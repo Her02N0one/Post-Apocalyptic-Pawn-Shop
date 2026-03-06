@@ -24,7 +24,19 @@ def upload_surface(surface: pygame.Surface, tex_id: int = 0) -> int:
 
 
 class ViewportMixin:
-    """OpenGL viewport rendering mixin for :class:`ZoneEditorApp`."""
+    """OpenGL viewport rendering mixin for :class:`ZoneEditorApp`.
+
+    Tracks a ``_vp_dirty`` flag so the expensive ``glTexImage2D`` upload
+    is skipped when the viewport content hasn't changed (e.g. uncaptured
+    idle frames with no transient indicator).
+    """
+
+    # Set to True whenever the viewport surface needs re-uploading.
+    _vp_dirty: bool = True
+
+    def _mark_vp_dirty(self) -> None:
+        """Call whenever the viewport content may have changed."""
+        self._vp_dirty = True
 
     def _render_frame(self) -> None:
         import imgui
@@ -37,7 +49,16 @@ class ViewportMixin:
         # 1. Render viewport to full-window surface → fullscreen GL quad
         self._vp_size = (win_w, win_h)
         if self.zone:
-            self._render_viewport()
+            # Determine whether the viewport needs a fresh render.
+            # Active editing (captured) or fading transient → always dirty.
+            needs_render = (
+                self.mouse_captured
+                or getattr(self, '_transient_time', 0) > 0
+                or self._vp_dirty
+            )
+            if needs_render:
+                self._render_viewport()
+                self._vp_dirty = False
             if self._vp_tex:
                 self._draw_fullscreen_quad()
 

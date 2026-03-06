@@ -1585,10 +1585,9 @@ class TestSelectToolHeight:
     """Tests for scroll-to-raise/lower selected floors & ceilings."""
 
     def _select_region(self, ed, z, r1, c1, r2, c2):
-        """Helper: set selection corners so the rectangle is active."""
+        """Helper: set selection via SelectionState so the rectangle is active."""
         ed.tool = "select"
-        ed._sel_start = (r1, c1)
-        ed._sel_end = (r2, c2)
+        ed.selection.select_rect(r1, c1, r2, c2)
 
     def test_scroll_raises_selected_floors(self):
         """Scrolling up with active selection raises all selected floors."""
@@ -1631,19 +1630,19 @@ class TestSelectToolHeight:
         """X key toggles ceiling mode on the select tool."""
         ed, z = _make_editor()
         ed.tool = "select"
-        assert ed._sel_ceiling_mode is False
+        assert ed.selection.ceiling_mode is False
         ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_x)
         ed.handle_event(ev)
-        assert ed._sel_ceiling_mode is True
+        assert ed.selection.ceiling_mode is True
         ed.handle_event(ev)
-        assert ed._sel_ceiling_mode is False
+        assert ed.selection.ceiling_mode is False
 
     def test_ceiling_mode_scroll_lowers_ceiling(self):
         """Scrolling down in ceiling mode lowers ceilings."""
         ed, z = _make_editor()
         _open_cell(z, 2, 2, fh=0.0, ch=0.8)
         ed.snap_y = 0.25
-        ed._sel_ceiling_mode = True
+        ed.selection.ceiling_mode = True
         self._select_region(ed, z, 2, 2, 2, 2)
         ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=-1)
         ed.handle_event(ev)
@@ -1654,7 +1653,7 @@ class TestSelectToolHeight:
         ed, z = _make_editor()
         _open_cell(z, 2, 2, fh=0.0, ch=0.6)
         ed.snap_y = 0.25
-        ed._sel_ceiling_mode = True
+        ed.selection.ceiling_mode = True
         self._select_region(ed, z, 2, 2, 2, 2)
         ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=1)
         ed.handle_event(ev)
@@ -1665,7 +1664,7 @@ class TestSelectToolHeight:
         ed, z = _make_editor()
         _open_cell(z, 2, 2, fh=0.0, ch=SKY_HEIGHT)
         ed.snap_y = 0.25
-        ed._sel_ceiling_mode = True
+        ed.selection.ceiling_mode = True
         self._select_region(ed, z, 2, 2, 2, 2)
         ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=-1)
         ed.handle_event(ev)
@@ -1677,19 +1676,17 @@ class TestSelectToolHeight:
         """Without active selection, scroll still cycles texture palette."""
         ed, z = _make_editor()
         ed.tool = "select"
-        ed._sel_start = None
-        ed._sel_end = None
+        ed.selection.clear()
         old_idx = ed.tex_idx
         ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=1)
         ed.handle_event(ev)
         assert ed.tex_idx != old_idx
 
     def test_partial_selection_scroll_cycles_palette(self):
-        """With only one corner set, scroll still cycles texture palette."""
+        """With only first corner set, scroll still cycles texture palette."""
         ed, z = _make_editor()
         ed.tool = "select"
-        ed._sel_start = (2, 2)
-        ed._sel_end = None
+        ed.selection.begin_rect(2, 2)
         old_idx = ed.tex_idx
         ev = pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=1)
         ed.handle_event(ev)

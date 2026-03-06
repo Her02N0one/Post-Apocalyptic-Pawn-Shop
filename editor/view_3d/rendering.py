@@ -108,6 +108,7 @@ class RenderingMixin:
         self._draw_quads(surface, vp, hw, hh, zone)
         self._draw_portals(surface, vp, hw, hh, zone)
         self._draw_curves(surface, vp, hw, hh, zone)
+        self._draw_overlay_walls(surface, vp, hw, hh, zone)
         self._draw_selection_highlight(surface, vp, hw, hh, zone)
         self._draw_face_hl_and_preview(surface, vp, hw, hh, sw, sh)
         self._draw_crosshair(surface, sw, sh)
@@ -133,11 +134,11 @@ class RenderingMixin:
 
     def _draw_entities(self, surface, vp, hw, hh, zone):
         """Draw solid shaded boxes at each entity's position + ghost preview."""
-        if not getattr(self, 'show_entities', True):
+        if not self.show_entities:
             return
         entities = getattr(zone, 'entities', None)
 
-        selected_idx = getattr(self, '_ent_selected', None)
+        selected_idx = self._ent_selected
 
         # ── Draw placed entities ──
         if entities:
@@ -149,9 +150,9 @@ class RenderingMixin:
                 )
 
         # ── Ghost preview (entity tool, nothing selected) ──
-        if (getattr(self, 'tool', '') == 'entity'
+        if (self.tool == 'entity'
                 and selected_idx is None
-                and getattr(self, 'aimed', None) is not None):
+                and self.aimed is not None):
             self._draw_entity_ghost(surface, vp, hw, hh, zone)
 
     def _draw_entity_ghost(self, surface, vp, hw, hh, zone):
@@ -306,7 +307,7 @@ class RenderingMixin:
     def _draw_boxes(self, surface, vp, hw, hh, zone):
         """Draw freeform boxes as rotated shaded boxes + ghost preview."""
         boxes = getattr(zone, 'boxes', None)
-        selected_idx = getattr(self, '_box_selected', None)
+        selected_idx = self._box_selected
 
         if boxes:
             for i, b in enumerate(boxes):
@@ -332,9 +333,9 @@ class RenderingMixin:
                 )
 
         # Ghost preview (box tool, nothing selected)
-        if (getattr(self, 'tool', '') == 'box'
+        if (self.tool == 'box'
                 and selected_idx is None
-                and getattr(self, 'aimed', None) is not None):
+                and self.aimed is not None):
             self._draw_box_ghost(surface, vp, hw, hh, zone)
 
     def _draw_box_ghost(self, surface, vp, hw, hh, zone):
@@ -374,8 +375,8 @@ class RenderingMixin:
         box_list: list[tuple[float, int, int, str, float, float]] = []
 
         # Layer ghosting state
-        active_layer = getattr(self, 'active_layer', 1)
-        isolating = getattr(self, 'isolate_layer', False)
+        active_layer = self.active_layer
+        isolating = self.isolate_layer
 
         for r, c in visible:
             for part, yb, yt in self._cell_boxes(r, c):
@@ -500,8 +501,8 @@ class RenderingMixin:
         if not f2 and not c2:
             return
 
-        active_layer = getattr(self, 'active_layer', 1)
-        isolating = getattr(self, 'isolate_layer', False)
+        active_layer = self.active_layer
+        isolating = self.isolate_layer
 
         # Hide L2 when isolating to L1
         if isolating and active_layer == 1:
@@ -510,7 +511,7 @@ class RenderingMixin:
         from editor.view_3d.tools_layer2 import LAYER_NONE
         aimed = self.aimed
         is_layer2_active = (active_layer == 2)
-        target = getattr(self, '_layer2_target', 'floor2')
+        target = self._layer2_target
         for r, c in visible:
             is_aim = (aimed and aimed.row == r and aimed.col == c) and is_layer2_active
             # Floor2
@@ -551,7 +552,7 @@ class RenderingMixin:
     def _draw_quads(self, surface, vp, hw, hh, zone):
         """Draw all quads as vertical rectangles + ghost preview."""
         quads = getattr(zone, 'quads', None)
-        selected = getattr(self, '_quad_selected', None)
+        selected = self._quad_selected
         if quads:
             for i, q in enumerate(quads):
                 qx = float(q.get("x", 0.0))
@@ -586,9 +587,9 @@ class RenderingMixin:
                 self._line3d(surface, vp, hw, hh, x1, by, z1, x0, by + h, z0, col, 1)
 
         # Ghost preview
-        if (getattr(self, 'tool', '') == 'quad'
+        if (self.tool == 'quad'
                 and selected is None
-                and getattr(self, 'aimed', None) is not None):
+                and self.aimed is not None):
             self._draw_quad_ghost(surface, vp, hw, hh, zone)
 
     def _draw_quad_ghost(self, surface, vp, hw, hh, zone):
@@ -604,7 +605,7 @@ class RenderingMixin:
         wz = max(0.1, min(zone.height - 0.1, wz))
 
         # Apply snap if enabled
-        snap = getattr(self, '_quad_snap', 0.25)
+        snap = self._quad_snap
         if snap > 0:
             wx = round(wx / snap) * snap
             wz = round(wz / snap) * snap
@@ -615,9 +616,9 @@ class RenderingMixin:
         ri = max(0, min(zone.height - 1, int(wz)))
         fh = zone.floor_heights[ri][ci] if zone.floor_heights else 0.0
 
-        w = getattr(self, '_quad_width', 1.0)
-        h = getattr(self, '_quad_height', 1.0)
-        yaw = getattr(self, '_quad_yaw', 0.0)
+        w = self._quad_width
+        h = self._quad_height
+        yaw = self._quad_yaw
         cos_a = math.cos(yaw)
         sin_a = math.sin(yaw)
         hw2 = w * 0.5
@@ -640,7 +641,7 @@ class RenderingMixin:
         portals = getattr(zone, 'render_portals', None)
         if not portals:
             return
-        selected = getattr(self, '_portal_selected', None)
+        selected = self._portal_selected
         _face_offsets = {
             0: (0.0, 0.5, "north"),   # N face: z=r, x spans c..c+1
             1: (0.0, 0.5, "south"),   # S face: z=r+1
@@ -731,7 +732,7 @@ class RenderingMixin:
     def _draw_curves(self, surface, vp, hw, hh, zone):
         """Draw all curves as arc wireframes + ghost preview."""
         curves = getattr(zone, 'curves', None)
-        selected = getattr(self, '_curve_selected', None)
+        selected = self._curve_selected
         N_SAMPLES = 16  # arc sample count
 
         if curves:
@@ -792,9 +793,9 @@ class RenderingMixin:
                                  (255, 255, 200), 2)
 
         # Ghost preview
-        if (getattr(self, 'tool', '') == 'curve'
+        if (self.tool == 'curve'
                 and selected is None
-                and getattr(self, 'aimed', None) is not None):
+                and self.aimed is not None):
             self._draw_curve_ghost(surface, vp, hw, hh, zone, N_SAMPLES)
 
     def _draw_curve_ghost(self, surface, vp, hw, hh, zone, n_samples):
@@ -812,7 +813,7 @@ class RenderingMixin:
         ri = max(0, min(zone.height - 1, int(wz)))
         fh = zone.floor_heights[ri][ci] if zone.floor_heights else 0.0
 
-        rad = getattr(self, '_curve_radius', 1.0)
+        rad = self._curve_radius
         ghost_col = (220, 190, 130)
         a0 = 0.0
         a1 = math.pi
@@ -839,11 +840,82 @@ class RenderingMixin:
                              pts[j][0], fh + 1.0, pts[j][1],
                              ghost_col, 1)
 
+    def _draw_overlay_walls(self, surface, vp, hw, hh, zone):
+        """Draw all overlay walls as vertical rectangles + ghost preview."""
+        from editor.view_3d.constants import COL_TOOL_OVERLAY
+        ow_list = getattr(zone, 'overlay_walls', None)
+        selected = getattr(self, '_ow_selected', None)
+
+        if ow_list:
+            for i, ow in enumerate(ow_list):
+                x1, z1, x2, z2 = ow.x1, ow.y1, ow.x2, ow.y2
+                hs = ow.height_scale
+                is_sel = (selected is not None and i == selected)
+
+                # Determine base_y from floor height at midpoint
+                mx = (x1 + x2) * 0.5
+                mz = (z1 + z2) * 0.5
+                ri = max(0, min(zone.height - 1, int(mz)))
+                ci = max(0, min(zone.width - 1, int(mx)))
+                by = zone.floor_heights[ri][ci] if zone.floor_heights else 0.0
+
+                col = COL_TOOL_OVERLAY if is_sel else (130, 180, 150)
+                ew = 3 if is_sel else 2
+                top_y = by + hs
+
+                # Bottom edge
+                self._line3d(surface, vp, hw, hh, x1, by, z1, x2, by, z2, col, ew)
+                # Top edge
+                self._line3d(surface, vp, hw, hh, x1, top_y, z1, x2, top_y, z2, col, ew)
+                # Left vertical
+                self._line3d(surface, vp, hw, hh, x1, by, z1, x1, top_y, z1, col, ew)
+                # Right vertical
+                self._line3d(surface, vp, hw, hh, x2, by, z2, x2, top_y, z2, col, ew)
+                # Diagonal cross (visibility aid)
+                self._line3d(surface, vp, hw, hh, x1, by, z1, x2, top_y, z2, col, 1)
+                self._line3d(surface, vp, hw, hh, x2, by, z2, x1, top_y, z1, col, 1)
+
+                # Transparent indicator: dotted midline
+                if ow.transparent:
+                    mid_y = by + hs * 0.5
+                    self._line3d(surface, vp, hw, hh,
+                                 x1, mid_y, z1, x2, mid_y, z2,
+                                 (120, 200, 255), 1)
+
+                # Blocks indicator: small diamond at midpoint
+                if not ow.blocks and is_sel:
+                    self._line3d(surface, vp, hw, hh,
+                                 mx - 0.1, by + hs * 0.5, mz,
+                                 mx + 0.1, by + hs * 0.5, mz,
+                                 (255, 100, 100), 2)
+
+        # Ghost preview (placing mode)
+        if (getattr(self, 'tool', '') == 'overlay'
+                and getattr(self, '_ow_placing', False)):
+            pos = self._ow_hit_world()
+            if pos is not None:
+                sx = getattr(self, '_ow_start_x', 0.0)
+                sz = getattr(self, '_ow_start_z', 0.0)
+                # Floor height at start
+                sri = max(0, min(zone.height - 1, int(sz)))
+                sci = max(0, min(zone.width - 1, int(sx)))
+                sby = zone.floor_heights[sri][sci] if zone.floor_heights else 0.0
+                gh = getattr(self, '_ow_height', 1.0)
+                ghost_col = (180, 230, 200)
+                self._line3d(surface, vp, hw, hh,
+                             sx, sby, sz, pos[0], sby, pos[1], ghost_col, 2)
+                self._line3d(surface, vp, hw, hh,
+                             sx, sby + gh, sz, pos[0], sby + gh, pos[1], ghost_col, 2)
+                self._line3d(surface, vp, hw, hh,
+                             sx, sby, sz, sx, sby + gh, sz, ghost_col, 2)
+                self._line3d(surface, vp, hw, hh,
+                             pos[0], sby, pos[1], pos[0], sby + gh, pos[1], ghost_col, 2)
+
     def _draw_face_hl_and_preview(self, surface, vp, hw, hh, sw, sh):
         aimed = self.aimed
-        is_paint = getattr(self, 'tool', '') == 'paint'
-        prism_aimed = getattr(self, '_paint_aimed_prism', None) is not None
-        quad_aimed = getattr(self, '_paint_aimed_quad', None) is not None
+        is_paint = self.tool == 'paint'
+        prism_aimed = self._paint_aimed_prism is not None
+        quad_aimed = self._paint_aimed_quad is not None
 
         # Cell face highlight — skip when a prism/quad is closer (paint tool)
         # because the cell highlight bleeds through semi-transparent prism faces.
@@ -884,7 +956,7 @@ class RenderingMixin:
 
     def _draw_crosshair(self, surface, sw, sh):
         is_layer2 = (self.tool == "sculpt"
-                     and getattr(self, '_sculpt_layer2', False))
+                     and self._sculpt_layer2)
         tool_col = COL_TOOL_LAYER2 if is_layer2 else TOOL_COLORS.get(self.tool, COL_CROSSHAIR)
         cx, cy = sw // 2, sh // 2
 
@@ -902,7 +974,7 @@ class RenderingMixin:
             pygame.draw.polygon(surface, tool_col, pts, 2)
 
             font = _get_font(12)
-            tgt = getattr(self, '_layer2_target', 'floor2')
+            tgt = self._layer2_target
             badge = "L2:FLOOR" if tgt == "floor2" else "L2:CEIL"
             badge_img = font.render(badge, True, tool_col)
             bw, bh = badge_img.get_size()
@@ -945,16 +1017,14 @@ class RenderingMixin:
         if tool == "select":
             if self._has_selection():
                 ctx_key = "active"
-            elif getattr(self, 'selection', None) and self.selection.rect_in_progress:
-                ctx_key = "started"
-            elif self._sel_start is not None:
+            elif self.selection and self.selection.rect_in_progress:
                 ctx_key = "started"
             else:
                 ctx_key = "none"
         elif tool == "sculpt":
             if self._has_selection():
                 ctx_key = "selection"
-            elif getattr(self, '_sculpt_layer2', False):
+            elif self._sculpt_layer2:
                 ctx_key = "layer2"
             elif part == "ceiling":
                 ctx_key = "ceiling"
@@ -963,7 +1033,7 @@ class RenderingMixin:
             else:
                 ctx_key = "none"
         elif tool == "box":
-            ctx_key = "selected" if getattr(self, '_box_selected', None) is not None else "unselected"
+            ctx_key = "selected" if self._box_selected is not None else "unselected"
         else:
             ctx_key = "any"
 
@@ -1004,7 +1074,7 @@ class RenderingMixin:
         bg_y = start_y
 
         is_layer2 = (self.tool == "sculpt"
-                     and getattr(self, '_sculpt_layer2', False))
+                     and self._sculpt_layer2)
         bg = pygame.Surface((bg_w, bg_h), pygame.SRCALPHA)
         if is_layer2:
             bg.fill((60, 30, 80, 150))
@@ -1022,11 +1092,11 @@ class RenderingMixin:
 
     def _draw_selection_highlight(self, surface: pygame.Surface, vp, hw, hh, zone) -> None:
         """Draw highlighted cells for the selection (actual cells, not just bbox)."""
-        ceiling_mode = getattr(self, '_sel_ceiling_mode', False)
+        ceiling_mode = self.selection and self.selection.ceiling_mode or False
         col = COL_TOOL_CEILING if ceiling_mode else COL_TOOL_SELECT
 
         # 1. If we have actual selected cells in the universal selection, draw each one
-        sel = getattr(self, 'selection', None)
+        sel = self.selection
         if sel is not None and sel.has_cells():
             for r, c in sel.iter_cells():
                 if ceiling_mode:
@@ -1090,16 +1160,10 @@ class RenderingMixin:
                                      col, col, 2, alpha=100)
             return
 
-        # 3. Legacy fallback — bounding box from _sel_bounds
-        bounds_fn = getattr(self, '_sel_bounds', None)
-        if bounds_fn is None:
-            return
-        result = bounds_fn()
-        if result is None:
-            start = getattr(self, '_sel_start', None)
-            if start is None:
-                return
-            r, c = start
+        # 3. Legacy fallback — anchor-only highlight
+        anchor = getattr(self.selection, 'anchor', None) if self.selection else None
+        if anchor is not None:
+            r, c = anchor
             if ceiling_mode:
                 ch = zone.ceil_heights[r][c]
                 h = ch - 0.05
@@ -1110,19 +1174,6 @@ class RenderingMixin:
                              c + 1.0, h + 0.05, r + 1.0,
                              col, col, 2, alpha=100)
             return
-
-        r_min, c_min, r_max, c_max = result
-        for r in range(r_min, r_max + 1):
-            for c in range(c_min, c_max + 1):
-                if ceiling_mode:
-                    ch = zone.ceil_heights[r][c]
-                    h = ch - 0.05
-                else:
-                    h = zone.floor_heights[r][c]
-                self._filled_box(surface, vp, hw, hh,
-                                 float(c), h, float(r),
-                                 c + 1.0, h + 0.05, r + 1.0,
-                                 col, col, 1, alpha=60)
 
     # ── Hotbar ─────────────────────────────────────────────────────
 
@@ -1138,8 +1189,8 @@ class RenderingMixin:
         y0 = sh - slot_size - 12  # 12px margin from bottom
 
         font = _get_font(11)
-        active = getattr(self, 'hotbar_slot', 0)
-        hotbar = getattr(self, 'hotbar', [''] * HOTBAR_SIZE)
+        active = self.hotbar_slot
+        hotbar = self.hotbar
 
         # Background bar
         bg = pygame.Surface((total_w + 8, slot_size + 8), pygame.SRCALPHA)
@@ -1184,8 +1235,8 @@ class RenderingMixin:
         lines: list[tuple[str, tuple[int, int, int]]] = []
 
         # Layer indicator
-        active_layer = getattr(self, 'active_layer', 1)
-        isolating = getattr(self, 'isolate_layer', False)
+        active_layer = self.active_layer
+        isolating = self.isolate_layer
         if active_layer == 2:
             layer_str = "[L2: Upper]"
             layer_col = (200, 160, 255)
@@ -1198,7 +1249,7 @@ class RenderingMixin:
 
         # Mode indicator
         from editor.view_3d.constants import MODE_LABELS as _ML
-        mode = getattr(self, 'mode', 'arch')
+        mode = self.mode
         mode_label = _ML.get(mode, mode.upper())
 
         tool_label = TOOL_LABELS.get(self.tool, self.tool.upper())
@@ -1206,20 +1257,21 @@ class RenderingMixin:
         lines.append((f"Mode: {mode_label}  |  Tool: {tool_label}", tool_col))
         # Selection indicator (visible in any tool when selection is active)
         if self._has_selection():
-            sel = getattr(self, 'selection', None)
+            sel = self.selection
             n_cells = sel.cell_count() if sel else 0
             _sb = self._sel_bounds()
             if _sb:
                 _rmin, _cmin, _rmax, _cmax = _sb
                 _sw, _sh = _cmax - _cmin + 1, _rmax - _rmin + 1
-                _ceil = getattr(self, '_sel_ceiling_mode', False)
+                _ceil = self.selection.ceiling_mode
                 _mode = "Ceil" if _ceil else "Floor"
                 _col = COL_TOOL_CEILING if _ceil else COL_TOOL_SELECT
                 lines.append((f"[Sel: {n_cells} cells  {_mode}]  X=mode  Esc=clear", _col))
         elif self.tool == "select":
-            sel = getattr(self, 'selection', None)
+            sel = self.selection
             in_progress = sel and sel.rect_in_progress
-            if in_progress or getattr(self, '_sel_start', None) is not None:
+            has_anchor = sel and sel.anchor is not None
+            if in_progress or has_anchor:
                 lines.append(("Click to complete selection...", COL_TOOL_SELECT))
             else:
                 lines.append(("Click to start selection", COL_TOOL_SELECT))
@@ -1229,52 +1281,75 @@ class RenderingMixin:
             preset = self._stamp_current()
             pname = preset.name if preset else "(none)"
             lines.append((f"Preset: {pname}", (180, 140, 255)))
-            mode_str = getattr(self, '_stamp_current_mode', lambda: "replace")()
+            mode_str = self._stamp_current_mode()
             lines.append((f"Mode: {mode_str}  (M)", (160, 200, 255)))
-            if getattr(self, '_capture_pending', False):
-                cap_name = getattr(self, '_capture_name', '')
+            if self._capture_pending:
+                cap_name = self._capture_name
                 lines.append(("", COL_HUD_TEXT))
                 lines.append(("CAPTURE NAME:", (255, 220, 80)))
                 lines.append((f"> {cap_name}_", (255, 255, 200)))
 
         # ── New tool HUD info ─────────────────────────────────────
-        if self.tool == "sculpt" and getattr(self, '_sculpt_layer2', False):
-            tgt = getattr(self, '_layer2_target', 'floor2')
+        if self.tool == "sculpt" and self._sculpt_layer2:
+            tgt = self._layer2_target
             lines.append((f"[Layer 2]  Target: {tgt}", COL_TOOL_LAYER2))
         elif self.tool == "quad":
-            sel = getattr(self, '_quad_selected', None)
-            snap = getattr(self, '_quad_snap', 0.25)
+            sel = self._quad_selected
+            snap = self._quad_snap
             snap_str = f"{snap:.2f}" if snap > 0 else "OFF"
             lines.append((f"Snap: {snap_str}  (G)", COL_TOOL_QUAD))
             if sel is not None:
                 lines.append((f"Quad #{sel} selected", COL_TOOL_QUAD))
             else:
-                w = getattr(self, '_quad_width', 1.0)
-                h = getattr(self, '_quad_height', 1.0)
+                w = self._quad_width
+                h = self._quad_height
                 lines.append((f"Size: {w:.1f}x{h:.1f}", COL_TOOL_QUAD))
         elif self.tool == "portal":
-            sel = getattr(self, '_portal_selected', None)
+            sel = self._portal_selected
             if sel is not None:
                 lines.append((f"Portal #{sel} selected", COL_TOOL_PORTAL))
         elif self.tool == "curve":
-            sel = getattr(self, '_curve_selected', None)
+            sel = self._curve_selected
             if sel is not None:
                 lines.append((f"Curve #{sel} selected", COL_TOOL_CURVE))
             else:
-                rad = getattr(self, '_curve_radius', 1.0)
+                rad = self._curve_radius
                 lines.append((f"Radius: {rad:.2f}", COL_TOOL_CURVE))
         elif self.tool == "box":
-            sel = getattr(self, '_box_selected', None)
-            snap = getattr(self, '_box_snap', True)
+            sel = self._box_selected
+            snap = self._box_snap
             snap_str = "ON" if snap else "OFF"
             lines.append((f"Snap: {snap_str}  (G)", COL_TOOL_BOX))
             if sel is not None:
                 lines.append((f"Prism #{sel} selected", COL_TOOL_BOX))
             else:
-                w = getattr(self, '_box_w', 1.0)
-                h = getattr(self, '_box_h', 1.0)
-                d = getattr(self, '_box_d', 1.0)
+                w = self._box_w
+                h = self._box_h
+                d = self._box_d
                 lines.append((f"Size: {w:.2f}w × {d:.2f}d × {h:.2f}h", COL_TOOL_BOX))
+        elif self.tool == "overlay":
+            from editor.view_3d.constants import COL_TOOL_OVERLAY
+            sel = getattr(self, '_ow_selected', None)
+            snap = getattr(self, '_ow_snap', 0.25)
+            snap_str = f"{snap:.2f}" if snap > 0 else "OFF"
+            hs = getattr(self, '_ow_height', 1.0)
+            n_ow = len(self.zone.overlay_walls) if self.zone else 0
+            lines.append((f"Snap: {snap_str}  Height: {hs:.2f}", COL_TOOL_OVERLAY))
+            if sel is not None:
+                ow = self.zone.overlay_walls[sel] if self.zone and sel < n_ow else None
+                if ow:
+                    lines.append((f"OvrWall #{sel}  h={ow.height_scale:.2f}", COL_TOOL_OVERLAY))
+                    flags = []
+                    if ow.transparent:
+                        flags.append("transparent")
+                    if not ow.blocks:
+                        flags.append("passable")
+                    if flags:
+                        lines.append((", ".join(flags), (200, 200, 160)))
+            elif getattr(self, '_ow_placing', False):
+                lines.append(("Click to set 2nd endpoint", (180, 230, 200)))
+            else:
+                lines.append((f"{n_ow} overlay wall(s)", COL_TOOL_OVERLAY))
 
         hit = self.aimed
         if hit:
@@ -1329,7 +1404,7 @@ class RenderingMixin:
                                      (180, 180, 180)))
 
             # Tool-specific cell data
-            if getattr(self, '_sculpt_layer2', False):
+            if self._sculpt_layer2:
                 from editor.view_3d.tools_layer2 import LAYER_NONE as _LN
                 f2 = getattr(zone, 'floor2_heights', None)
                 c2h = getattr(zone, 'ceil2_heights', None)
@@ -1445,8 +1520,8 @@ class RenderingMixin:
         hw: float, hh: float,
     ) -> None:
         """Draw a translucent highlight on the aimed prism face."""
-        idx = getattr(self, '_paint_aimed_prism', None)
-        face = getattr(self, '_paint_aimed_prism_face', '')
+        idx = self._paint_aimed_prism
+        face = self._paint_aimed_prism_face
         if idx is None or not face:
             return
         zone = self.zone
@@ -1490,7 +1565,7 @@ class RenderingMixin:
         hw: float, hh: float,
     ) -> None:
         """Draw a translucent highlight on the aimed quad."""
-        idx = getattr(self, '_paint_aimed_quad', None)
+        idx = self._paint_aimed_quad
         if idx is None:
             return
         zone = self.zone

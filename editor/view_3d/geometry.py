@@ -39,14 +39,15 @@ class GeometryMixin:
         S = self._SLAB
 
         if td and td.wall:
-            # Render a solid column from ground up to the max height.
-            # When fh == ch (e.g. both 10.0) the (fh \u2192 ch) range is a
-            # paper-thin invisible sliver; anchoring at 0 keeps it visible.
-            return [("wall", min(0.0, fh), max(ch, fh + 0.05, 1.0))]
+            # Render a solid column from ground up to the ceiling.
+            # When fh == ch (e.g. both 10.0) the (fh → ch) range is a
+            # paper-thin invisible sliver; the fh + 0.05 ensures it's
+            # always selectable without clamping to an arbitrary 1.0.
+            return [("wall", min(0.0, fh), max(ch, fh + 0.05))]
 
         # Geometry-solid: floor meets or exceeds ceiling
         if fh >= ch - 0.01:
-            return [("wall", min(0.0, fh), max(fh + S, ch + S, 1.0))]
+            return [("wall", min(0.0, fh), max(fh + S, ch + S))]
 
         result: list[tuple[str, float, float]] = []
 
@@ -123,8 +124,8 @@ class GeometryMixin:
         When ``active_layer == 2``, prefers Layer 2 floor/ceil slabs.
         When ``isolate_layer`` is True, only returns boxes for the active layer.
         """
-        active = getattr(self, 'active_layer', 1)
-        isolate = getattr(self, 'isolate_layer', False)
+        active = self.active_layer
+        isolate = self.isolate_layer
 
         # Always include L1 unless isolating to L2
         l1_boxes: list[tuple[str, float, float]] = []

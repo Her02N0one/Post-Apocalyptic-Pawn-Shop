@@ -417,6 +417,7 @@ def create_default_registry() -> KeybindRegistry:
     r.register("box.rotate",      K.K_r, scope="box",  description="Rotate 90°",       category="Box")
     r.register("box.toggle_grid", K.K_g, scope="box",  description="Toggle grid snap",  category="Box")
     r.register("quad.cycle_snap", K.K_g, scope="quad", description="Cycle quad snap",   category="Quad")
+    r.register("overlay.cycle_snap", K.K_g, scope="overlay", description="Cycle snap grid", category="Overlay")
     r.register("stamp.cycle_mode",K.K_m, scope="stamp",description="Cycle apply mode",  category="Stamp")
 
     # ═══════════════════════════════════════════════════════════════

@@ -61,6 +61,7 @@ from editor.view_3d.constants import (  # noqa: F401
     COL_TOOL_QUAD,
     COL_TOOL_PORTAL,
     COL_TOOL_CURVE,
+    COL_TOOL_OVERLAY,
     COL_FACE_HL,
     TOOLS, UTIL_TOOLS, ALL_TOOLS,
     TOOL_LABELS, TOOL_COLORS, UTIL_KEYS,
@@ -97,6 +98,7 @@ from editor.view_3d.tools_layer2 import Layer2Mixin
 from editor.view_3d.tools_quad import QuadMixin
 from editor.view_3d.tools_portal import PortalMixin
 from editor.view_3d.tools_curve import CurveMixin
+from editor.view_3d.tools_overlay import OverlayWallMixin
 from editor.view_3d.objects import ObjectLayer
 from editor.view_3d.save import SaveMixin
 from editor.view_3d.primitives import DrawPrimitivesMixin
@@ -123,6 +125,7 @@ class Zone3DEditor(
     QuadMixin,
     PortalMixin,
     CurveMixin,
+    OverlayWallMixin,
     GeometryMixin,
     UndoMixin,
     SaveMixin,
@@ -140,7 +143,7 @@ class Zone3DEditor(
     @property
     def _sculpt_layer2(self) -> bool:
         """Compatibility shim — delegates to active_layer."""
-        return getattr(self, 'active_layer', 1) == 2
+        return self.active_layer == 2
 
     @_sculpt_layer2.setter
     def _sculpt_layer2(self, value: bool) -> None:
@@ -182,9 +185,6 @@ class Zone3DEditor(
 
         # ── Unified mode system (state machine) ───────────────────
         # Elevation (Layer) → Mode → Selection → Operation
-        from editor.view_3d.constants import (
-            MODE_ARCH, MODE_TOOLS, VIEW_LIT, PASTE_MASK_ALL,
-        )
         self.mode: str = MODE_ARCH   # one of MODES
         self.view_mode_3d: str = VIEW_LIT  # viewport rendering mode
 
@@ -205,13 +205,6 @@ class Zone3DEditor(
 
         # ── Unified object layer ──────────────────────────────────
         self.objects = ObjectLayer(self)
-
-        # Legacy compat — old code that reads _sel_start/_sel_end still
-        # works through these properties until fully migrated.
-        # _sel_ceiling_mode is also delegated.
-        self._sel_start: tuple[int, int] | None = None
-        self._sel_end: tuple[int, int] | None = None
-        self._sel_ceiling_mode: bool = False
 
         # Aimed cell
         self.aimed: _CellHit | None = None
@@ -235,6 +228,9 @@ class Zone3DEditor(
 
         # Flash callback — set by the owning app for visual feedback
         self.on_flash: callable | None = None
+
+        # Help overlay toggle
+        self._show_help: bool = False
 
         # Undo / redo
         self._undo_stack: list[dict] = []
@@ -269,7 +265,6 @@ class Zone3DEditor(
         """Apply *cell_fn(r, c)→bool* to the selection or aimed cell.
 
         If the universal selection has cells, iterate all of them.
-        Otherwise fall back to legacy ``_sel_start/_sel_end`` rectangle.
         If neither exists, apply to the single aimed cell.
         Returns True if anything changed.
         """
@@ -286,17 +281,7 @@ class Zone3DEditor(
                 self.dirty = True
             return changed
 
-        # 2. Legacy rectangle selection (compat)
-        if self._has_selection():
-            if push_undo:
-                self._push_undo()
-                self._ensure_face_textures()
-            changed = self._apply_to_selection(cell_fn)
-            if changed:
-                self.dirty = True
-            return changed
-
-        # 3. Single aimed cell
+        # 2. Single aimed cell
         hit = self.aimed
         if not hit:
             return False
@@ -428,6 +413,8 @@ class Zone3DEditor(
             self._portal_deselect()
         if old_tool == "curve":
             self._curve_deselect()
+        if old_tool == "overlay":
+            self._ow_deselect()
 
     def handle_event(self, event: pygame.event.Event) -> bool:
         """Route a pygame event to the appropriate handler.  Returns True if consumed."""
@@ -471,7 +458,7 @@ class Zone3DEditor(
         kb = self.kb   # keybind registry shorthand
 
         # Stamp capture naming mode intercepts all keys
-        if self.tool == "stamp" and getattr(self, '_capture_pending', False):
+        if self.tool == "stamp" and self._capture_pending:
             return self._stamp_capture_key(key, event.unicode)
 
         # ── 1. Ctrl / Alt modifier combos (highest priority) ─────
@@ -489,11 +476,10 @@ class Zone3DEditor(
             return True
         if kb.check("select.all", key, mod):
             self.selection.select_all_cells(self.zone.width, self.zone.height)
-            self._sel_start = (0, 0)
-            self._sel_end = (self.zone.height - 1, self.zone.width - 1)
             return True
         if kb.check("select.duplicate", key, mod):
-            return True  # TODO: implement
+            self._duplicate_selection()
+            return True
         if kb.check("edit.copy", key, mod):
             self._clipboard_copy()
             return True
@@ -530,7 +516,6 @@ class Zone3DEditor(
             return True
 
         # ── 1d. F1-F4 = switch primary mode ───────────────────────
-        from editor.view_3d.constants import MODES, MODE_TOOLS
         _MODE_ACTIONS = [
             ("mode.arch",    MODES[0]),
             ("mode.surface", MODES[1]),
@@ -545,7 +530,6 @@ class Zone3DEditor(
                     self._leave_tool(self.tool)
                     self.tool = mode_tools[0]
                     self._prev_tool = mode_tools[0]
-                from editor.view_3d.constants import MODE_LABELS
                 self._flash(f"{MODE_LABELS.get(_new_mode, _new_mode)}", 0.8,
                             (0.85, 0.9, 1.0, 1.0))
                 return True
@@ -561,7 +545,6 @@ class Zone3DEditor(
                         self._leave_tool(self.tool)
                         self.tool = new_tool
                         self._prev_tool = new_tool
-                from editor.view_3d.constants import TOOL_LABELS
                 _tl = TOOL_LABELS.get(self.tool, self.tool)
                 self._flash(f"{_tl}", 0.6, (0.85, 0.9, 1.0, 1.0))
                 return True
@@ -630,12 +613,7 @@ class Zone3DEditor(
             if self.objects.any_selected():
                 self.objects.deselect_all()
                 return True
-            if self.selection.has_cells() or self.selection.has_objects():
-                self.selection.clear()
-                self._sel_start = None
-                self._sel_end = None
-                return True
-            if self._sel_start is not None or self._sel_end is not None:
+            if self.selection.has_anything() or self.selection.rect_in_progress:
                 self._sel_cancel()
                 return True
             self.aimed = None
@@ -700,12 +678,23 @@ class Zone3DEditor(
             return True
         if self.tool == "quad" and kb.check("quad.cycle_snap", key, mod):
             _QUAD_SNAPS = [0.25, 0.5, 1.0, 0.0]
-            cur = getattr(self, '_quad_snap', 0.25)
+            cur = self._quad_snap
             try:
                 idx = _QUAD_SNAPS.index(cur)
             except ValueError:
                 idx = -1
             self._quad_snap = _QUAD_SNAPS[(idx + 1) % len(_QUAD_SNAPS)]
+            return True
+        if self.tool == "overlay" and kb.check("overlay.cycle_snap", key, mod):
+            _OW_SNAPS = [0.25, 0.5, 1.0, 0.0]
+            cur = self._ow_snap
+            try:
+                idx = _OW_SNAPS.index(cur)
+            except ValueError:
+                idx = -1
+            self._ow_snap = _OW_SNAPS[(idx + 1) % len(_OW_SNAPS)]
+            label = f"{self._ow_snap:.2f}" if self._ow_snap else "off"
+            self._flash(f"Snap: {label}", 0.8, (0.7, 0.9, 1.0, 1.0))
             return True
         if kb.check("sculpt.cycle_grid", key, mod):
             self.snap_idx = (self.snap_idx + 1) % len(SNAP_Y_OPTIONS)
@@ -727,7 +716,7 @@ class Zone3DEditor(
 
         # ── ? key — toggle keyboard shortcut help overlay ─────────
         if kb.check("help.toggle", key, mod):
-            self._show_help = not getattr(self, '_show_help', False)
+            self._show_help = not self._show_help
             return True
 
         return False
@@ -750,7 +739,7 @@ class Zone3DEditor(
                 # Selection active — Shift XORs with ceiling mode:
                 # plain click = floor (or ceiling if X toggled),
                 # Shift+click = ceiling (or floor if X toggled).
-                ceiling = shift != self._sel_ceiling_mode
+                ceiling = shift != self.selection.ceiling_mode
                 if ceiling:
                     if btn == 1:
                         self._tool_ceiling_lower()
@@ -960,6 +949,28 @@ class Zone3DEditor(
                     self._curve_delete(aimed_curve)
             return True
 
+        if tool == "overlay":
+            aimed_ow = self._ow_find_aimed()
+            if btn == 1:
+                if self._ow_placing:
+                    self._ow_finish_place()
+                elif aimed_ow is not None:
+                    self._ow_select(aimed_ow)
+                elif self._ow_selected is not None:
+                    self._ow_move_to_aimed()
+                else:
+                    self._ow_begin_place()
+            elif btn == 2:
+                self._ow_toggle_transparent()
+            elif btn == 3:
+                if self._ow_placing:
+                    self._ow_cancel_place()
+                elif self._ow_selected is not None:
+                    self._ow_deselect()
+                elif aimed_ow is not None:
+                    self._ow_delete(aimed_ow)
+            return True
+
         # ── Universal eyedropper fallback: MMB picks texture in any tool ──
         if btn == 2:
             ap = self._paint_aimed_prism
@@ -1059,11 +1070,23 @@ class Zone3DEditor(
                 self._curve_adjust_radius(event.y)
             return True
 
+        if tool == "overlay":
+            shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
+            if shift:
+                self._ow_adjust_height(event.y)
+            else:
+                palette = _ensure_palette()
+                if palette:
+                    self.tex_idx = (self.tex_idx + event.y) % len(palette)
+                    self.current_texture = palette[self.tex_idx]
+                    self.hotbar[self.hotbar_slot] = self.current_texture
+            return True
+
         if tool == "select":
             # When selection is active, scroll raises/lowers floors (or ceilings)
             if self._has_selection():
                 shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
-                ceiling = shift != self._sel_ceiling_mode  # Shift XORs mode
+                ceiling = shift != self.selection.ceiling_mode  # Shift XORs mode
                 return self._sel_scroll(event.y, ceiling=ceiling)
             # No active selection — cycle texture palette
             palette = _ensure_palette()
@@ -1078,7 +1101,7 @@ class Zone3DEditor(
             shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
             # Selection active → batch raise/lower via _sel_scroll
             if self._has_selection() and not self._sculpt_layer2:
-                ceiling = shift != self._sel_ceiling_mode  # Shift XORs mode
+                ceiling = shift != self.selection.ceiling_mode  # Shift XORs mode
                 return self._sel_scroll(event.y, ceiling=ceiling)
             # Layer 2 sub-mode: scroll cycles texture palette
             if self._sculpt_layer2:
@@ -1248,8 +1271,8 @@ class Zone3DEditor(
         best: _CellHit | None = None
 
         # Ground-plane hit (only relevant when L1 is active or not isolated)
-        active_l = getattr(self, 'active_layer', 1)
-        isolating = getattr(self, 'isolate_layer', False)
+        active_l = self.active_layer
+        isolating = self.isolate_layer
         show_ground = not (isolating and active_l == 2)
 
         if show_ground and abs(fy) > 1e-10:
@@ -1392,14 +1415,11 @@ class Zone3DEditor(
         if z.upper_wall_height and r < len(z.upper_wall_height):
             state["upper_wall_height"] = z.upper_wall_height[r][c]
         if z.wall_segments and r < len(z.wall_segments):
-            import copy
-            state["wall_segments"] = copy.deepcopy(z.wall_segments[r][c])
+            state["wall_segments"] = [[s[:] for s in f] for f in z.wall_segments[r][c]]
         if z.floor_step_segments and r < len(z.floor_step_segments):
-            import copy
-            state["floor_step_segments"] = copy.deepcopy(z.floor_step_segments[r][c])
+            state["floor_step_segments"] = [[s[:] for s in f] for f in z.floor_step_segments[r][c]]
         if z.ceil_step_segments and r < len(z.ceil_step_segments):
-            import copy
-            state["ceil_step_segments"] = copy.deepcopy(z.ceil_step_segments[r][c])
+            state["ceil_step_segments"] = [[s[:] for s in f] for f in z.ceil_step_segments[r][c]]
         # Layer 2
         f2 = getattr(z, 'floor2_heights', None)
         c2 = getattr(z, 'ceil2_heights', None)
@@ -1415,6 +1435,16 @@ class Zone3DEditor(
             state["ceil2_texture"] = c2t[r][c]
         if hasattr(z, 'fog_density') and z.fog_density and r < len(z.fog_density):
             state["fog_density"] = z.fog_density[r][c]
+        # Entities occupying this cell
+        cell_ents = []
+        if z.entities:
+            for ent in z.entities:
+                ex, ey = float(ent.get("x", 0)), float(ent.get("y", 0))
+                if int(ey) == r and int(ex) == c:
+                    cell_ents.append({k: (v.copy() if isinstance(v, (dict, list)) else v)
+                                      for k, v in ent.items()})
+        if cell_ents:
+            state["entities"] = cell_ents
         self._clipboard = state
         self._flash("Copied", 0.8, (0.7, 0.9, 1.0, 1.0))
 
@@ -1424,10 +1454,6 @@ class Zone3DEditor(
         if not self._clipboard:
             self._flash("Nothing to paste", 0.8, (0.6, 0.5, 0.4, 1.0))
             return
-        from editor.view_3d.constants import (
-            PASTE_MASK_HEIGHTS, PASTE_MASK_TEXTURES,
-            PASTE_MASK_SEGMENTS, PASTE_MASK_LIGHTING,
-        )
         mask = self._paste_mask
         state = self._clipboard
         z = self.zone
@@ -1470,14 +1496,13 @@ class Zone3DEditor(
                 if "ceil2_texture" in state and getattr(z, 'ceil2_textures', None):
                     z.ceil2_textures[r][c] = state["ceil2_texture"]
             if PASTE_MASK_SEGMENTS in mask:
-                import copy
                 if "wall_segments" in state and z.wall_segments:
-                    z.wall_segments[r][c] = copy.deepcopy(state["wall_segments"])
+                    z.wall_segments[r][c] = [[s[:] for s in f] for f in state["wall_segments"]]
                     changed = True
                 if "floor_step_segments" in state and z.floor_step_segments:
-                    z.floor_step_segments[r][c] = copy.deepcopy(state["floor_step_segments"])
+                    z.floor_step_segments[r][c] = [[s[:] for s in f] for f in state["floor_step_segments"]]
                 if "ceil_step_segments" in state and z.ceil_step_segments:
-                    z.ceil_step_segments[r][c] = copy.deepcopy(state["ceil_step_segments"])
+                    z.ceil_step_segments[r][c] = [[s[:] for s in f] for f in state["ceil_step_segments"]]
             if PASTE_MASK_LIGHTING in mask:
                 if "light_level" in state and z.light_levels:
                     z.light_levels[r][c] = state["light_level"]
@@ -1486,6 +1511,30 @@ class Zone3DEditor(
                     z.reflect_map[r][c] = state["reflect"]
                 if "fog_density" in state and hasattr(z, 'fog_density') and z.fog_density:
                     z.fog_density[r][c] = state["fog_density"]
+            if PASTE_MASK_ENTITIES in mask:
+                if "entities" in state:
+                    # Remove existing entities at target cell
+                    if z.entities:
+                        z.entities = [
+                            e for e in z.entities
+                            if not (int(float(e.get("y", 0))) == r and
+                                    int(float(e.get("x", 0))) == c)
+                        ]
+                    else:
+                        z.entities = []
+                    # Paste cloned entities with updated positions
+                    for ent in state["entities"]:
+                        clone = {k: (v.copy() if isinstance(v, (dict, list)) else v)
+                                 for k, v in ent.items()}
+                        # Remap to target cell centre
+                        orig_x = float(ent.get("x", 0))
+                        orig_y = float(ent.get("y", 0))
+                        frac_x = orig_x - int(orig_x)
+                        frac_y = orig_y - int(orig_y)
+                        clone["x"] = round(c + frac_x, 3)
+                        clone["y"] = round(r + frac_y, 3)
+                        z.entities.append(clone)
+                    changed = True
             return changed
 
         if self._has_selection():
@@ -1494,6 +1543,88 @@ class Zone3DEditor(
             _apply(self.aimed.row, self.aimed.col)
         self.dirty = True
         self._flash("Pasted", 0.8, (0.7, 0.9, 1.0, 1.0))
+
+    def _duplicate_selection(self) -> None:
+        """Duplicate selected cells, shifting them +1 row / +1 col (Ctrl+D).
+
+        Works like copy-then-paste-at-offset: clones all cell properties
+        from each selected cell into the cell one step down-right,
+        clamped to zone bounds.  The new positions become the new selection.
+        """
+        if not self._has_selection():
+            self._flash("Nothing selected", 0.8, (0.6, 0.5, 0.4, 1.0))
+            return
+
+        z = self.zone
+        cells = list(self.selection.iter_cells())
+
+        # Compute bounding-box to choose offset direction
+        min_r = min(r for r, _ in cells)
+        max_r = max(r for r, _ in cells)
+        min_c = min(c for _, c in cells)
+        max_c = max(c for _, c in cells)
+
+        # Pick offset: prefer +1,+1 but clamp so everything stays in bounds
+        dr = 1 if max_r + 1 < z.height else (-1 if min_r - 1 >= 0 else 0)
+        dc = 1 if max_c + 1 < z.width else (-1 if min_c - 1 >= 0 else 0)
+        if dr == 0 and dc == 0:
+            self._flash("No room to duplicate", 0.8, (0.6, 0.5, 0.4, 1.0))
+            return
+
+        self._push_undo()
+        self._ensure_face_textures()
+
+        new_cells: set[tuple[int, int]] = set()
+        for r, c in cells:
+            nr, nc = r + dr, c + dc
+            if not (0 <= nr < z.height and 0 <= nc < z.width):
+                continue
+            # Heights
+            z.floor_heights[nr][nc] = z.floor_heights[r][c]
+            z.ceil_heights[nr][nc] = z.ceil_heights[r][c]
+            z.tiles[nr][nc] = z.tiles[r][c]
+            if z.upper_wall_height:
+                z.upper_wall_height[nr][nc] = z.upper_wall_height[r][c]
+            # Textures
+            if z.floor_textures:
+                z.floor_textures[nr][nc] = z.floor_textures[r][c]
+            if z.ceil_textures:
+                z.ceil_textures[nr][nc] = z.ceil_textures[r][c]
+            if z.wall_textures:
+                z.wall_textures[nr][nc] = z.wall_textures[r][c]
+            if z.face_textures:
+                z.face_textures[nr][nc] = list(z.face_textures[r][c])
+            # Segments
+            if z.wall_segments:
+                z.wall_segments[nr][nc] = [[s[:] for s in f] for f in z.wall_segments[r][c]]
+            if z.floor_step_segments:
+                z.floor_step_segments[nr][nc] = [[s[:] for s in f] for f in z.floor_step_segments[r][c]]
+            if z.ceil_step_segments:
+                z.ceil_step_segments[nr][nc] = [[s[:] for s in f] for f in z.ceil_step_segments[r][c]]
+            # Lighting
+            if z.light_levels:
+                z.light_levels[nr][nc] = z.light_levels[r][c]
+            if z.reflect_map:
+                z.reflect_map[nr][nc] = z.reflect_map[r][c]
+            if hasattr(z, 'fog_density') and z.fog_density:
+                z.fog_density[nr][nc] = z.fog_density[r][c]
+            # Layer 2
+            if getattr(z, 'floor2_heights', None):
+                z.floor2_heights[nr][nc] = z.floor2_heights[r][c]
+            if getattr(z, 'ceil2_heights', None):
+                z.ceil2_heights[nr][nc] = z.ceil2_heights[r][c]
+            if getattr(z, 'floor2_textures', None):
+                z.floor2_textures[nr][nc] = z.floor2_textures[r][c]
+            if getattr(z, 'ceil2_textures', None):
+                z.ceil2_textures[nr][nc] = z.ceil2_textures[r][c]
+            new_cells.add((nr, nc))
+
+        # Move selection to the duplicated region
+        self.selection.cells.clear()
+        self.selection.cells.update(new_cells)
+        self.dirty = True
+        n = len(new_cells)
+        self._flash(f"Duplicated {n} cell{'s' if n != 1 else ''}", 0.8, (0.7, 1.0, 0.7, 1.0))
 
     # -- Smart selection helpers ------------------------------------
 

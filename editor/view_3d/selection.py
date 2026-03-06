@@ -31,6 +31,7 @@ class SelectionState:
         "cells", "objects",
         "_rect_origin", "_rect_end",
         "ceiling_mode",
+        "anchor",
     )
 
     def __init__(self) -> None:
@@ -43,6 +44,10 @@ class SelectionState:
 
         # Floor / ceiling targeting for batch height ops
         self.ceiling_mode: bool = False
+
+        # Remembered first-corner for shift+click operations.
+        # Set automatically by begin_rect / select_all_cells.
+        self.anchor: tuple[int, int] | None = None
 
     # ── Cell selection ────────────────────────────────────────────
 
@@ -104,6 +109,7 @@ class SelectionState:
     def select_all_cells(self, width: int, height: int) -> None:
         """Select every cell in the zone."""
         self.cells = {(r, c) for r in range(height) for c in range(width)}
+        self.anchor = (0, 0)
 
     # ── Rectangle drag helpers ────────────────────────────────────
 
@@ -111,6 +117,7 @@ class SelectionState:
         """Start a rectangle drag from cell (r, c)."""
         self._rect_origin = (r, c)
         self._rect_end = None
+        self.anchor = (r, c)
 
     def update_rect(self, r: int, c: int) -> None:
         """Update the second corner of the rectangle (for preview)."""
@@ -245,6 +252,7 @@ class SelectionState:
         self.cells.clear()
         self._rect_origin = None
         self._rect_end = None
+        self.anchor = None
 
     def clear_objects(self) -> None:
         self.objects.clear()

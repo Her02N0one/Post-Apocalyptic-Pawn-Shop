@@ -22,6 +22,10 @@ class SaveMixin:
                 "SaveMixin._registry must be set before calling _save()")
         zone = self.zone
         path = _core_paths.ZONES_DIR / f"{zone.name}.zone"
-        zone.save_to_file(path, self._registry)
+        try:
+            zone.save_to_file(path, self._registry)
+        except Exception as exc:  # noqa: BLE001
+            self._flash(f"Save failed: {exc}", 3.0, (1.0, 0.3, 0.3, 1.0))
+            return
         self.dirty = False
         self._flash("Saved \u2713", 1.5, (0.5, 1.0, 0.6, 1.0))

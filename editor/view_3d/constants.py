@@ -58,6 +58,7 @@ COL_TOOL_LAYER2  = (200, 160, 255)
 COL_TOOL_QUAD    = (255, 140, 180)
 COL_TOOL_PORTAL  = (80, 255, 220)
 COL_TOOL_CURVE   = (255, 200, 100)
+COL_TOOL_OVERLAY = (160, 220, 180)
 COL_FACE_HL      = (255, 255, 255, 90)  # face highlight overlay alpha
 
 # ─── Tool definitions ─────────────────────────────────────────────
@@ -108,7 +109,7 @@ MODE_DESCRIPTIONS = {
 MODE_TOOLS = {
     MODE_ARCH:  ("sculpt", "segment"),
     MODE_SURF:  ("paint",),
-    MODE_PROPS: ("box", "quad", "curve"),
+    MODE_PROPS: ("box", "quad", "curve", "overlay"),
     MODE_LOGIC: ("entity", "portal"),
 }
 
@@ -145,7 +146,7 @@ PASTE_MASK_ALL = (
 # Core tools (F-keys / Tab) + utility modes (letter keys)
 TOOLS = ("sculpt", "paint", "segment", "entity", "box")
 UTIL_TOOLS = ("select", "stamp",
-              "quad", "portal", "curve")
+              "quad", "portal", "curve", "overlay")
 ALL_TOOLS = TOOLS + UTIL_TOOLS
 
 TOOL_LABELS = {
@@ -159,6 +160,7 @@ TOOL_LABELS = {
     "quad":    "QUAD",
     "portal":  "PORTAL",
     "curve":   "CURVE",
+    "overlay": "OVRWALL",
 }
 TOOL_COLORS = {
     "sculpt":  COL_TOOL_WALL,
@@ -171,6 +173,7 @@ TOOL_COLORS = {
     "quad":    COL_TOOL_QUAD,
     "portal":  COL_TOOL_PORTAL,
     "curve":   COL_TOOL_CURVE,
+    "overlay": COL_TOOL_OVERLAY,
 }
 # Number-key → select tool within current mode (handled in _on_keydown)
 # 1..N = tools in MODE_TOOLS[mode], Tab = cycle
@@ -184,6 +187,7 @@ UTIL_KEYS = {
     pygame.K_i: "quad",        # was H — freed H for wall conversion
     pygame.K_o: "portal",      # was Y — freed Ctrl+Y for redo
     pygame.K_SEMICOLON: "curve",
+    pygame.K_l: "overlay",
 }
 # Hotbar: 10 texture quick-access slots
 # With new layout: bare 6-0 works directly, Alt+1-0 works for all 10,
@@ -364,6 +368,19 @@ TOOL_HINTS = {
             },
         },
         "keys": "Del=delete  Esc=deselect  MMB=paint texture",
+    },
+    "overlay": {
+        "title": "Overlay Wall  (L=exit)",
+        "actions": {
+            "any": {
+                "LMB": "Place start / end / select",
+                "LMB(sel)": "Move selected wall",
+                "RMB": "Cancel / deselect / delete",
+                "Scroll": "Cycle texture",
+                "Sh+Scrl": "Adjust height",
+            },
+        },
+        "keys": "Del=delete  Esc=deselect  MMB=toggle transparent  G=snap grid",
     },
 }
 
