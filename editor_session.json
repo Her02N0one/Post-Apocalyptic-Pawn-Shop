@@ -5,7 +5,7 @@
   "right_panel_w": 250,
   "window_w": 1600,
   "window_h": 900,
-  "view_mode": "3d",
+  "view_mode": "2d",
   "show_texture_browser": false,
   "camera_bookmarks": []
 }

@@ -79,7 +79,7 @@ class RenderingMixin:
     # ── Main draw entry point ─────────────────────────────────────
 
     def draw(self, surface: pygame.Surface) -> None:
-        surface.fill(COL_BG)
+        self._draw_skybox_bg(surface)
         sw, sh = surface.get_size()
         hw, hh = sw * 0.5, sh * 0.5
 
@@ -117,6 +117,90 @@ class RenderingMixin:
         self._draw_hud(surface, sw, sh)
 
     # ── Sub-methods ───────────────────────────────────────────────
+
+    # ── Skybox background ─────────────────────────────────────────
+
+    def _draw_skybox_bg(self, surface: pygame.Surface) -> None:
+        """Render cylindrical skybox panorama as editor background.
+
+        Falls back to solid ``COL_BG`` fill when no skybox is set or
+        the image fails to load.  The panorama is pre-scaled once
+        whenever the skybox name or screen size changes, so the
+        per-frame cost is just one or two ``blit`` calls.
+        """
+        sky_name = getattr(self.zone, "skybox", "")
+        if not sky_name:
+            surface.fill(COL_BG)
+            return
+
+        sw, sh = surface.get_size()
+        cache_key = (sky_name, sw, sh)
+
+        # Reload / rescale when skybox name or screen size changes.
+        if getattr(self, "_sky_cache_key", None) != cache_key:
+            raw = self._load_skybox_surface(sky_name)
+            if raw is None:
+                self._sky_cache_key = cache_key
+                self._sky_panorama = None
+                surface.fill(COL_BG)
+                return
+
+            # Scale so that 360° maps to  sw * (360 / FOV)  pixels,
+            # giving a 1:1 screen-pixel-to-panorama-pixel ratio.
+            pan_w = max(1, int(sw * 360.0 / FOV_DEG))
+            sky_w, sky_h = raw.get_size()
+            pan_h = max(1, int(pan_w * sky_h / sky_w))
+            self._sky_panorama = pygame.transform.smoothscale(
+                raw, (pan_w, pan_h)
+            )
+            self._sky_cache_key = cache_key
+
+        pan = self._sky_panorama
+        if pan is None:
+            surface.fill(COL_BG)
+            return
+
+        pan_w, pan_h = pan.get_size()
+
+        # ── Horizontal: yaw → panorama x ──
+        center_u = int((self.yaw / (2.0 * math.pi)) * pan_w) % pan_w
+        start_u = int(center_u - sw / 2) % pan_w
+
+        # ── Vertical: pitch shifts panorama up/down ──
+        # Panorama bottom = horizon.  At pitch 0 the horizon sits at
+        # the vertical centre of the screen.
+        fov_rad = math.radians(FOV_DEG)
+        pitch_shift = int((self.pitch / fov_rad) * sh)
+        blit_y = sh // 2 + pitch_shift - pan_h
+
+        # Fill first (ground / area below horizon).
+        surface.fill(COL_BG)
+
+        # Blit visible horizontal slice, handling wrap-around.
+        if start_u + sw <= pan_w:
+            surface.blit(pan, (0, blit_y), (start_u, 0, sw, pan_h))
+        else:
+            first_w = pan_w - start_u
+            surface.blit(pan, (0, blit_y), (start_u, 0, first_w, pan_h))
+            surface.blit(pan, (first_w, blit_y), (0, 0, sw - first_w, pan_h))
+
+    def _load_skybox_surface(self, name: str) -> pygame.Surface | None:
+        """Load a skybox image file from ``assets/textures/skyboxes/``."""
+        from core.paths import SKYBOXES_DIR
+
+        path = SKYBOXES_DIR / name
+        if not path.exists():
+            for ext in (".png", ".jpg", ".bmp"):
+                candidate = SKYBOXES_DIR / (name + ext)
+                if candidate.exists():
+                    path = candidate
+                    break
+        if not path.exists():
+            return None
+        try:
+            return pygame.image.load(str(path)).convert()
+        except Exception:
+            return None
 
     def _draw_axes(self, surface, vp, hw, hh):
         if not self.show_axes:
@@ -436,8 +520,13 @@ class RenderingMixin:
     def _draw_surface_markers(self, surface, vp, hw, hh, zone, W, H, visible):
         COL_FLOOR_SURF = (180, 230, 140)
         COL_CEIL_SURF  = (140, 170, 230)
+        COL_FLOOR2_SURF = (200, 160, 255)
+        COL_CEIL2_SURF  = (160, 120, 230)
+        LAYER_NONE = -1000.0
         cam_r, cam_c = int(self.cam_z), int(self.cam_x)
         _MAX_MARKER_DIST_SQ = 144  # 12-cell radius
+        f2h = getattr(zone, 'floor2_heights', None)
+        c2h = getattr(zone, 'ceil2_heights', None)
         for r, c in visible:
             if (r - cam_r) ** 2 + (c - cam_c) ** 2 > _MAX_MARKER_DIST_SQ:
                 continue
@@ -456,6 +545,21 @@ class RenderingMixin:
                 self._line3d(surface, vp, hw, hh, c+1, ch, r, c+1, ch, r+1, COL_CEIL_SURF, 2)
                 self._line3d(surface, vp, hw, hh, c+1, ch, r+1, c, ch, r+1, COL_CEIL_SURF, 2)
                 self._line3d(surface, vp, hw, hh, c, ch, r+1, c, ch, r, COL_CEIL_SURF, 2)
+            # Layer 2 surface markers
+            if self.show_floors and f2h and len(f2h) > r:
+                fv2 = f2h[r][c]
+                if fv2 > LAYER_NONE + 1.0:
+                    self._line3d(surface, vp, hw, hh, c, fv2, r, c+1, fv2, r, COL_FLOOR2_SURF, 1)
+                    self._line3d(surface, vp, hw, hh, c+1, fv2, r, c+1, fv2, r+1, COL_FLOOR2_SURF, 1)
+                    self._line3d(surface, vp, hw, hh, c+1, fv2, r+1, c, fv2, r+1, COL_FLOOR2_SURF, 1)
+                    self._line3d(surface, vp, hw, hh, c, fv2, r+1, c, fv2, r, COL_FLOOR2_SURF, 1)
+            if self.show_ceilings and c2h and len(c2h) > r:
+                cv2 = c2h[r][c]
+                if cv2 > LAYER_NONE + 1.0 and cv2 < SKY_HEIGHT - 0.01:
+                    self._line3d(surface, vp, hw, hh, c, cv2, r, c+1, cv2, r, COL_CEIL2_SURF, 1)
+                    self._line3d(surface, vp, hw, hh, c+1, cv2, r, c+1, cv2, r+1, COL_CEIL2_SURF, 1)
+                    self._line3d(surface, vp, hw, hh, c+1, cv2, r+1, c, cv2, r+1, COL_CEIL2_SURF, 1)
+                    self._line3d(surface, vp, hw, hh, c, cv2, r+1, c, cv2, r, COL_CEIL2_SURF, 1)
 
     _ZONE_FI_FACE = {0: "north", 1: "south", 2: "east", 3: "west"}
 
@@ -519,6 +623,11 @@ class RenderingMixin:
         f2t = getattr(zone, 'floor2_textures', None)
         c2t = getattr(zone, 'ceil2_textures', None)
         uwh2_grid = getattr(zone, 'upper_wall_height2', None)
+        # Per-face step textures for L2 side faces
+        fst = zone.floor_step_textures if zone.floor_step_textures else None
+        cst = zone.ceil_step_textures if zone.ceil_step_textures else None
+        # face_colors index → zone face index (N=0, S=1, E=2, W=3)
+        _fz = self._FDEF_TO_ZONE
 
         for r, c in visible:
             is_aim = (aimed and aimed.row == r and aimed.col == c) and is_layer2_active
@@ -529,15 +638,21 @@ class RenderingMixin:
                     tex = (f2t[r][c] if f2t and len(f2t) > r else "") or ""
                     if tex:
                         base = tc(tex)
-                        # face_colors: top=texture, bot=dark, sides=slightly dark
+                        # face_colors: top=texture, bot=dark, sides per-face
                         fcols = [
                             base,            # top – floor surface
                             dk(base, 0.5),   # bottom
-                            dk(base, 0.7),   # north
-                            dk(base, 0.7),   # south
-                            dk(base, 0.8),   # west
-                            dk(base, 0.8),   # east
+                            dk(base, 0.7),   # north (default)
+                            dk(base, 0.7),   # south (default)
+                            dk(base, 0.8),   # west  (default)
+                            dk(base, 0.8),   # east  (default)
                         ]
+                        # Override side faces with per-face step textures
+                        if fst and len(fst) > r:
+                            for fi_box, zone_fi in _fz.items():
+                                ftex = fst[r][c][zone_fi]
+                                if ftex:
+                                    fcols[fi_box] = tc(ftex)
                     else:
                         fcols = None
                         base = (180, 140, 220)
@@ -563,15 +678,21 @@ class RenderingMixin:
                     if tex:
                         base = tc(tex)
                         # face_colors: top=dark (mass above), bot=texture
-                        # (looking up at the ceiling), sides=slightly dark
+                        # (looking up at the ceiling), sides per-face
                         fcols = [
                             dk(base, 0.5),   # top
                             base,            # bottom – ceiling surface
-                            dk(base, 0.7),   # north
-                            dk(base, 0.7),   # south
-                            dk(base, 0.8),   # west
-                            dk(base, 0.8),   # east
+                            dk(base, 0.7),   # north (default)
+                            dk(base, 0.7),   # south (default)
+                            dk(base, 0.8),   # west  (default)
+                            dk(base, 0.8),   # east  (default)
                         ]
+                        # Override side faces with per-face step textures
+                        if cst and len(cst) > r:
+                            for fi_box, zone_fi in _fz.items():
+                                ctex = cst[r][c][zone_fi]
+                                if ctex:
+                                    fcols[fi_box] = tc(ctex)
                     else:
                         fcols = None
                         base = (160, 130, 210)
@@ -1034,17 +1155,35 @@ class RenderingMixin:
 
         if self.aimed:
             zone_a = self.zone
-            fh_a = zone_a.floor_heights[self.aimed.row][self.aimed.col]
-            ch_a = zone_a.ceil_heights[self.aimed.row][self.aimed.col]
+            ar, ac = self.aimed.row, self.aimed.col
+            fh_a = zone_a.floor_heights[ar][ac]
+            ch_a = zone_a.ceil_heights[ar][ac]
             is_sky = ch_a >= SKY_HEIGHT - 0.01
-            if abs(fh_a) > 0.01:
-                tick_len = min(int(abs(fh_a) * 8), 20)
-                pygame.draw.line(surface, (180, 230, 140),
-                                 (cx - 18, cy + 2), (cx - 18, cy + 2 + tick_len), 3)
-            if not is_sky:
-                tick_len = min(int(ch_a * 8), 20)
-                pygame.draw.line(surface, (140, 170, 230),
-                                 (cx - 18, cy - 2), (cx - 18, cy - 2 - tick_len), 3)
+            l2_mode = getattr(self, '_sculpt_layer2', False)
+            LAYER_NONE = -1000.0
+            if l2_mode:
+                # Show L2 height ticks instead of L1
+                f2h = getattr(zone_a, 'floor2_heights', None)
+                c2h = getattr(zone_a, 'ceil2_heights', None)
+                fv2 = f2h[ar][ac] if f2h and len(f2h) > ar else LAYER_NONE
+                cv2 = c2h[ar][ac] if c2h and len(c2h) > ar else LAYER_NONE
+                if fv2 > LAYER_NONE + 1.0:
+                    tick_len = min(int(abs(fv2) * 8), 20)
+                    pygame.draw.line(surface, (200, 160, 255),
+                                     (cx - 18, cy + 2), (cx - 18, cy + 2 + tick_len), 3)
+                if cv2 > LAYER_NONE + 1.0:
+                    tick_len = min(int(cv2 * 8), 20)
+                    pygame.draw.line(surface, (160, 120, 230),
+                                     (cx - 18, cy - 2), (cx - 18, cy - 2 - tick_len), 3)
+            else:
+                if abs(fh_a) > 0.01:
+                    tick_len = min(int(abs(fh_a) * 8), 20)
+                    pygame.draw.line(surface, (180, 230, 140),
+                                     (cx - 18, cy + 2), (cx - 18, cy + 2 + tick_len), 3)
+                if not is_sky:
+                    tick_len = min(int(ch_a * 8), 20)
+                    pygame.draw.line(surface, (140, 170, 230),
+                                     (cx - 18, cy - 2), (cx - 18, cy - 2 - tick_len), 3)
 
     # ── Action context overlay ────────────────────────────────────
 
@@ -1144,16 +1283,36 @@ class RenderingMixin:
         """Draw highlighted cells for the selection (actual cells, not just bbox)."""
         ceiling_mode = self.selection and self.selection.ceiling_mode or False
         col = COL_TOOL_CEILING if ceiling_mode else COL_TOOL_SELECT
+        l2 = getattr(self, '_sculpt_layer2', False)
+        LAYER_NONE = -1000.0
+
+        def _cell_height(r, c):
+            """Return the highlight Y for a cell, accounting for L1/L2 mode."""
+            if l2:
+                target = self._layer2_effective_target
+                if target == "ceil2":
+                    c2h = getattr(zone, 'ceil2_heights', None)
+                    if c2h and c2h[r][c] > LAYER_NONE + 1.0:
+                        return c2h[r][c] - 0.05
+                    return zone.ceil_heights[r][c] - 0.05
+                else:
+                    f2h = getattr(zone, 'floor2_heights', None)
+                    if f2h and f2h[r][c] > LAYER_NONE + 1.0:
+                        return f2h[r][c]
+                    return zone.floor_heights[r][c] + 0.5
+            if ceiling_mode:
+                return zone.ceil_heights[r][c] - 0.05
+            return zone.floor_heights[r][c]
+
+        # Override colour to layer-2 tint when in L2 mode
+        if l2:
+            col = (180, 100, 255)
 
         # 1. If we have actual selected cells in the universal selection, draw each one
         sel = self.selection
         if sel is not None and sel.has_cells():
             for r, c in sel.iter_cells():
-                if ceiling_mode:
-                    ch = zone.ceil_heights[r][c]
-                    h = ch - 0.05
-                else:
-                    h = zone.floor_heights[r][c]
+                h = _cell_height(r, c)
                 self._filled_box(surface, vp, hw, hh,
                                  float(c), h, float(r),
                                  c + 1.0, h + 0.05, r + 1.0,
@@ -1167,11 +1326,7 @@ class RenderingMixin:
                 for r in range(rmin, rmax + 1):
                     for c in range(cmin, cmax + 1):
                         if (r, c) not in sel.cells:  # don't double-draw
-                            if ceiling_mode:
-                                ch = zone.ceil_heights[r][c]
-                                h = ch - 0.05
-                            else:
-                                h = zone.floor_heights[r][c]
+                            h = _cell_height(r, c)
                             self._filled_box(surface, vp, hw, hh,
                                              float(c), h, float(r),
                                              c + 1.0, h + 0.05, r + 1.0,
@@ -1185,11 +1340,7 @@ class RenderingMixin:
                 rmin, cmin, rmax, cmax = preview
                 for r in range(rmin, rmax + 1):
                     for c in range(cmin, cmax + 1):
-                        if ceiling_mode:
-                            ch = zone.ceil_heights[r][c]
-                            h = ch - 0.05
-                        else:
-                            h = zone.floor_heights[r][c]
+                        h = _cell_height(r, c)
                         self._filled_box(surface, vp, hw, hh,
                                          float(c), h, float(r),
                                          c + 1.0, h + 0.05, r + 1.0,
@@ -1199,11 +1350,7 @@ class RenderingMixin:
                 start = sel._rect_origin
                 if start:
                     r, c = start
-                    if ceiling_mode:
-                        ch = zone.ceil_heights[r][c]
-                        h = ch - 0.05
-                    else:
-                        h = zone.floor_heights[r][c]
+                    h = _cell_height(r, c)
                     self._filled_box(surface, vp, hw, hh,
                                      float(c), h, float(r),
                                      c + 1.0, h + 0.05, r + 1.0,
@@ -1214,11 +1361,7 @@ class RenderingMixin:
         anchor = getattr(self.selection, 'anchor', None) if self.selection else None
         if anchor is not None:
             r, c = anchor
-            if ceiling_mode:
-                ch = zone.ceil_heights[r][c]
-                h = ch - 0.05
-            else:
-                h = zone.floor_heights[r][c]
+            h = _cell_height(r, c)
             self._filled_box(surface, vp, hw, hh,
                              float(c), h, float(r),
                              c + 1.0, h + 0.05, r + 1.0,
@@ -1443,6 +1586,10 @@ class RenderingMixin:
                     n_seg = len(zone.floor_step_segments[r][c][fi])
                 elif hit.part == "ceiling":
                     n_seg = len(zone.ceil_step_segments[r][c][fi])
+                elif hit.part == "floor2":
+                    n_seg = len(zone.floor_step_segments[r][c][fi])
+                elif hit.part == "ceiling2":
+                    n_seg = len(zone.ceil_step_segments[r][c][fi])
                 else:
                     n_seg = 0
                 if n_seg > 0:
@@ -1502,7 +1649,7 @@ class RenderingMixin:
 
         c, r = hit.col, hit.row
         y0, y1 = None, None
-        for part, yb, yt in self._cell_boxes(r, c):
+        for part, yb, yt in self._layer_cell_boxes(r, c):
             if part == hit.part:
                 y0, y1 = yb, yt
                 break
@@ -1767,6 +1914,17 @@ class RenderingMixin:
                 segs = zone.ceil_step_segments[r][c][zone_fi]
                 ch = zone.ceil_heights[r][c]
                 y_bot = ch
+            elif part == "floor2":
+                segs = zone.floor_step_segments[r][c][zone_fi]
+                fh = zone.floor_heights[r][c]
+                f2 = getattr(zone, 'floor2_heights', None)
+                f2v = f2[r][c] if (f2 and len(f2) > r) else fh
+                y_bot = min(fh, f2v)
+            elif part == "ceiling2":
+                segs = zone.ceil_step_segments[r][c][zone_fi]
+                c2 = getattr(zone, 'ceil2_heights', None)
+                c2v = c2[r][c] if (c2 and len(c2) > r) else 1.0
+                y_bot = c2v
             else:
                 continue
 
@@ -1870,6 +2028,14 @@ class RenderingMixin:
             col = self._tile_color(self._resolve_floor_tex(r, c))
         elif part == "ceiling":
             col = self._tile_color(self._resolve_ceil_tex(r, c))
+        elif part == "floor2":
+            f2t = getattr(zone, 'floor2_textures', None)
+            tex = (f2t[r][c] if f2t and len(f2t) > r else "") or ""
+            col = self._tile_color(tex) if tex else COL_WALL_DEF
+        elif part == "ceiling2":
+            c2t = getattr(zone, 'ceil2_textures', None)
+            tex = (c2t[r][c] if c2t and len(c2t) > r else "") or ""
+            col = self._tile_color(tex) if tex else COL_WALL_DEF
         else:
             col = COL_WALL_DEF
         return self._apply_cell_effects(col, r, c, part)
@@ -1897,6 +2063,18 @@ class RenderingMixin:
             # Top face of ceiling mass: slightly darker
             cols[0] = self._darken(tc(ctex), 0.65)
             cols[1] = tc(ctex)
+        elif part == "floor2":
+            f2t = getattr(zone, 'floor2_textures', None)
+            ftex = (f2t[r][c] if f2t and len(f2t) > r else "") or ""
+            if ftex:
+                cols[0] = tc(ftex)
+                cols[1] = self._darken(tc(ftex), 0.65)
+        elif part == "ceiling2":
+            c2t = getattr(zone, 'ceil2_textures', None)
+            ctex = (c2t[r][c] if c2t and len(c2t) > r else "") or ""
+            if ctex:
+                cols[0] = self._darken(tc(ctex), 0.65)
+                cols[1] = tc(ctex)
 
         for fdef_idx, zone_fi in self._FDEF_TO_ZONE.items():
             tex = ""
@@ -1916,6 +2094,16 @@ class RenderingMixin:
                 if segs:
                     tex = self._largest_seg_tex(segs, tex)
             elif part == "ceiling":
+                tex = zone.ceil_step_textures[r][c][zone_fi]
+                segs = zone.ceil_step_segments[r][c][zone_fi]
+                if segs:
+                    tex = self._largest_seg_tex(segs, tex)
+            elif part == "floor2":
+                tex = zone.floor_step_textures[r][c][zone_fi]
+                segs = zone.floor_step_segments[r][c][zone_fi]
+                if segs:
+                    tex = self._largest_seg_tex(segs, tex)
+            elif part == "ceiling2":
                 tex = zone.ceil_step_textures[r][c][zone_fi]
                 segs = zone.ceil_step_segments[r][c][zone_fi]
                 if segs:
@@ -1979,7 +2167,7 @@ class RenderingMixin:
                 cb = int(cb * (1.0 - t) + fc[2] * t)
 
         # ── Reflectivity (blue-ish tint on floor faces) ──
-        if part == "floor":
+        if part in ("floor", "floor2"):
             rm = getattr(zone, 'reflect_map', None)
             if rm and r < len(rm) and c < len(rm[r]):
                 rv = rm[r][c]

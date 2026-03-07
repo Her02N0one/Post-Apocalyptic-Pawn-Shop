@@ -150,7 +150,8 @@ static void draw_segmented_column(
 static void fill_background(uint8_t *fb, int sw, int sh, int half,
                              int is_interior,
                              const uint8_t *skybox, int sky_w, int sky_h,
-                             double cam_angle, double cam_fov)
+                             double cam_angle, double cam_fov,
+                             double sky_vspan)
 {
     /* Top half: sky texture (if available), gradient, or dark ceiling. */
     int sky_lim = half < sh ? half : sh;
@@ -158,14 +159,38 @@ static void fill_background(uint8_t *fb, int sw, int sh, int half,
     int half_ref = sh / 2;  /* stable reference for gradient */
     if (half_ref < 1) half_ref = 1;
 
-    if (skybox && sky_w > 0 && sky_h > 0 && !is_interior) {
-        /* Panoramic skybox: cylindrical UV mapping.
-         * U = (cam_angle + column_angle) / (2*PI), wraps horizontally.
-         * V = (y - 0) / sky_region_height, maps to texture V.          */
-        double inv_2pi = 1.0 / (2.0 * M_PI);
+    if (skybox && sky_w > 0 && sky_h > 0) {
+        /* Panoramic skybox: angular UV mapping.
+         *
+         * The texture covers 360° horizontally and SKY_VSPAN° vertically
+         * (horizon at bottom, near-zenith at top).  Recommended 4:1 aspect.
+         *
+         * U = horizontal world-angle  → [0, 2π)  → [0, sky_w)
+         * V = vertical elevation angle → [0, SKY_VSPAN] mapped so that
+         *     V=0 is the top of the texture and V=1 is the horizon.
+         *
+         * sky_vspan (radians) is the maximum elevation angle that
+         * ever appears on‐screen, computed by the Python caller from
+         *   atan2(sh*(0.5 + tan(pitch_max)), sw/(2*tan(fov/2))).
+         * This makes the mapping pitch‐invariant while ensuring the
+         * full texture is reachable at maximum pitch.
+         */
+        double inv_2pi    = 1.0 / (2.0 * M_PI);
+        double inv_vspan  = 1.0 / sky_vspan;
+        /* Projection-plane distance in pixels (horizontal).
+         * Same scale applies to vertical: a wall 1 unit tall at
+         * distance 1 unit spans `sh` pixels, equivalent to
+         * proj_dist = sw / (2 * tan(fov/2)).                     */
+        double proj_dist = (double)sw / (2.0 * tan(cam_fov * 0.5));
         for (int y = 0; y < sky_lim; y++) {
-            double v_norm = (double)y / (double)half_ref;
-            if (v_norm > 1.0) v_norm = 1.0;
+            /* Vertical angle above the horizon for this row.
+             * `half` is the horizon row (shifts with pitch).       */
+            double vert_angle = atan2((double)(half - y), proj_dist);
+            if (vert_angle < 0.0) vert_angle = 0.0;
+            /* V: 0 = top of texture, 1 = horizon (bottom).
+             * Angles beyond sky_vspan clamp to V=0 (top row).     */
+            double v_norm = 1.0 - vert_angle * inv_vspan;
+            if (v_norm < 0.0) v_norm = 0.0;
             int tv = (int)(v_norm * (sky_h - 1));
             if (tv < 0) tv = 0;
             if (tv >= sky_h) tv = sky_h - 1;
@@ -381,6 +406,7 @@ py_render_frame(PyObject *self, PyObject *dict)
     Py_buffer fstep_tex_buf  = {0};  /* int32[map_h*map_w*4] */
     Py_buffer cstep_tex_buf  = {0};  /* int32[map_h*map_w*4] */
     Py_buffer uwh_buf        = {0};  /* float64[map_h*map_w] */
+    Py_buffer uwh2_buf       = {0};  /* float64[map_h*map_w] (optional) */
     /* Floor step segment buffers */
     Py_buffer fstep_seg_off_buf  = {0};
     Py_buffer fstep_seg_cnt_buf  = {0};
@@ -624,6 +650,13 @@ py_render_frame(PyObject *self, PyObject *dict)
     if (dict_get_buf(dict, "fstep_tex", &fstep_tex_buf, 0)) goto cleanup;
     if (dict_get_buf(dict, "cstep_tex", &cstep_tex_buf, 0)) goto cleanup;
     if (dict_get_buf(dict, "uwh",       &uwh_buf,       0)) goto cleanup;
+    /* Optional: upper wall height for ceiling layer 2 */
+    {
+        PyObject *uwh2_o = PyDict_GetItemString(dict, "uwh2");
+        if (uwh2_o && uwh2_o != Py_None) {
+            if (PyObject_GetBuffer(uwh2_o, &uwh2_buf, 0) < 0) goto cleanup;
+        }
+    }
     /* Floor step segment buffers */
     if (dict_get_buf(dict, "fstep_seg_off",  &fstep_seg_off_buf,  0)) goto cleanup;
     if (dict_get_buf(dict, "fstep_seg_cnt",  &fstep_seg_cnt_buf,  0)) goto cleanup;
@@ -747,6 +780,9 @@ py_render_frame(PyObject *self, PyObject *dict)
     const int32_t *fstep_tex = (const int32_t *)fstep_tex_buf.buf;
     const int32_t *cstep_tex = (const int32_t *)cstep_tex_buf.buf;
     const double  *uwh       = (const double *) uwh_buf.buf;
+    const double  *uwh2      = (uwh2_buf.buf
+                                && uwh2_buf.len >= (Py_ssize_t)(map_h * map_w * (int)sizeof(double)))
+                               ? (const double *)uwh2_buf.buf : NULL;
     /* Floor step segment pointer aliases */
     const int32_t *fstep_seg_off  = (const int32_t *)fstep_seg_off_buf.buf;
     const int32_t *fstep_seg_cnt  = (const int32_t *)fstep_seg_cnt_buf.buf;
@@ -827,8 +863,16 @@ py_render_frame(PyObject *self, PyObject *dict)
     int n_deferred = 0;  /* set after Phase 1 compaction */
 
     /* ── PHASE 0: Background fill ────────────────────────────────── */
+    /* Read optional sky_vspan (radians) from dict; default to 75°. */
+    double sky_vspan = 75.0 * M_PI / 180.0;
+    {
+        PyObject *sv_o = PyDict_GetItemString(dict, "sky_vspan");
+        if (sv_o) sky_vspan = PyFloat_AsDouble(sv_o);
+        if (sky_vspan < 0.1) sky_vspan = 0.1;  /* sanity floor */
+    }
     fill_background(fb, sw, sh, half, is_interior,
-                    skybox_data, sky_w, sky_h, cam_angle, cam_fov);
+                    skybox_data, sky_w, sky_h, cam_angle, cam_fov,
+                    sky_vspan);
 
     /* Initialize per-pixel depth to MAX_DEPTH */
     for (int i = 0; i < sw * sh; i++) depth_px[i] = (float)MAX_DEPTH;
@@ -1033,6 +1077,7 @@ py_render_frame(PyObject *self, PyObject *dict)
                                     swh->sd        = riser_sd;
                                     swh->ssx       = riser_ssx;
                                     swh->ssy       = riser_ssy;
+                                    swh->is_l2     = 0;
                                 }
                             }
                         }
@@ -1134,6 +1179,7 @@ py_render_frame(PyObject *self, PyObject *dict)
                             swh->sd        = side;
                             swh->ssx       = step_x;
                             swh->ssy       = step_y;
+                            swh->is_l2     = 0;
                         }
                     }
                     /* Ceiling height transition — include upper_wall_height
@@ -1168,6 +1214,7 @@ py_render_frame(PyObject *self, PyObject *dict)
                             swh->sd        = side;
                             swh->ssx       = step_x;
                             swh->ssy       = step_y;
+                            swh->is_l2     = 0;
                         }
                     }
                     /* Sky-boundary ceiling step: one cell has a ceiling,
@@ -1209,6 +1256,83 @@ py_render_frame(PyObject *self, PyObject *dict)
                             swh->sd        = side;
                             swh->ssx       = step_x;
                             swh->ssy       = step_y;
+                            swh->is_l2     = 0;
+                        }
+                    }
+
+                    /* ── Layer 2 ceiling step walls ──────────────
+                     * When both the previous and current cells have
+                     * a valid secondary ceiling, emit a step wall
+                     * if their effective ch2 (+ uwh2) values differ.
+                     * This produces the vertical face between L2
+                     * ceilings at different heights — the same role
+                     * that the primary ceiling step logic fills for
+                     * cheight[].                                    */
+                    if (ch2 && n_cstep[x] < MAX_STEP_HITS) {
+                        double prev_c2 = ch2[prev_ci];
+                        double cur_c2  = ch2[cur_ci];
+                        int prev_has = (prev_c2 > LAYER_NONE + 1.0);
+                        int cur_has  = (cur_c2  > LAYER_NONE + 1.0);
+                        if (prev_has && cur_has
+                            && prev_c2 < SKY_THRESHOLD
+                            && cur_c2  < SKY_THRESHOLD) {
+                            /* Both cells have L2 ceilings — compare
+                             * effective heights including uwh2.     */
+                            double eff_p2 = prev_c2;
+                            double eff_c2 = cur_c2;
+                            if (uwh2) {
+                                double u2p = uwh2[prev_ci];
+                                if (u2p > prev_c2) eff_p2 = u2p;
+                                double u2c = uwh2[cur_ci];
+                                if (u2c > cur_c2) eff_c2 = u2c;
+                            }
+                            if (fabs(eff_c2 - eff_p2) > TIER_TOL) {
+                                double wf;
+                                if (side == 0) wf = cam_y + bp * rdy;
+                                else           wf = cam_x + bp * rdx;
+                                wf -= floor(wf);
+                                StepWallHit *swh = &cstep_hits[
+                                    x * MAX_STEP_HITS + n_cstep[x]++];
+                                swh->perp      = bp;
+                                swh->wall_frac = wf;
+                                swh->pfh       = eff_p2;
+                                swh->cfh       = eff_c2;
+                                swh->pci       = prev_ci;
+                                swh->ci        = cur_ci;
+                                swh->sd        = side;
+                                swh->ssx       = step_x;
+                                swh->ssy       = step_y;
+                                swh->is_l2     = 1;
+                            }
+                        } else if (prev_has != cur_has
+                                   && n_cstep[x] < MAX_STEP_HITS) {
+                            /* One cell has L2 ceiling, the other
+                             * doesn't — boundary face (like sky
+                             * boundary for L1).                    */
+                            int    l2_ci = prev_has ? prev_ci : cur_ci;
+                            double l2_ch = prev_has ? prev_c2  : cur_c2;
+                            if (l2_ch < SKY_THRESHOLD) {
+                                double l2_uwh = uwh2 ? uwh2[l2_ci] : 0.0;
+                                double step_top = l2_ch + 0.04;
+                                if (l2_uwh > l2_ch + TIER_TOL)
+                                    step_top = l2_uwh;
+                                double wf;
+                                if (side == 0) wf = cam_y + bp * rdy;
+                                else           wf = cam_x + bp * rdx;
+                                wf -= floor(wf);
+                                StepWallHit *swh = &cstep_hits[
+                                    x * MAX_STEP_HITS + n_cstep[x]++];
+                                swh->perp      = bp;
+                                swh->wall_frac = wf;
+                                swh->pfh       = step_top;
+                                swh->cfh       = l2_ch;
+                                swh->pci       = prev_has ? cur_ci  : prev_ci;
+                                swh->ci        = l2_ci;
+                                swh->sd        = side;
+                                swh->ssx       = step_x;
+                                swh->ssy       = step_y;
+                                swh->is_l2     = 1;
+                            }
                         }
                     }
 
@@ -1240,6 +1364,7 @@ py_render_frame(PyObject *self, PyObject *dict)
                     swh->sd        = side;
                     swh->ssx       = step_x;
                     swh->ssy       = step_y;
+                    swh->is_l2     = 0;
                 }
             }
             hit = 1;
@@ -2288,7 +2413,9 @@ py_render_frame(PyObject *self, PyObject *dict)
                         lo_face_pre = cs_face_pre;
                     }
                 }
-                double uwh_val = uwh[lo_ci_pre];
+                /* Use the correct UWH buffer for this layer */
+                const double *uwh_src = h->is_l2 ? uwh2 : uwh;
+                double uwh_val = uwh_src ? uwh_src[lo_ci_pre] : 0.0;
                 if (uwh_val > hi) {
                     hi = uwh_val;
                 }
@@ -2954,6 +3081,7 @@ cleanup:
     if (fstep_tex_buf.buf)  PyBuffer_Release(&fstep_tex_buf);
     if (cstep_tex_buf.buf)  PyBuffer_Release(&cstep_tex_buf);
     if (uwh_buf.buf)        PyBuffer_Release(&uwh_buf);
+    if (uwh2_buf.buf)       PyBuffer_Release(&uwh2_buf);
     if (fstep_seg_off_buf.buf)  PyBuffer_Release(&fstep_seg_off_buf);
     if (fstep_seg_cnt_buf.buf)  PyBuffer_Release(&fstep_seg_cnt_buf);
     if (fstep_seg_tex_buf.buf)  PyBuffer_Release(&fstep_seg_tex_buf);

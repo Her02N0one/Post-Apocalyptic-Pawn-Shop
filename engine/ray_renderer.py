@@ -134,6 +134,7 @@ class RayRenderer:
         sh: int = 360,
         fov: float = math.pi / 2.0,
         dn: float = 1.0,
+        pitch_max: float = math.pi * 0.30,
     ) -> None:
         if not _HAS_C:
             raise RuntimeError(
@@ -144,6 +145,12 @@ class RayRenderer:
         self.sw = sw
         self.sh = sh
         self.fov = fov
+
+        # Sky V-span: max elevation (radians) ever visible on-screen.
+        # Ensures the full skybox texture is reachable at max pitch.
+        proj_dist = sw / (2 * math.tan(fov / 2))
+        half_max = sh * (0.5 + math.tan(pitch_max))
+        self._sky_vspan: float = math.atan2(half_max, proj_dist)
 
         # Allocate framebuffer (reused every frame)
         self._fb = bytearray(sw * sh * 3)
@@ -1094,6 +1101,16 @@ class RayRenderer:
                     uwh_vals[r * W + c] = zone.upper_wall_height[r][c]
         self._uwh_buf = array.array("d", uwh_vals).tobytes()
 
+        # ── Upper wall height for layer 2 ceiling (float64[H*W], 0.0 = none) ──
+        uwh2_vals = [0.0] * (H * W)
+        has_uwh2 = (zone.upper_wall_height2
+                    and len(zone.upper_wall_height2) == H)
+        if has_uwh2:
+            for r in range(H):
+                for c in range(W):
+                    uwh2_vals[r * W + c] = zone.upper_wall_height2[r][c]
+        self._uwh2_buf: bytes | None = array.array("d", uwh2_vals).tobytes() if has_uwh2 else None
+
         # ── Floor step segments ──
         self._build_step_seg_arrays(
             zone.floor_step_segments, H, W,
@@ -1174,6 +1191,7 @@ class RayRenderer:
         # tan(pitch) * sh gives a screen-space shift that approximates
         # vertical look for moderate angles.
         horizon_shift = int(math.tan(pitch) * self.sh)
+        self._horizon_shift = horizon_shift
         _c_render_frame({
             "fb":       self._fb,
             "cam_x":    px,
@@ -1219,6 +1237,7 @@ class RayRenderer:
             "fstep_tex": self._fstep_tex_buf,
             "cstep_tex": self._cstep_tex_buf,
             "uwh":      self._uwh_buf,
+            "uwh2":     self._uwh2_buf,
             "fstep_seg_off":  self._fstep_seg_off_buf,
             "fstep_seg_cnt":  self._fstep_seg_cnt_buf,
             "fstep_seg_tex":  self._fstep_seg_tex_buf,
@@ -1236,6 +1255,7 @@ class RayRenderer:
             "skybox":   self._skybox_buf,
             "sky_w":    self._sky_w,
             "sky_h":    self._sky_h,
+            "sky_vspan": self._sky_vspan,
             # Fog volumes (optional — None = no per-cell fog)
             "fog_density": self._fog_den_buf,
             "fog_color":   self._fog_col_buf,
@@ -1412,6 +1432,7 @@ class RayRenderer:
             "num_tiles": self._num_tiles,
             "ent_data":  ent_buf,
             "n_ents":    n_ents,
+            "horizon_shift": getattr(self, '_horizon_shift', 0),
         })
 
     # ──────────────────────────────────────────────────────────────
@@ -1455,6 +1476,7 @@ class RayRenderer:
             "n_particles":  particles.count,
             "dt":           dt,
             "gravity":      particles.gravity,
+            "horizon_shift": getattr(self, '_horizon_shift', 0),
         })
         # Sweep dead after C ticked them
         particles.sweep_dead()

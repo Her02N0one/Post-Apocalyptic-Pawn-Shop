@@ -101,6 +101,13 @@ class CellPreset:
     floor_step_segments: tuple | None          = None
     ceil_step_segments:  tuple | None          = None
 
+    # ── Layer 2 (secondary floor/ceiling) ────────────────────────
+    floor2_height:       float | None          = None
+    ceil2_height:        float | None          = None
+    upper_wall_height2:  float | None          = None
+    floor2_texture:      str | None            = None
+    ceil2_texture:       str | None            = None
+
 
 # ═══════════════════════════════════════════════════════════════════
 #  Registry
@@ -181,6 +188,20 @@ def _apply_replace(
     if preset.upper_wall_height is not None:
         if zone.upper_wall_height and len(zone.upper_wall_height) > r:
             zone.upper_wall_height[r][c] = preset.upper_wall_height
+
+    # L2 heights
+    if preset.floor2_height is not None:
+        f2h = getattr(zone, 'floor2_heights', None)
+        if f2h and len(f2h) > r:
+            f2h[r][c] = preset.floor2_height
+    if preset.ceil2_height is not None:
+        c2h = getattr(zone, 'ceil2_heights', None)
+        if c2h and len(c2h) > r:
+            c2h[r][c] = preset.ceil2_height
+    if preset.upper_wall_height2 is not None:
+        uwh2 = getattr(zone, 'upper_wall_height2', None)
+        if uwh2 and len(uwh2) > r:
+            uwh2[r][c] = preset.upper_wall_height2
 
     _derive_tile_type(zone, r, c, wall_tile, open_tile)
     _apply_textures(zone, r, c, preset)
@@ -264,6 +285,19 @@ def _apply_merge(
     if preset.upper_wall_height is not None:
         if zone.upper_wall_height and len(zone.upper_wall_height) > r:
             zone.upper_wall_height[r][c] = preset.upper_wall_height
+    # L2 heights
+    if preset.floor2_height is not None:
+        f2h = getattr(zone, 'floor2_heights', None)
+        if f2h and len(f2h) > r:
+            f2h[r][c] = preset.floor2_height
+    if preset.ceil2_height is not None:
+        c2h = getattr(zone, 'ceil2_heights', None)
+        if c2h and len(c2h) > r:
+            c2h[r][c] = preset.ceil2_height
+    if preset.upper_wall_height2 is not None:
+        uwh2 = getattr(zone, 'upper_wall_height2', None)
+        if uwh2 and len(uwh2) > r:
+            uwh2[r][c] = preset.upper_wall_height2
     # Don't touch tile type — that's the point of merge
     _apply_textures(zone, r, c, preset)
     _apply_segments(zone, r, c, preset)
@@ -301,6 +335,14 @@ def _apply_textures(zone: Any, r: int, c: int, preset: CellPreset) -> None:
     if preset.ceil_step_textures is not None:
         if zone.ceil_step_textures and len(zone.ceil_step_textures) > r:
             zone.ceil_step_textures[r][c] = list(preset.ceil_step_textures)
+    if preset.floor2_texture is not None:
+        f2t = getattr(zone, 'floor2_textures', None)
+        if f2t and len(f2t) > r:
+            f2t[r][c] = preset.floor2_texture
+    if preset.ceil2_texture is not None:
+        c2t = getattr(zone, 'ceil2_textures', None)
+        if c2t and len(c2t) > r:
+            c2t[r][c] = preset.ceil2_texture
 
 
 def _apply_segments(zone: Any, r: int, c: int, preset: CellPreset) -> None:
@@ -371,6 +413,18 @@ def capture_preset(
     if zone.ceil_step_segments and len(zone.ceil_step_segments) > r:
         css = _freeze_seg(zone.ceil_step_segments[r][c])
 
+    # Layer 2
+    _f2h = getattr(zone, 'floor2_heights', None)
+    _c2h = getattr(zone, 'ceil2_heights', None)
+    _uwh2 = getattr(zone, 'upper_wall_height2', None)
+    _f2t = getattr(zone, 'floor2_textures', None)
+    _c2t = getattr(zone, 'ceil2_textures', None)
+    f2h_val = _f2h[r][c] if _f2h and len(_f2h) > r else None
+    c2h_val = _c2h[r][c] if _c2h and len(_c2h) > r else None
+    uwh2_val = _uwh2[r][c] if _uwh2 and len(_uwh2) > r else None
+    f2t_val = _f2t[r][c] if _f2t and len(_f2t) > r else None
+    c2t_val = _c2t[r][c] if _c2t and len(_c2t) > r else None
+
     # Pick a sensible swatch color
     color = td.color if td else (128, 128, 128)
 
@@ -392,6 +446,11 @@ def capture_preset(
         wall_segments=ws,
         floor_step_segments=fss,
         ceil_step_segments=css,
+        floor2_height=f2h_val,
+        ceil2_height=c2h_val,
+        upper_wall_height2=uwh2_val,
+        floor2_texture=f2t_val,
+        ceil2_texture=c2t_val,
     )
     return preset
 
@@ -457,6 +516,11 @@ def _parse_preset_toml(path: str) -> CellPreset | None:
         wall_segments=ws,
         floor_step_segments=fss,
         ceil_step_segments=css,
+        floor2_height=d.get("floor2_height"),
+        ceil2_height=d.get("ceil2_height"),
+        upper_wall_height2=d.get("upper_wall_height2"),
+        floor2_texture=d.get("floor2_texture"),
+        ceil2_texture=d.get("ceil2_texture"),
     )
 
 
@@ -491,6 +555,18 @@ def _save_preset_toml(p: CellPreset) -> str:
     lines.append(f"upper_wall_height = {uwh}")
     lines.append("")
 
+    # ── Layer 2 Heights ──────────────────────────────────────────
+    if p.floor2_height is not None:
+        lines.append("# floor2_height: secondary floor height (LAYER_NONE = -1000.0 means inactive)")
+        lines.append(f"floor2_height = {p.floor2_height}")
+    if p.ceil2_height is not None:
+        lines.append("# ceil2_height: secondary ceiling height (LAYER_NONE = -1000.0 means inactive)")
+        lines.append(f"ceil2_height = {p.ceil2_height}")
+    if p.upper_wall_height2 is not None:
+        lines.append("# upper_wall_height2: 0.0–10.0 (extends wall above L2 ceiling)")
+        lines.append(f"upper_wall_height2 = {p.upper_wall_height2}")
+    lines.append("")
+
     # ── Textures ─────────────────────────────────────────────────
     lines.append('# floor_texture: texture key or "" to clear')
     lines.append(f'floor_texture = "{p.floor_texture or ""}"')
@@ -500,6 +576,15 @@ def _save_preset_toml(p: CellPreset) -> str:
 
     lines.append('# wall_texture: texture key or "" to clear')
     lines.append(f'wall_texture = "{p.wall_texture or ""}"')
+    lines.append("")
+
+    # ── Layer 2 Textures ─────────────────────────────────────────
+    if p.floor2_texture:
+        lines.append('# floor2_texture: secondary floor texture key')
+        lines.append(f'floor2_texture = "{p.floor2_texture}"')
+    if p.ceil2_texture:
+        lines.append('# ceil2_texture: secondary ceiling texture key')
+        lines.append(f'ceil2_texture = "{p.ceil2_texture}"')
     lines.append("")
 
     # ── Per-face textures [N, S, E, W] ───────────────────────────

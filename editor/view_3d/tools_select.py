@@ -189,6 +189,22 @@ class SelectMixin:
         self._push_undo()
         self._ensure_face_textures()
 
+        # L2 mode: paint floor2/ceil2 flat textures
+        if getattr(self, '_sculpt_layer2', False):
+            self._layer2_ensure_grids()
+            target = self._layer2_effective_target
+            for r, c in self.selection.iter_cells():
+                if target == "ceil2":
+                    ct2 = getattr(zone, 'ceil2_textures', None)
+                    if ct2:
+                        ct2[r][c] = tex
+                else:
+                    ft2 = getattr(zone, 'floor2_textures', None)
+                    if ft2:
+                        ft2[r][c] = tex
+            self.dirty = True
+            return True
+
         for r, c in self.selection.iter_cells():
             td = tile_def(zone.tiles[r][c])
             if td and td.wall:
@@ -222,6 +238,13 @@ class SelectMixin:
                 zone.floor_step_textures[r][c] = ["", "", "", ""]
             if zone.ceil_step_textures:
                 zone.ceil_step_textures[r][c] = ["", "", "", ""]
+            # L2 textures
+            ft2 = getattr(zone, 'floor2_textures', None)
+            if ft2:
+                ft2[r][c] = ""
+            ct2 = getattr(zone, 'ceil2_textures', None)
+            if ct2:
+                ct2[r][c] = ""
 
         self.dirty = True
         return True

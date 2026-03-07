@@ -536,6 +536,22 @@ class InspectorMixin:
                 imgui.same_line(55)
                 imgui.text_colored(f"{gap2:.2f}", *gap_col)
 
+            uwh2_grid = getattr(zone, 'upper_wall_height2', None)
+            uwh2 = 0.0
+            if uwh2_grid and len(uwh2_grid) > r:
+                uwh2 = uwh2_grid[r][c]
+            changed_uwh2, new_uwh2 = imgui.input_float(
+                "Upper Wall 2##insp_uwh2", uwh2, 0.25, 0.5, "%.3f")
+            if changed_uwh2:
+                new_uwh2 = round(max(0.0, min(10.0, new_uwh2)), 3)
+                ed._push_undo()
+                ed._layer2_ensure_grids()
+                def _set_uwh2(rr, cc):
+                    zone.upper_wall_height2[rr][cc] = new_uwh2
+                    return True
+                self._batch_set_cell_prop(_set_uwh2, has_sel)
+                self.dirty = True
+
             imgui.pop_item_width()
 
             imgui.spacing()
@@ -893,6 +909,83 @@ class InspectorMixin:
         imgui.pop_item_width()
         imgui.text_disabled("Syntax: +N  -N  *N  =N  or bare N")
 
+        # ── Upper wall height 2 ──────────────────────────────────
+        uwh2_vals = _collect_cell_values(
+            zone, cells,
+            lambda z, r, c: z.upper_wall_height2[r][c]
+            if getattr(z, 'upper_wall_height2', None) and len(z.upper_wall_height2) > r
+            else 0.0)
+        u2_str, u2_mixed, u2_common = _summarise_values(uwh2_vals)
+        imgui.text_disabled("UWH2")
+        imgui.same_line(55)
+        if u2_mixed:
+            imgui.text_colored("<Mixed>", 0.9, 0.7, 0.3, 1.0)
+        else:
+            imgui.text(u2_str)
+        imgui.push_item_width(pw - 90)
+        u2_input = getattr(self, '_bulk_uwh2_input', "")
+        changed, u2_input = imgui.input_text("##uwh2_bi", u2_input, 32)
+        if changed:
+            self._bulk_uwh2_input = u2_input
+        imgui.same_line()
+        if imgui.small_button("Apply##uwh2_go"):
+            raw = getattr(self, '_bulk_uwh2_input', '')
+            numeric = [v for v in uwh2_vals if v is not None]
+            new_vals = _parse_relative_value(raw, numeric if numeric else [0.0] * len(cells))
+            if new_vals:
+                ed._push_undo()
+                ed._layer2_ensure_grids()
+                idx = 0
+                for r, c in cells:
+                    if idx < len(new_vals):
+                        zone.upper_wall_height2[r][c] = round(
+                            max(0.0, min(10.0, new_vals[idx])), 3)
+                    idx += 1
+                self.dirty = True
+                self._bulk_uwh2_input = ""
+        imgui.pop_item_width()
+
+        # ── L2 Textures ──────────────────────────────────────────
+        imgui.spacing()
+        self._section_header("\u2581 TEXTURES", 0.75, 0.55, 0.85, pad_top=False)
+        f2t_vals = _collect_cell_values(
+            zone, cells,
+            lambda z, r, c: z.floor2_textures[r][c]
+            if getattr(z, 'floor2_textures', None) and len(z.floor2_textures) > r
+            else "")
+        c2t_vals = _collect_cell_values(
+            zone, cells,
+            lambda z, r, c: z.ceil2_textures[r][c]
+            if getattr(z, 'ceil2_textures', None) and len(z.ceil2_textures) > r
+            else "")
+        for lbl, vals in [("Floor2", f2t_vals), ("Ceil2", c2t_vals)]:
+            disp, mixed, _ = _summarise_values(vals)
+            imgui.text_disabled(lbl)
+            imgui.same_line(55)
+            if mixed:
+                imgui.text_colored("<Mixed>", 0.9, 0.7, 0.3, 1.0)
+            else:
+                imgui.text(disp if disp else "\u2014")
+
+        brush = ed.current_texture
+        if brush:
+            imgui.spacing()
+            btn_w = (pw - 40) / 2.0
+            if imgui.button(f"Set F2##{brush}_bf2", btn_w, 20):
+                ed._push_undo()
+                ed._layer2_ensure_grids()
+                for r, c in cells:
+                    zone.floor2_textures[r][c] = brush
+                self.dirty = True
+            imgui.same_line()
+            if imgui.button(f"Set C2##{brush}_bc2", btn_w, 20):
+                ed._push_undo()
+                ed._layer2_ensure_grids()
+                for r, c in cells:
+                    zone.ceil2_textures[r][c] = brush
+                self.dirty = True
+            imgui.text_disabled(f"Brush: {brush}")
+
     def _batch_set_cell_prop(self, fn, has_sel: bool) -> None:
         """Apply *fn(r, c)* to selection cells or aimed cell only."""
         ed = self.editor_3d
@@ -966,6 +1059,11 @@ class InspectorMixin:
                 if c2t:
                     imgui.same_line()
                     imgui.text_disabled(f"({c2t})")
+            uwh2_grid = getattr(zone, 'upper_wall_height2', None)
+            if uwh2_grid and len(uwh2_grid) > r and uwh2_grid[r][c] > 0.001:
+                imgui.text_disabled("  UWH2")
+                imgui.same_line(50)
+                imgui.text(f"{uwh2_grid[r][c]:.2f}")
             if self.editor_3d and getattr(self.editor_3d, '_sculpt_layer2', False):
                 tgt = self.editor_3d._layer2_target
                 imgui.text_disabled("  Target")
@@ -1604,11 +1702,17 @@ class InspectorMixin:
         elif face == "top":
             if part == "floor" and zone.floor_textures:
                 return zone.floor_textures[r][c]
+            elif part == "floor2":
+                f2t = getattr(zone, 'floor2_textures', None)
+                return (f2t[r][c] if f2t and len(f2t) > r else "")
             elif part in ("wall", "ceiling") and zone.ceil_textures:
                 return zone.ceil_textures[r][c]
         elif face == "bot":
             if part == "ceiling" and zone.ceil_textures:
                 return zone.ceil_textures[r][c]
+            elif part == "ceiling2":
+                c2t = getattr(zone, 'ceil2_textures', None)
+                return (c2t[r][c] if c2t and len(c2t) > r else "")
             elif part in ("wall", "floor") and zone.floor_textures:
                 return zone.floor_textures[r][c]
         return ""

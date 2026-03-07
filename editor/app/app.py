@@ -258,6 +258,7 @@ class ZoneEditorApp(
             self.renderer = RayRenderer(
                 self.zone, self.atlas, sw=RAY_RES_W, sh=RAY_RES_H,
                 fov=RAY_FOV, dn=self.dn,
+                pitch_max=self._PITCH_MAX,
             )
 
         pygame.display.set_caption(f"{WINDOW_TITLE} \u2014 {name}")

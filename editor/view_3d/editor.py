@@ -1151,6 +1151,9 @@ class Zone3DEditor(
         if tool == "select":
             # When selection is active, scroll raises/lowers floors (or ceilings)
             if self._has_selection():
+                if self._sculpt_layer2:
+                    self._layer2_sel_scroll(event.y)
+                    return True
                 shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
                 ceiling = shift != self.selection.ceiling_mode  # Shift XORs mode
                 return self._sel_scroll(event.y, ceiling=ceiling)
@@ -1434,6 +1437,29 @@ class Zone3DEditor(
                         split_y = round(hit.hit_y / snap) * snap
                         split_y = max(ch + 0.01, min(ct - 0.01, split_y))
                         self.preview_line = (c, r, split_y, COL_SEG_LINE, face)
+                elif hit.part == "floor2":
+                    f2 = getattr(zone, 'floor2_heights', None)
+                    if f2 and len(f2) > r:
+                        f2v = f2[r][c]
+                        if f2v > -999:
+                            lo = min(fh, f2v)
+                            hi = max(fh, f2v)
+                            if hi - lo > 0.02:
+                                split_y = round(hit.hit_y / snap) * snap
+                                split_y = max(lo + 0.01, min(hi - 0.01, split_y))
+                                self.preview_line = (c, r, split_y, COL_SEG_LINE, face)
+                elif hit.part == "ceiling2":
+                    c2 = getattr(zone, 'ceil2_heights', None)
+                    if c2 and len(c2) > r:
+                        c2v = c2[r][c]
+                        if c2v > -999:
+                            uwh2_grid = getattr(zone, 'upper_wall_height2', None)
+                            uwh2 = uwh2_grid[r][c] if (uwh2_grid and len(uwh2_grid) > r) else 0.0
+                            c2_top = uwh2 if uwh2 > c2v else c2v + 0.3
+                            if c2_top - c2v > 0.02:
+                                split_y = round(hit.hit_y / snap) * snap
+                                split_y = max(c2v + 0.01, min(c2_top - 0.01, split_y))
+                                self.preview_line = (c, r, split_y, COL_SEG_LINE, face)
             return
 
         if tool == "sculpt":
@@ -1450,6 +1476,22 @@ class Zone3DEditor(
                 min_ch = max(CEIL_MIN, fh + 0.05)
                 target_dn = max(ch - snap, min_ch)
                 self.preview_line = (c, r, target_dn, COL_TOOL_CEILING)
+            elif part == "floor2":
+                LAYER_NONE_VAL = -1000.0
+                f2h = getattr(zone, 'floor2_heights', None)
+                if f2h and len(f2h) > r:
+                    fv2 = f2h[r][c]
+                    if fv2 > LAYER_NONE_VAL + 1.0:
+                        target_up = min(fv2 + snap, FLOOR_MAX)
+                        self.preview_line = (c, r, target_up, (200, 160, 255))
+            elif part == "ceiling2":
+                LAYER_NONE_VAL = -1000.0
+                c2h = getattr(zone, 'ceil2_heights', None)
+                if c2h and len(c2h) > r:
+                    cv2 = c2h[r][c]
+                    if cv2 > LAYER_NONE_VAL + 1.0:
+                        target_dn = max(cv2 - snap, CEIL_MIN)
+                        self.preview_line = (c, r, target_dn, (160, 120, 230))
             return
 
     # -- State clipboard (Ctrl+C / Ctrl+V) -------------------------
@@ -1707,6 +1749,13 @@ class Zone3DEditor(
         ch = z.ceil_heights[r][c]
         tile = z.tiles[r][c]
         W, H = z.width, z.height
+        # L2 height matching when in L2 mode
+        l2 = getattr(self, '_sculpt_layer2', False)
+        LAYER_NONE = -1000.0
+        f2h_grid = getattr(z, 'floor2_heights', None) if l2 else None
+        c2h_grid = getattr(z, 'ceil2_heights', None) if l2 else None
+        ref_f2 = f2h_grid[r][c] if f2h_grid and len(f2h_grid) > r else LAYER_NONE
+        ref_c2 = c2h_grid[r][c] if c2h_grid and len(c2h_grid) > r else LAYER_NONE
         visited: set[tuple[int, int]] = set()
         stack = [(r, c)]
         while stack:
@@ -1721,6 +1770,15 @@ class Zone3DEditor(
                 continue
             if z.tiles[cr][cc] != tile:
                 continue
+            # L2 height match
+            if f2h_grid and len(f2h_grid) > cr:
+                nf2 = f2h_grid[cr][cc]
+                if abs(nf2 - ref_f2) > 0.01:
+                    continue
+            if c2h_grid and len(c2h_grid) > cr:
+                nc2 = c2h_grid[cr][cc]
+                if abs(nc2 - ref_c2) > 0.01:
+                    continue
             visited.add((cr, cc))
             stack.extend([(cr-1, cc), (cr+1, cc), (cr, cc-1), (cr, cc+1)])
         self.selection.cells.update(visited)
@@ -1738,6 +1796,13 @@ class Zone3DEditor(
         tile = z.tiles[r][c]
         ft = z.floor_textures[r][c] if z.floor_textures else ""
         wt = z.wall_textures[r][c] if z.wall_textures else ""
+        # L2 matching when in L2 mode
+        l2 = getattr(self, '_sculpt_layer2', False)
+        LAYER_NONE = -1000.0
+        f2h_grid = getattr(z, 'floor2_heights', None) if l2 else None
+        c2h_grid = getattr(z, 'ceil2_heights', None) if l2 else None
+        ref_f2 = f2h_grid[r][c] if f2h_grid and len(f2h_grid) > r else LAYER_NONE
+        ref_c2 = c2h_grid[r][c] if c2h_grid and len(c2h_grid) > r else LAYER_NONE
         for rr in range(z.height):
             for cc in range(z.width):
                 if abs(z.floor_heights[rr][cc] - fh) > 0.01:
@@ -1750,4 +1815,11 @@ class Zone3DEditor(
                 zwt = z.wall_textures[rr][cc] if z.wall_textures else ""
                 if zft != ft or zwt != wt:
                     continue
+                # L2 height match
+                if f2h_grid and len(f2h_grid) > rr:
+                    if abs(f2h_grid[rr][cc] - ref_f2) > 0.01:
+                        continue
+                if c2h_grid and len(c2h_grid) > rr:
+                    if abs(c2h_grid[rr][cc] - ref_c2) > 0.01:
+                        continue
                 self.selection.add_cell(rr, cc)
