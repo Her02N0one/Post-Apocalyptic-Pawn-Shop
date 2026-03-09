@@ -32,7 +32,7 @@ class QuadMixin:
     _quad_width: float = _DEFAULT_WIDTH
     _quad_height: float = _DEFAULT_HEIGHT
     _quad_yaw: float = 0.0
-    _quad_selected: int | None = None
+    # Selected quad: managed by Zone3DEditor bridge property
     _quad_snap: float = 0.25  # grid snap increment (0 = disabled)
 
     # ── Picking ───────────────────────────────────────────────────
@@ -114,6 +114,7 @@ class QuadMixin:
 
         self._push_undo()
         q: dict = {
+            "uid": zone.next_uid(),
             "x": round(wx, 3),
             "z": round(wz, 3),
             "base_y": round(fh, 3),
@@ -147,13 +148,11 @@ class QuadMixin:
         if idx is None or idx < 0 or idx >= len(zone.quads):
             return
         self._push_undo()
+        uid = zone.quads[idx].get("uid", 0)
         zone.quads.pop(idx)
         self._flash("Quad deleted — Ct+Z to undo", 1.5, (1.0, 0.6, 0.5, 1.0))
-        if self._quad_selected is not None:
-            if self._quad_selected == idx:
-                self._quad_selected = None
-            elif self._quad_selected > idx:
-                self._quad_selected -= 1
+        if uid:
+            self.selection.on_object_deleted(uid)
         self.dirty = True
 
     # ── Move ──────────────────────────────────────────────────────

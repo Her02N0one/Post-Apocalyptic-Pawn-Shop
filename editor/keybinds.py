@@ -155,17 +155,45 @@ class KeybindRegistry:
     def get(self, action: str) -> Optional[Keybind]:
         return self._binds.get(action)
 
-    def check(self, action: str, key: int, pg_mods: int) -> bool:
+    def check(self, action: str, key: int, pg_mods: int, *,
+              scope: str = "") -> bool:
         """Return True if *key* + raw pygame *pg_mods* matches *action*'s binding.
 
         This is the primary method for replacing ``if key == K_*`` checks.
         Modifier matching is **exact** (no extra mods allowed).
+
+        Scope is **always enforced**.  A keybind declared with
+        ``scope="global"`` matches any *scope* value.  A tool-scoped
+        keybind (e.g. ``"sculpt"``, ``"sculpt|select|paint"``) only
+        matches when the caller passes the corresponding tool string.
+        If no *scope* is passed (empty string), only ``"global"``
+        keybinds can match.
+
+        Parameters
+        ----------
+        scope:
+            The active tool name (or ``""``).  The keybind's declared
+            scope must include this value or be ``"global"``.
         """
         kb = self._binds.get(action)
         if kb is None:
             return False
+        # Scope enforcement (always active)
+        kb_scopes = set(kb.scope.split("|"))
+        if "global" not in kb_scopes and scope not in kb_scopes:
+            return False
         flags = _simplify_mods(pg_mods)
         return kb.effective_key == key and kb.effective_mods == flags
+
+    def matches_any_global(self, key: int, pg_mods: int) -> bool:
+        """Return True if *key*+*pg_mods* matches **any** keybind whose
+        scope contains ``"global"``."""
+        flags = _simplify_mods(pg_mods)
+        for kb in self._binds.values():
+            if "global" in kb.scope.split("|"):
+                if kb.effective_key == key and kb.effective_mods == flags:
+                    return True
+        return False
 
     def key_for(self, action: str) -> int:
         """Return the effective pygame key constant (for ``get_pressed()`` checks)."""

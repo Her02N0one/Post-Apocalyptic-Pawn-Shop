@@ -49,9 +49,7 @@ class BoxMixin:
 
     # Grid snap mode (prisms snap to quarter-cell grid)
     _box_snap: bool = True
-
-    # Selected prism index (into zone.boxes), or None
-    _box_selected: int | None = None
+    # Selected prism: managed by Zone3DEditor bridge property
 
     # ── Prism picking ─────────────────────────────────────────────
 
@@ -168,6 +166,7 @@ class BoxMixin:
 
         self._push_undo()
         bx: dict = {
+            "uid": zone.next_uid(),
             "x": wx,
             "y": wz,
             "z": base_z,
@@ -208,14 +207,12 @@ class BoxMixin:
             return
 
         self._push_undo()
+        uid = zone.boxes[idx].get("uid", 0)
         zone.boxes.pop(idx)
         self._flash("Prism deleted — Ct+Z to undo", 1.5, (1.0, 0.6, 0.5, 1.0))
 
-        if self._box_selected is not None:
-            if self._box_selected == idx:
-                self._box_selected = None
-            elif self._box_selected > idx:
-                self._box_selected -= 1
+        if uid:
+            self.selection.on_object_deleted(uid)
         self.dirty = True
 
     # ── Move ──────────────────────────────────────────────────────

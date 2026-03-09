@@ -114,6 +114,7 @@ class UndoMixin:
             "ceil2_heights":       _copy_grid(z.ceil2_heights) if z.ceil2_heights else [],
             "floor2_textures":     _copy_grid(z.floor2_textures) if z.floor2_textures else [],
             "ceil2_textures":      _copy_grid(z.ceil2_textures) if z.ceil2_textures else [],
+            "upper_wall_height2":  _copy_grid(z.upper_wall_height2) if z.upper_wall_height2 else [],
             "fog_density":         _copy_grid(z.fog_density) if z.fog_density else [],
             "fog_color":           _copy_grid(z.fog_color) if z.fog_color else [],
             # 3D grids (face textures — list[list[list[str]]])
@@ -180,6 +181,8 @@ class UndoMixin:
             z.floor2_textures = snap["floor2_textures"]
         if "ceil2_textures" in snap:
             z.ceil2_textures = snap["ceil2_textures"]
+        if "upper_wall_height2" in snap:
+            z.upper_wall_height2 = snap["upper_wall_height2"]
         if "fog_density" in snap:
             z.fog_density = snap["fog_density"]
         if "fog_color" in snap:

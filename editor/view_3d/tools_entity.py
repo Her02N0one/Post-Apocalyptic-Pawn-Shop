@@ -34,8 +34,7 @@ class EntityMixin:
 
     # Current palette index
     _ent_type_idx: int = 0
-    # Selected entity index (into zone.entities), or None
-    _ent_selected: int | None = None
+    # Selected entity: managed by Zone3DEditor bridge property
 
     # ── Palette helpers ───────────────────────────────────────────
 
@@ -141,6 +140,7 @@ class EntityMixin:
         self._push_undo()
         ent: dict = {
             "id": f"{etype}_{uuid.uuid4().hex[:6]}",
+            "uid": zone.next_uid(),
             "type": etype,
             "x": round(wx, 3),
             "y": round(wz, 3),
@@ -175,15 +175,13 @@ class EntityMixin:
             return
 
         self._push_undo()
+        uid = zone.entities[idx].get("uid", 0)
         zone.entities.pop(idx)
         self._flash("Entity deleted — Ct+Z to undo", 1.5, (1.0, 0.6, 0.5, 1.0))
 
-        # Fix selection index
-        if self._ent_selected is not None:
-            if self._ent_selected == idx:
-                self._ent_selected = None
-            elif self._ent_selected > idx:
-                self._ent_selected -= 1
+        # Notify selection store (no index fixup needed — UIDs are stable)
+        if uid:
+            self.selection.on_object_deleted(uid)
         self.dirty = True
 
     # ── Move ──────────────────────────────────────────────────────

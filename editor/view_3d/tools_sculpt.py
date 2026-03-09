@@ -634,6 +634,23 @@ class SculptMixin:
             zone.floor_step_segments[r][c] = [[], [], [], []]
         if zone.ceil_step_segments and len(zone.ceil_step_segments) > r:
             zone.ceil_step_segments[r][c] = [[], [], [], []]
+        # Clear orphaned L2 data
+        LAYER_NONE = -1000.0
+        f2h = getattr(zone, 'floor2_heights', None)
+        if f2h and len(f2h) > r:
+            f2h[r][c] = LAYER_NONE
+        c2h = getattr(zone, 'ceil2_heights', None)
+        if c2h and len(c2h) > r:
+            c2h[r][c] = LAYER_NONE
+        f2t = getattr(zone, 'floor2_textures', None)
+        if f2t and len(f2t) > r:
+            f2t[r][c] = ""
+        c2t = getattr(zone, 'ceil2_textures', None)
+        if c2t and len(c2t) > r:
+            c2t[r][c] = ""
+        uwh2 = getattr(zone, 'upper_wall_height2', None)
+        if uwh2 and len(uwh2) > r:
+            uwh2[r][c] = 0.0
 
     def _make_open(self, r: int, c: int) -> None:
         zone = self.zone
@@ -652,6 +669,23 @@ class SculptMixin:
             zone.wall_textures[r][c] = ""
         if zone.wall_segments and len(zone.wall_segments) > r:
             zone.wall_segments[r][c] = [[], [], [], []]
+        # Clear orphaned L2 data
+        LAYER_NONE = -1000.0
+        f2h = getattr(zone, 'floor2_heights', None)
+        if f2h and len(f2h) > r:
+            f2h[r][c] = LAYER_NONE
+        c2h = getattr(zone, 'ceil2_heights', None)
+        if c2h and len(c2h) > r:
+            c2h[r][c] = LAYER_NONE
+        f2t = getattr(zone, 'floor2_textures', None)
+        if f2t and len(f2t) > r:
+            f2t[r][c] = ""
+        c2t = getattr(zone, 'ceil2_textures', None)
+        if c2t and len(c2t) > r:
+            c2t[r][c] = ""
+        uwh2 = getattr(zone, 'upper_wall_height2', None)
+        if uwh2 and len(uwh2) > r:
+            uwh2[r][c] = 0.0
 
     # ── Batch wall/open conversion (H / Shift+H) ─────────────────
 
@@ -760,6 +794,17 @@ class SculptMixin:
         src_wt = zone.wall_textures[src_r][src_c] if zone.wall_textures else ""
         src_ll = (zone.light_levels[src_r][src_c]
                   if zone.light_levels and len(zone.light_levels) > src_r else 1.0)
+        # L2 fields
+        _f2h = getattr(zone, 'floor2_heights', None)
+        _c2h = getattr(zone, 'ceil2_heights', None)
+        _f2t = getattr(zone, 'floor2_textures', None)
+        _c2t = getattr(zone, 'ceil2_textures', None)
+        _uwh2 = getattr(zone, 'upper_wall_height2', None)
+        src_f2h = _f2h[src_r][src_c] if _f2h and len(_f2h) > src_r else -1000.0
+        src_c2h = _c2h[src_r][src_c] if _c2h and len(_c2h) > src_r else -1000.0
+        src_f2t = _f2t[src_r][src_c] if _f2t and len(_f2t) > src_r else ""
+        src_c2t = _c2t[src_r][src_c] if _c2t and len(_c2t) > src_r else ""
+        src_uwh2 = _uwh2[src_r][src_c] if _uwh2 and len(_uwh2) > src_r else 0.0
 
         def _apply(r: int, c: int) -> bool:
             zone.tiles[r][c] = src_tile
@@ -773,6 +818,17 @@ class SculptMixin:
                 zone.wall_textures[r][c] = src_wt
             if zone.light_levels and len(zone.light_levels) > r:
                 zone.light_levels[r][c] = src_ll
+            # L2 fields
+            if _f2h and len(_f2h) > r:
+                _f2h[r][c] = src_f2h
+            if _c2h and len(_c2h) > r:
+                _c2h[r][c] = src_c2h
+            if _f2t and len(_f2t) > r:
+                _f2t[r][c] = src_f2t
+            if _c2t and len(_c2t) > r:
+                _c2t[r][c] = src_c2t
+            if _uwh2 and len(_uwh2) > r:
+                _uwh2[r][c] = src_uwh2
             return True
 
         self._push_undo()

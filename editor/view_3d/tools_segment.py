@@ -50,6 +50,36 @@ class SegmentMixin:
             segs = zone.ceil_step_segments[r][c][fi]
             return (r, c, fi, segs, ch, ct, hit.hit_y, "ceil_step")
 
+        if hit.part == "floor2":
+            fh = zone.floor_heights[r][c]
+            f2 = getattr(zone, 'floor2_heights', None)
+            if not f2 or len(f2) <= r:
+                return None
+            f2v = f2[r][c]
+            if f2v <= -999:
+                return None
+            lo = min(fh, f2v)
+            hi = max(fh, f2v)
+            if hi - lo < 0.02:
+                return None
+            segs = zone.floor_step_segments[r][c][fi]
+            return (r, c, fi, segs, lo, hi, hit.hit_y, "floor_step")
+
+        if hit.part == "ceiling2":
+            c2 = getattr(zone, 'ceil2_heights', None)
+            if not c2 or len(c2) <= r:
+                return None
+            c2v = c2[r][c]
+            if c2v <= -999:
+                return None
+            uwh2_grid = getattr(zone, 'upper_wall_height2', None)
+            uwh2 = uwh2_grid[r][c] if (uwh2_grid and len(uwh2_grid) > r) else 0.0
+            c2_top = uwh2 if uwh2 > c2v else c2v + 0.3
+            if c2_top - c2v < 0.02:
+                return None
+            segs = zone.ceil_step_segments[r][c][fi]
+            return (r, c, fi, segs, c2v, c2_top, hit.hit_y, "ceil_step")
+
         return None
 
     def _seg_arrays(self, r: int, c: int, fi: int, seg_type: str

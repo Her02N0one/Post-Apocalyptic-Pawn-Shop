@@ -291,6 +291,7 @@ class DialogsMixin:
             "floor_slope_div": 0,
             "floor2_heights": -1000.0, "ceil2_heights": -1000.0,
             "floor2_textures": "", "ceil2_textures": "",
+            "upper_wall_height2": 0.0,
             "fog_density": 0.0,
         }
         for fname, default in _2D_FIELDS.items():
@@ -910,6 +911,22 @@ def _validate_zone(zone) -> list[str]:
                     issues.append(
                         f"[WARN] Cell ({r},{c}): ceiling ({ch:.2f}) nearly at "
                         f"floor ({fh:.2f}) \u2014 gap {ch - fh:.3f}")
+
+    # ── Layer 2 height sanity ─────────────────────────────────
+    LAYER_NONE = -1000.0
+    f2g = getattr(zone, 'floor2_heights', None)
+    c2g = getattr(zone, 'ceil2_heights', None)
+    if f2g and c2g:
+        for r in range(min(h, len(f2g))):
+            for c in range(min(w, len(f2g[r]))):
+                f2h = f2g[r][c]
+                c2h = c2g[r][c] if r < len(c2g) and c < len(c2g[r]) else LAYER_NONE
+                if f2h <= LAYER_NONE + 1.0 or c2h <= LAYER_NONE + 1.0:
+                    continue
+                if c2h - f2h < 0.05:
+                    issues.append(
+                        f"[WARN] Cell ({r},{c}): L2 ceiling ({c2h:.2f}) nearly at "
+                        f"L2 floor ({f2h:.2f}) \u2014 gap {c2h - f2h:.3f}")
 
     # ── Missing textures on open cells ────────────────────────
     from core.tiles import TILE_REGISTRY

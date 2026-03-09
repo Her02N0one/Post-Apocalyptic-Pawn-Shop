@@ -38,6 +38,7 @@ class OverlayWall:
     height_scale: float = 1.0
     transparent: bool = False   # color-key: magenta pixels see through
     blocks: bool = True         # blocks player movement
+    uid: int = 0                # persistent object ID (assigned by Zone)
 
 
 @dataclass
@@ -149,6 +150,42 @@ class Zone:
     # None when the Zone was created in-memory (e.g. by the editor).
     compiled: dict | None = field(default=None, repr=False)
 
+    # ── Persistent UID counter for placeable objects ──────────────
+    # Monotonically increasing; persisted in the zone file so UIDs
+    # are stable across save/load cycles.
+    _next_uid: int = field(default=1, repr=False)
+
+    def next_uid(self) -> int:
+        """Allocate and return the next unique object ID."""
+        uid = self._next_uid
+        self._next_uid = uid + 1
+        return uid
+
+    def ensure_uids(self) -> None:
+        """Assign UIDs to any zone objects that lack them.
+
+        Called after loading old zone files that predate the UID system.
+        Idempotent — objects that already have a non-zero uid keep it.
+        """
+        for ent in self.entities:
+            if not ent.get("uid"):
+                ent["uid"] = self.next_uid()
+        for b in self.boxes:
+            if not b.get("uid"):
+                b["uid"] = self.next_uid()
+        for q in self.quads:
+            if not q.get("uid"):
+                q["uid"] = self.next_uid()
+        for rp in self.render_portals:
+            if not rp.get("uid"):
+                rp["uid"] = self.next_uid()
+        for cv in self.curves:
+            if not cv.get("uid"):
+                cv["uid"] = self.next_uid()
+        for ow in self.overlay_walls:
+            if not ow.uid:
+                ow.uid = self.next_uid()
+
     # ── Persistence ───────────────────────────────────────────────
 
     def save_to_file(
@@ -228,6 +265,7 @@ class Zone:
                 height_scale=float(ow.get("height_scale", 1.0)),
                 transparent=bool(ow.get("transparent", False)),
                 blocks=bool(ow.get("blocks", True)),
+                uid=int(ow.get("uid", 0)),
             ))
 
         # ── Anchor ───────────────────────────────────────────────
@@ -270,7 +308,7 @@ class Zone:
         if "light_levels" in data:  # float32 array from RNDR
             compiled["light_levels"] = data["light_levels"]
 
-        return cls(
+        zone = cls(
             name=data.get("name", Path(filepath).stem),
             width=W,
             height=H,
@@ -312,7 +350,10 @@ class Zone:
             skybox=data.get("skybox", ""),
             sky_color=tuple(data.get("sky_color", ())),
             compiled=compiled,
+            _next_uid=data.get("next_uid", 1),
         )
+        zone.ensure_uids()
+        return zone
 
 
 def load_zone(name: str) -> Zone:

@@ -49,6 +49,25 @@ class EraseMixin:
             # Clear orphaned ceiling step segments
             if zone.ceil_step_segments and len(zone.ceil_step_segments) > r:
                 zone.ceil_step_segments[r][c] = [[], [], [], []]
+        elif hit.part == "ceiling2":
+            LAYER_NONE = -1000.0
+            c2 = getattr(zone, 'ceil2_heights', None)
+            if c2 and len(c2) > r:
+                c2[r][c] = LAYER_NONE
+            uwh2 = getattr(zone, 'upper_wall_height2', None)
+            if uwh2 and len(uwh2) > r:
+                uwh2[r][c] = 0.0
+            ct2 = getattr(zone, 'ceil2_textures', None)
+            if ct2 and len(ct2) > r:
+                ct2[r][c] = ""
+        elif hit.part == "floor2":
+            LAYER_NONE = -1000.0
+            f2 = getattr(zone, 'floor2_heights', None)
+            if f2 and len(f2) > r:
+                f2[r][c] = LAYER_NONE
+            ft2 = getattr(zone, 'floor2_textures', None)
+            if ft2 and len(ft2) > r:
+                ft2[r][c] = ""
         else:
             zone.floor_heights[r][c] = DEFAULT_FLOOR
             # Clear orphaned floor step segments
@@ -73,6 +92,13 @@ class EraseMixin:
             zone.floor_step_textures[r][c] = ["", "", "", ""]
         if zone.ceil_step_textures and len(zone.ceil_step_textures) > r:
             zone.ceil_step_textures[r][c] = ["", "", "", ""]
+        # Layer 2 flat textures
+        f2t = getattr(zone, 'floor2_textures', None)
+        if f2t and len(f2t) > r and len(f2t[r]) > c:
+            f2t[r][c] = ""
+        c2t = getattr(zone, 'ceil2_textures', None)
+        if c2t and len(c2t) > r and len(c2t[r]) > c:
+            c2t[r][c] = ""
 
     def _erase_textures_only(self) -> bool:
         """Shift+LMB on eraser: clear textures, keep geometry."""

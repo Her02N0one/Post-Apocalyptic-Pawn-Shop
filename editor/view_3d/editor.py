@@ -82,13 +82,12 @@ from editor.view_3d.constants import (  # noqa: F401
 
 # Mixins
 from editor.keybinds import create_default_registry, _simplify_mods, MOD_SHIFT, MOD_CTRL, MOD_ALT
-from editor.view_3d.selection import SelectionState
+from editor.view_3d.selection_store import SelectionStore, uid_of, resolve_index
 from editor.view_3d.undo import UndoMixin
 from editor.view_3d.geometry import GeometryMixin
 from editor.view_3d.tools_sculpt import SculptMixin
 from editor.view_3d.tools_paint import PaintMixin
 from editor.view_3d.tools_fill import FillMixin
-from editor.view_3d.tools_erase import EraseMixin
 from editor.view_3d.tools_select import SelectMixin
 from editor.view_3d.tools_segment import SegmentMixin
 from editor.view_3d.tools_stamp import StampMixin
@@ -104,6 +103,69 @@ from editor.view_3d.save import SaveMixin
 from editor.view_3d.primitives import DrawPrimitivesMixin
 from editor.view_3d.rendering import RenderingMixin
 
+# Phase 0 — Command bus infrastructure
+from editor.commands import CommandBus, EventBus, BatchCommand
+from editor.commands.sculpt_cmds import (
+    SculptFloorRaise, SculptFloorLower,
+    SculptCeilRaise, SculptCeilLower,
+    SculptToggleCeiling, SculptResetCeiling, SculptResetFloor,
+    SculptClearCell, SculptAdjustUpperWall,
+    SculptScrollUpperWall, SculptExtendFloor, SculptExtendWallCeiling,
+    SculptBatchMakeWall, SculptBatchMakeOpen,
+    SculptFlattenFloors, SculptFlattenCeilings,
+    SculptBatchRaiseUpperWall, SculptBatchLowerUpperWall,
+    SculptBatchResetUpperWall,
+    register_sculpt_handlers,
+)
+from editor.commands.paint_cmds import (
+    PaintFace, PaintAllFaces, EraseFace,
+    PaintPrismFace, ErasePrismFace, PaintQuad, EraseQuad,
+    FloodFill, FloodClear, SelectionFillTexture, SelectionClearTextures,
+    ContinuousPaint,
+    register_paint_handlers,
+)
+from editor.commands.erase_cmds import (
+    EraseCell, EraseHeight, EraseTexturesOnly,
+    register_erase_handlers,
+)
+from editor.commands.object_cmds import (
+    EntityPlace, EntityDelete, EntityMove, EntityRotate,
+    BoxPlace, BoxDelete, BoxMove, BoxRotate90, BoxRotateFine,
+    BoxAdjustSize, BoxShiftZ,
+    QuadPlace, QuadDelete, QuadMove, QuadRotate,
+    QuadAdjustSize, QuadToggleTwosided, QuadPaint,
+    PortalPlace, PortalDelete,
+    CurvePlace, CurveDelete, CurveMove, CurvePaint,
+    CurveAdjustRadius, CurveAdjustAngleStart, CurveAdjustAngleEnd,
+    OverlayFinishPlace, OverlayDelete, OverlayMove, OverlayPaint,
+    OverlayToggleTransparent, OverlayAdjustHeight,
+    register_object_handlers,
+)
+from editor.commands.segment_cmds import (
+    SegmentSplit, SegmentMerge, SegmentPaint,
+    register_segment_handlers,
+)
+from editor.commands.stamp_cmds import (
+    StampApply,
+    register_stamp_handlers,
+)
+from editor.commands.l2_cmds import (
+    L2Raise, L2Lower, L2Paint, L2EraseSingle,
+    L2PaintSelection, L2EraseSelection,
+    L2Scroll, L2Reset, L2SelScroll,
+    L2FlattenFloors, L2FlattenCeilings, L2ToggleCeil,
+    L2SelectionReset, L2DeleteAimed,
+    register_l2_handlers,
+)
+from editor.commands.select_cmds import (
+    SelScroll, SelDelete, SelResetCells,
+    register_select_handlers,
+)
+from editor.commands.misc_cmds import (
+    ClipboardPaste, DuplicateSelection, ObjectDeleteSelected,
+    register_misc_handlers,
+)
+
 
 # ===================================================================
 #  Zone3DEditor -- direct zone sculpting editor
@@ -115,7 +177,6 @@ class Zone3DEditor(
     SculptMixin,
     PaintMixin,
     FillMixin,
-    EraseMixin,
     SelectMixin,
     SegmentMixin,
     StampMixin,
@@ -149,6 +210,82 @@ class Zone3DEditor(
     def _sculpt_layer2(self, value: bool) -> None:
         """Compatibility shim — sets active_layer from bool."""
         self.active_layer = 2 if value else 1
+
+    # ── Phase 2: bridge properties ────────────────────────────────
+    # These translate between the legacy ``_*_selected`` index-based
+    # API and the UID-based SelectionStore.  Existing mixin and panel
+    # code continues to read/write these fields; the properties route
+    # everything through the store so there is only ONE source of truth.
+
+    def _sel_bridge_get(self, type_tag: str) -> int | None:
+        """Resolve the store's primary UID to a list index, or None."""
+        store = self.selection
+        if store.primary_type != type_tag:
+            return None
+        return store.primary_index(self.zone)
+
+    def _sel_bridge_set(self, type_tag: str, store_attr: str, idx: int | None) -> None:
+        """Update the store from a legacy index assignment."""
+        sel = self.selection
+        if idx is None:
+            if sel.primary_type == type_tag:
+                uid = sel.primary_uid
+                if uid is not None:
+                    sel.deselect_object(uid)
+        else:
+            zone_list = getattr(self.zone, store_attr, None)
+            if zone_list and 0 <= idx < len(zone_list):
+                uid = uid_of(self.zone, type_tag, idx)
+                if uid is not None:
+                    sel.select_object(type_tag, uid)
+
+    @property
+    def _ent_selected(self) -> int | None:
+        return self._sel_bridge_get("entity")
+
+    @_ent_selected.setter
+    def _ent_selected(self, idx: int | None) -> None:
+        self._sel_bridge_set("entity", "entities", idx)
+
+    @property
+    def _box_selected(self) -> int | None:
+        return self._sel_bridge_get("prism")
+
+    @_box_selected.setter
+    def _box_selected(self, idx: int | None) -> None:
+        self._sel_bridge_set("prism", "boxes", idx)
+
+    @property
+    def _quad_selected(self) -> int | None:
+        return self._sel_bridge_get("quad")
+
+    @_quad_selected.setter
+    def _quad_selected(self, idx: int | None) -> None:
+        self._sel_bridge_set("quad", "quads", idx)
+
+    @property
+    def _portal_selected(self) -> int | None:
+        return self._sel_bridge_get("portal")
+
+    @_portal_selected.setter
+    def _portal_selected(self, idx: int | None) -> None:
+        self._sel_bridge_set("portal", "render_portals", idx)
+
+    @property
+    def _curve_selected(self) -> int | None:
+        return self._sel_bridge_get("curve")
+
+    @_curve_selected.setter
+    def _curve_selected(self, idx: int | None) -> None:
+        self._sel_bridge_set("curve", "curves", idx)
+
+    @property
+    def _ow_selected(self) -> int | None:
+        return self._sel_bridge_get("overlay")
+
+    @_ow_selected.setter
+    def _ow_selected(self, idx: int | None) -> None:
+        self._sel_bridge_set("overlay", "overlay_walls", idx)
 
     def __init__(self, zone: Zone) -> None:
         self.zone = zone
@@ -200,8 +337,13 @@ class Zone3DEditor(
         self._clipboard: dict | None = None  # copied cell state dict
         self._paste_mask: set[str] = set(PASTE_MASK_ALL)  # active mask flags
 
-        # ── Universal selection layer ─────────────────────────────
-        self.selection = SelectionState()
+        # ── Phase 0: Command bus + event bus (before selection so store
+        #    can emit SelectionChanged events immediately) ──────────
+        self.event_bus = EventBus()
+        self.cmd_bus = CommandBus(self, self.event_bus)
+
+        # ── Universal selection layer (Phase 2: UID-based store) ──
+        self.selection = SelectionStore(self.event_bus)
 
         # ── Unified object layer ──────────────────────────────────
         self.objects = ObjectLayer(self)
@@ -247,6 +389,9 @@ class Zone3DEditor(
         self._resolve_fallback_tiles()
         self._ensure_face_textures()
 
+        # ── Phase 0: register command handlers ─────────────────────
+        self._register_all_handlers()
+
     def set_zone(self, zone: Zone) -> None:
         """Replace the zone being edited and reset camera/undo."""
         self.zone = zone
@@ -258,6 +403,38 @@ class Zone3DEditor(
         self._redo_stack.clear()
         self.selection.clear()
         self._ensure_face_textures()
+        # Re-register handlers for the new zone
+        self._register_all_handlers()
+
+    def _register_all_handlers(self) -> None:
+        """Register all Phase 0 command handlers on the bus."""
+        register_sculpt_handlers(self.cmd_bus, self)
+        register_paint_handlers(self.cmd_bus, self)
+        register_erase_handlers(self.cmd_bus, self)
+        register_object_handlers(self.cmd_bus, self)
+        register_segment_handlers(self.cmd_bus, self)
+        register_stamp_handlers(self.cmd_bus, self)
+        register_l2_handlers(self.cmd_bus, self)
+        register_select_handlers(self.cmd_bus, self)
+        register_misc_handlers(self.cmd_bus, self)
+
+    # -- Command dispatch helpers (Phase 0) -------------------------
+
+    def _sculpt_cmd(self, cmd_cls: type) -> None:
+        """Dispatch a sculpt command for the current selection or aimed cell.
+
+        If the selection has cells, wraps individual commands in a
+        :class:`BatchCommand` for a single undo entry.  Otherwise
+        dispatches a single command for the aimed cell.
+        """
+        if self._has_selection():
+            cells = tuple(self.selection.iter_cells())
+            if cells:
+                self.cmd_bus.execute(BatchCommand(children=tuple(
+                    cmd_cls(cell=(r, c)) for r, c in cells
+                )))
+        elif self.aimed:
+            self.cmd_bus.execute(cmd_cls(cell=(self.aimed.row, self.aimed.col)))
 
     # -- Batch dispatch helper --------------------------------------
 
@@ -456,61 +633,58 @@ class Zone3DEditor(
         key = event.key
         mod = pygame.key.get_mods()
         kb = self.kb   # keybind registry shorthand
-
-        # Stamp capture naming mode intercepts all keys
-        if self.tool == "stamp" and self._capture_pending:
-            return self._stamp_capture_key(key, event.unicode)
+        tool = self.tool
 
         # ── 1. Ctrl / Alt modifier combos (highest priority) ─────
-        if kb.check("file.save", key, mod):
+        if kb.check("file.save", key, mod, scope=tool):
             self._save()
             return True
-        if kb.check("edit.redo_cz", key, mod):
+        if kb.check("edit.redo_cz", key, mod, scope=tool):
             self._redo()
             return True
-        if kb.check("edit.undo", key, mod):
+        if kb.check("edit.undo", key, mod, scope=tool):
             self._undo()
             return True
-        if kb.check("edit.redo_cy", key, mod):
+        if kb.check("edit.redo_cy", key, mod, scope=tool):
             self._redo()
             return True
-        if kb.check("select.all", key, mod):
+        if kb.check("select.all", key, mod, scope=tool):
             self.selection.select_all_cells(self.zone.width, self.zone.height)
             return True
-        if kb.check("select.duplicate", key, mod):
-            self._duplicate_selection()
+        if kb.check("select.duplicate", key, mod, scope=tool):
+            self.cmd_bus.execute(DuplicateSelection())
             return True
-        if kb.check("edit.copy", key, mod):
+        if kb.check("edit.copy", key, mod, scope=tool):
             self._clipboard_copy()
             return True
-        if kb.check("edit.paste", key, mod):
-            self._clipboard_paste()
+        if kb.check("edit.paste", key, mod, scope=tool):
+            self.cmd_bus.execute(ClipboardPaste())
             return True
-        if kb.check("display.walls_c", key, mod):
+        if kb.check("display.walls_c", key, mod, scope=tool):
             self.show_walls = not self.show_walls
             return True
-        if kb.check("display.floors_c", key, mod):
+        if kb.check("display.floors_c", key, mod, scope=tool):
             self.show_floors = not self.show_floors
             return True
-        if kb.check("display.ceilings_c", key, mod):
+        if kb.check("display.ceilings_c", key, mod, scope=tool):
             self.show_ceilings = not self.show_ceilings
             return True
-        if kb.check("display.entities_c", key, mod):
+        if kb.check("display.entities_c", key, mod, scope=tool):
             self.show_entities = not self.show_entities
             return True
-        if kb.check("display.wireframe_c", key, mod):
+        if kb.check("display.wireframe_c", key, mod, scope=tool):
             self.wireframe = not self.wireframe
             return True
-        if kb.check("display.isolate", key, mod):
+        if kb.check("display.isolate", key, mod, scope=tool):
             self.isolate_layer = not self.isolate_layer
             return True
 
         # ── 1b. PageUp/PageDown = switch active layer ─────────────
-        if kb.check("layer.up", key, mod):
+        if kb.check("layer.up", key, mod, scope=tool):
             self.active_layer = 2
             self._flash("Layer 2", 0.7, (0.7, 0.85, 1.0, 1.0))
             return True
-        if kb.check("layer.down", key, mod):
+        if kb.check("layer.down", key, mod, scope=tool):
             self.active_layer = 1
             self._flash("Layer 1", 0.7, (0.7, 0.85, 1.0, 1.0))
             return True
@@ -523,7 +697,7 @@ class Zone3DEditor(
             ("mode.logic",   MODES[3]),
         ]
         for _act, _new_mode in _MODE_ACTIONS:
-            if kb.check(_act, key, mod):
+            if kb.check(_act, key, mod, scope=tool):
                 self.mode = _new_mode
                 mode_tools = MODE_TOOLS[_new_mode]
                 if self.tool not in mode_tools:
@@ -536,7 +710,7 @@ class Zone3DEditor(
 
         # ── 2. Number keys 1-5 = select tool within current mode ──
         for _i in range(1, 6):
-            if kb.check(f"subtool.{_i}", key, mod):
+            if kb.check(f"subtool.{_i}", key, mod, scope=tool):
                 idx = _i - 1
                 mode_tools = MODE_TOOLS[self.mode]
                 if idx < len(mode_tools):
@@ -550,7 +724,7 @@ class Zone3DEditor(
                 return True
 
         # ── 3. B key — select tool toggle ─────────────────────────
-        if kb.check("tool.select", key, mod):
+        if kb.check("tool.select", key, mod, scope=tool):
             return self._handle_b_key()
 
         # ── 4. Utility mode toggles (P, I, O, ;) ─────────────────
@@ -561,7 +735,7 @@ class Zone3DEditor(
             ("tool.curve",  "curve"),
         ]
         for _act, _target in _UTIL_ACTIONS:
-            if kb.check(_act, key, mod):
+            if kb.check(_act, key, mod, scope=tool):
                 if self.tool == _target:
                     self._leave_tool(self.tool)
                     self.tool = self._prev_tool
@@ -581,142 +755,116 @@ class Zone3DEditor(
             return True
 
         # ── 6. Cross-tool selection keys (when selection active) ──
-        #    Only active in sculpt / select / paint.
-        _sel_tools = ("sculpt", "select", "paint")
-        if self._has_selection() and self.tool in _sel_tools:
+        #    Scope enforcement limits these to sculpt / select / paint.
+        if self._has_selection():
             if self._sculpt_layer2:
                 # ── L2 selection operations ────────────────────────
-                if kb.check("sel.ceil_mode", key, mod):
+                if kb.check("sel.ceil_mode", key, mod, scope=tool):
                     self._layer2_toggle_target()
                     return True
-                if kb.check("sel.flatten_floors", key, mod):
-                    return self._layer2_flatten_floors()
-                if kb.check("sel.flatten_ceilings", key, mod):
-                    return self._layer2_flatten_ceilings()
-                if kb.check("sel.add_ceilings", key, mod):
-                    return self._layer2_toggle_ceil()
-                if kb.check("sel.remove_ceilings", key, mod):
-                    self._layer2_ensure_grids()
-                    self._push_undo()
-                    self._apply_to_selection(self._layer2_reset_at)
-                    self.dirty = True
+                if kb.check("sel.flatten_floors", key, mod, scope=tool):
+                    return self.cmd_bus.execute(L2FlattenFloors())
+                if kb.check("sel.flatten_ceilings", key, mod, scope=tool):
+                    return self.cmd_bus.execute(L2FlattenCeilings())
+                if kb.check("sel.add_ceilings", key, mod, scope=tool):
+                    return self.cmd_bus.execute(L2ToggleCeil())
+                if kb.check("sel.remove_ceilings", key, mod, scope=tool):
+                    self.cmd_bus.execute(L2SelectionReset())
                     return True
-                if kb.check("sel.reset", key, mod):
-                    self._layer2_ensure_grids()
-                    self._push_undo()
-                    self._apply_to_selection(self._layer2_reset_at)
-                    self.dirty = True
+                if kb.check("sel.reset", key, mod, scope=tool):
+                    self.cmd_bus.execute(L2SelectionReset())
                     return True
             else:
                 # ── L1 selection operations ────────────────────────
-                if kb.check("sel.ceil_mode", key, mod):
+                if kb.check("sel.ceil_mode", key, mod, scope=tool):
                     self._sel_toggle_ceiling_mode()
                     return True
-                if kb.check("sel.remove_ceilings", key, mod):
-                    return self._toggle_ceiling(remove_only=True)
-                if kb.check("sel.add_ceilings", key, mod):
-                    return self._toggle_ceiling(add_only=True)
-                if kb.check("sel.make_open", key, mod):
-                    return self._batch_make_open()
-                if kb.check("sel.make_wall", key, mod):
-                    return self._batch_make_wall()
-                if kb.check("sel.flatten_ceilings", key, mod):
-                    return self._flatten_ceilings()
-                if kb.check("sel.flatten_floors", key, mod):
-                    return self._flatten_floors()
-                if kb.check("sel.reset_upper_wall", key, mod):
-                    return self._batch_reset_upper_wall()
-                if kb.check("sel.raise_upper_wall", key, mod):
-                    return self._batch_raise_upper_wall()
-                if kb.check("sel.lower_upper_wall", key, mod):
-                    return self._batch_lower_upper_wall()
-                if kb.check("sel.reset", key, mod):
-                    return self._sel_delete()
-
-        # ── 8. Escape — cancel / deselect (layered) ──────────────
-        if key == pygame.K_ESCAPE:
-            if self.objects.any_selected():
-                self.objects.deselect_all()
-                return True
-            if self.selection.has_anything() or self.selection.rect_in_progress:
-                self._sel_cancel()
-                return True
-            self.aimed = None
-            return True
+                if kb.check("sel.remove_ceilings", key, mod, scope=tool):
+                    return self.cmd_bus.execute(SculptToggleCeiling(remove_only=True))
+                if kb.check("sel.add_ceilings", key, mod, scope=tool):
+                    return self.cmd_bus.execute(SculptToggleCeiling(add_only=True))
+                if kb.check("sel.make_open", key, mod, scope=tool):
+                    return self.cmd_bus.execute(SculptBatchMakeOpen())
+                if kb.check("sel.make_wall", key, mod, scope=tool):
+                    return self.cmd_bus.execute(SculptBatchMakeWall())
+                if kb.check("sel.flatten_ceilings", key, mod, scope=tool):
+                    return self.cmd_bus.execute(SculptFlattenCeilings())
+                if kb.check("sel.flatten_floors", key, mod, scope=tool):
+                    return self.cmd_bus.execute(SculptFlattenFloors())
+                if kb.check("sel.reset_upper_wall", key, mod, scope=tool):
+                    return self.cmd_bus.execute(SculptBatchResetUpperWall())
+                if kb.check("sel.raise_upper_wall", key, mod, scope=tool):
+                    return self.cmd_bus.execute(SculptBatchRaiseUpperWall())
+                if kb.check("sel.lower_upper_wall", key, mod, scope=tool):
+                    return self.cmd_bus.execute(SculptBatchLowerUpperWall())
+                if kb.check("sel.reset", key, mod, scope=tool):
+                    return self.cmd_bus.execute(SelDelete())
 
         # ── 8. Display toggle: axes (F10) ─────────────────────────
-        if kb.check("display.axes", key, mod):
+        if kb.check("display.axes", key, mod, scope=tool):
             self.show_axes = not self.show_axes
             return True
 
         # ── 9. Tool-specific keys ────────────────────────────────
 
-        # Upper wall adjust (U key — single cell, no selection, sculpt only)
+        # Upper wall adjust (U key — single cell, no selection)
         # U has no effect on L2 (no upper-wall concept)
-        if self.tool == "sculpt" and not self._sculpt_layer2:
-            if kb.check("sculpt.reset_upper_wall", key, mod):
-                return self._adjust_upper_wall_height(pygame.KMOD_CTRL)
-            if kb.check("sculpt.raise_upper_wall", key, mod):
-                return self._adjust_upper_wall_height(0)
-            if kb.check("sculpt.lower_upper_wall", key, mod):
-                return self._adjust_upper_wall_height(pygame.KMOD_SHIFT)
+        if not self._sculpt_layer2:
+            if kb.check("sculpt.reset_upper_wall", key, mod, scope=tool):
+                return self.cmd_bus.execute(SculptAdjustUpperWall(modifier=pygame.KMOD_CTRL))
+            if kb.check("sculpt.raise_upper_wall", key, mod, scope=tool):
+                return self.cmd_bus.execute(SculptAdjustUpperWall(modifier=0))
+            if kb.check("sculpt.lower_upper_wall", key, mod, scope=tool):
+                return self.cmd_bus.execute(SculptAdjustUpperWall(modifier=pygame.KMOD_SHIFT))
 
         # Reset (R key) — box tool overrides for 90° rotation
-        if self.tool == "box" and kb.check("box.rotate", key, mod):
-            self._box_rotate_90()
+        if kb.check("box.rotate", key, mod, scope=tool):
+            self.cmd_bus.execute(BoxRotate90())
             return True
-        if self.tool == "sculpt":
-            if kb.check("sculpt.reset_ceiling", key, mod) or kb.check("sculpt.reset_floor", key, mod):
-                if self._sculpt_layer2:
-                    return self._layer2_reset()
-                if self.aimed:
-                    if self.aimed.part in ("ceiling", "ceiling2"):
-                        return self._reset_ceiling()
-                    else:
-                        return self._reset_floor()
-                return False
+        if kb.check("sculpt.reset_ceiling", key, mod, scope=tool) or kb.check("sculpt.reset_floor", key, mod, scope=tool):
+            if self._sculpt_layer2:
+                return self.cmd_bus.execute(L2Reset())
+            if self.aimed:
+                if self.aimed.part in ("ceiling", "ceiling2"):
+                    return self.cmd_bus.execute(SculptResetCeiling())
+                else:
+                    return self.cmd_bus.execute(SculptResetFloor())
+            return False
 
         # Toggle ceiling (T key — single cell when no selection)
-        if self.tool == "entity" and kb.check("entity.cycle_state", key, mod):
+        if kb.check("entity.cycle_state", key, mod, scope=tool):
             self._ent_cycle_state()
             return True
-        if self.tool == "sculpt" and kb.check("sculpt.toggle_ceiling", key, mod):
+        if kb.check("sculpt.toggle_ceiling", key, mod, scope=tool):
             if self._sculpt_layer2:
-                return self._layer2_toggle_ceil()
+                return self.cmd_bus.execute(L2ToggleCeil())
             if self.aimed:
-                return self._toggle_ceiling()
+                return self.cmd_bus.execute(SculptToggleCeiling())
 
         # Wall / open conversion (H key — L1 only, no equivalent on L2)
-        if self.tool == "sculpt" and not self._sculpt_layer2:
-            if kb.check("sculpt.make_open", key, mod):
-                return self._batch_make_open()
-            if kb.check("sculpt.make_wall", key, mod):
-                return self._batch_make_wall()
+        if not self._sculpt_layer2:
+            if kb.check("sculpt.make_open", key, mod, scope=tool):
+                return self.cmd_bus.execute(SculptBatchMakeOpen())
+            if kb.check("sculpt.make_wall", key, mod, scope=tool):
+                return self.cmd_bus.execute(SculptBatchMakeWall())
 
         # Delete (no selection — unified object layer then cell fallback)
-        if kb.check("delete.aimed", key, mod):
-            if self.objects.delete_selected():
+        if kb.check("delete.aimed", key, mod, scope=tool):
+            if self.cmd_bus.execute(ObjectDeleteSelected()):
                 return True
             if self._sculpt_layer2:
-                # On L2: clear L2 data at aimed cell
-                hit = self.aimed
-                if hit:
-                    self._layer2_ensure_grids()
-                    self._push_undo()
-                    if self._layer2_reset_at(hit.row, hit.col):
-                        self.dirty = True
-                        self._flash("L2 cleared — Ct+Z to undo", 1.2, (0.8, 0.6, 1.0, 1.0))
+                self.cmd_bus.execute(L2DeleteAimed())
                 return True
-            return self._clear_cell()
+            return self.cmd_bus.execute(SculptClearCell())
 
         # Snap grid (G key) / Shift+G = select similar
-        if kb.check("select.similar", key, mod):
+        if kb.check("select.similar", key, mod, scope=tool):
             self._select_similar()
             return True
-        if self.tool == "box" and kb.check("box.toggle_grid", key, mod):
+        if kb.check("box.toggle_grid", key, mod, scope=tool):
             self._box_toggle_snap()
             return True
-        if self.tool == "quad" and kb.check("quad.cycle_snap", key, mod):
+        if kb.check("quad.cycle_snap", key, mod, scope=tool):
             _QUAD_SNAPS = [0.25, 0.5, 1.0, 0.0]
             cur = self._quad_snap
             try:
@@ -725,7 +873,7 @@ class Zone3DEditor(
                 idx = -1
             self._quad_snap = _QUAD_SNAPS[(idx + 1) % len(_QUAD_SNAPS)]
             return True
-        if self.tool == "overlay" and kb.check("overlay.cycle_snap", key, mod):
+        if kb.check("overlay.cycle_snap", key, mod, scope=tool):
             _OW_SNAPS = [0.25, 0.5, 1.0, 0.0]
             cur = self._ow_snap
             try:
@@ -736,26 +884,26 @@ class Zone3DEditor(
             label = f"{self._ow_snap:.2f}" if self._ow_snap else "off"
             self._flash(f"Snap: {label}", 0.8, (0.7, 0.9, 1.0, 1.0))
             return True
-        if kb.check("sculpt.cycle_grid", key, mod):
+        if kb.check("sculpt.cycle_grid", key, mod, scope=tool):
             self.snap_idx = (self.snap_idx + 1) % len(SNAP_Y_OPTIONS)
             self.snap_y = SNAP_Y_OPTIONS[self.snap_idx]
             return True
 
         # X key (no selection — tool-specific)
-        if self.tool == "sculpt" and kb.check("sculpt.toggle_layer", key, mod):
+        if kb.check("sculpt.toggle_layer", key, mod, scope=tool):
             self.active_layer = 1 if self.active_layer == 2 else 2
             return True
-        if self.tool == "select" and kb.check("select.ceil_mode", key, mod):
+        if kb.check("select.ceil_mode", key, mod, scope=tool):
             self._sel_toggle_ceiling_mode()
             return True
 
         # Stamp mode cycle (M key)
-        if self.tool == "stamp" and kb.check("stamp.cycle_mode", key, mod):
+        if kb.check("stamp.cycle_mode", key, mod, scope=tool):
             self._stamp_cycle_mode()
             return True
 
         # ── ? key — toggle keyboard shortcut help overlay ─────────
-        if kb.check("help.toggle", key, mod):
+        if kb.check("help.toggle", key, mod, scope=tool):
             self._show_help = not self._show_help
             return True
 
@@ -782,20 +930,20 @@ class Zone3DEditor(
                 ceiling = shift != self.selection.ceiling_mode
                 if ceiling:
                     if btn == 1:
-                        self._tool_ceiling_lower()
+                        self._sculpt_cmd(SculptCeilLower)
                     elif btn == 3:
-                        self._tool_ceiling_raise()
+                        self._sculpt_cmd(SculptCeilRaise)
                 else:
                     if btn == 1:
-                        self._tool_floor_raise()
+                        self._sculpt_cmd(SculptFloorRaise)
                     elif btn == 3:
-                        self._tool_floor_lower()
+                        self._sculpt_cmd(SculptFloorLower)
             elif self._sculpt_layer2:
                 # Layer 2 sub-mode
                 if btn == 1:
-                    self._layer2_raise(shift, ctrl)
+                    self.cmd_bus.execute(L2Raise(shift=shift, ctrl=ctrl))
                 elif btn == 3:
-                    self._layer2_lower(shift)
+                    self.cmd_bus.execute(L2Lower(shift=shift))
             else:
                 # L1 sculpt — map L2 surface hits to L1 equivalents
                 p = {"floor2": "floor", "ceiling2": "ceiling"}.get(part, part)
@@ -803,19 +951,19 @@ class Zone3DEditor(
                     # Shift on floor/ground = ceiling operation (no need
                     # to aim at ceiling surface specifically)
                     if btn == 1:
-                        self._tool_ceiling_lower()
+                        self._sculpt_cmd(SculptCeilLower)
                     elif btn == 3:
-                        self._tool_ceiling_raise()
+                        self._sculpt_cmd(SculptCeilRaise)
                 elif p in ("floor", "wall", "ground"):
                     if btn == 1:
-                        self._tool_floor_raise()
+                        self._sculpt_cmd(SculptFloorRaise)
                     elif btn == 3:
-                        self._tool_floor_lower()
+                        self._sculpt_cmd(SculptFloorLower)
                 elif p == "ceiling":
                     if btn == 1:
-                        self._tool_ceiling_lower()
+                        self._sculpt_cmd(SculptCeilLower)
                     elif btn == 3:
-                        self._tool_ceiling_raise()
+                        self._sculpt_cmd(SculptCeilRaise)
             return True
 
         if tool == "paint":
@@ -824,30 +972,22 @@ class Zone3DEditor(
                 if btn == 2:
                     self._layer2_pick_texture()
                 elif self._has_selection():
-                    self._layer2_ensure_grids()
-                    self._push_undo()
                     if btn == 1:
-                        self._apply_to_selection(self._layer2_paint_at)
+                        self.cmd_bus.execute(L2PaintSelection())
                     elif btn == 3:
-                        self._apply_to_selection(self._layer2_erase_at)
-                    self.dirty = True
+                        self.cmd_bus.execute(L2EraseSelection())
                 else:
                     if btn == 1:
-                        self._layer2_paint()
+                        self.cmd_bus.execute(L2Paint())
                     elif btn == 3:
-                        hit = self.aimed
-                        if hit:
-                            self._layer2_ensure_grids()
-                            self._push_undo()
-                            if self._layer2_erase_at(hit.row, hit.col):
-                                self.dirty = True
+                        self.cmd_bus.execute(L2EraseSingle())
                 return True
             # Batch paint when selection is active
             if self._has_selection():
                 if btn == 1:
-                    self._sel_fill_texture()
+                    self.cmd_bus.execute(SelectionFillTexture())
                 elif btn == 3:
-                    self._sel_clear_textures()
+                    self.cmd_bus.execute(SelectionClearTextures())
                 elif btn == 2:
                     self._pick_texture()
                 return True
@@ -858,34 +998,34 @@ class Zone3DEditor(
 
             if aimed_prism is not None:
                 if btn == 1 and shift:
-                    self._paint_prism(aimed_prism, face=None)   # all faces
+                    self.cmd_bus.execute(PaintPrismFace(index=aimed_prism, face=None))
                 elif btn == 1:
-                    self._paint_prism(aimed_prism, face=aimed_face)
+                    self.cmd_bus.execute(PaintPrismFace(index=aimed_prism, face=aimed_face))
                 elif btn == 3 and shift:
-                    self._erase_prism(aimed_prism, face=None)   # all faces
+                    self.cmd_bus.execute(ErasePrismFace(index=aimed_prism, face=None))
                 elif btn == 3:
-                    self._erase_prism(aimed_prism, face=aimed_face)
+                    self.cmd_bus.execute(ErasePrismFace(index=aimed_prism, face=aimed_face))
                 elif btn == 2:
                     self._pick_prism_texture(aimed_prism, face=aimed_face)
             elif aimed_quad is not None:
                 if btn == 1:
-                    self._paint_quad(aimed_quad)
+                    self.cmd_bus.execute(PaintQuad(index=aimed_quad))
                 elif btn == 3:
-                    self._erase_quad(aimed_quad)
+                    self.cmd_bus.execute(EraseQuad(index=aimed_quad))
                 elif btn == 2:
                     self._pick_quad_texture(aimed_quad)
             else:
                 # Fall through to cell-based painting
                 if btn == 1 and ctrl:
-                    self._fill()          # Ctrl+LMB = flood fill
+                    self.cmd_bus.execute(FloodFill())
                 elif btn == 1 and shift:
-                    self._paint_all()     # Shift+LMB = paint whole cell
+                    self.cmd_bus.execute(PaintAllFaces())
                 elif btn == 1:
-                    self._paint()         # LMB = paint face
+                    self.cmd_bus.execute(PaintFace())
                 elif btn == 3 and ctrl:
-                    self._fill_clear()    # Ctrl+RMB = flood clear
+                    self.cmd_bus.execute(FloodClear())
                 elif btn == 3:
-                    self._erase_texture() # RMB = erase texture
+                    self.cmd_bus.execute(EraseFace())
                 elif btn == 2:
                     self._pick_texture()  # MMB = eyedropper
             return True
@@ -899,16 +1039,16 @@ class Zone3DEditor(
 
         if tool == "segment":
             if btn == 1:
-                self._seg_split()
+                self.cmd_bus.execute(SegmentSplit())
             elif btn == 3:
-                self._seg_merge()
+                self.cmd_bus.execute(SegmentMerge())
             elif btn == 2:
-                self._seg_paint()
+                self.cmd_bus.execute(SegmentPaint())
             return True
 
         if tool == "stamp":
             if btn == 1:
-                self._stamp_apply()
+                self.cmd_bus.execute(StampApply())
             elif btn == 3:
                 self._stamp_capture_begin()
             return True
@@ -926,17 +1066,17 @@ class Zone3DEditor(
                         self._ent_select(aimed_ent)
                 elif self._ent_selected is not None:
                     # Click on ground with selection → move it there
-                    self._ent_move_to_aimed()
+                    self.cmd_bus.execute(EntityMove())
                 else:
                     # Click on ground with nothing selected → place new
-                    self._ent_place()
+                    self.cmd_bus.execute(EntityPlace())
             elif btn == 3:
                 if self._ent_selected is not None:
                     # RMB while selected → deselect (no accidental delete)
                     self._ent_deselect()
                 elif aimed_ent is not None:
                     # RMB on entity with nothing selected → quick-delete
-                    self._ent_delete(aimed_ent)
+                    self.cmd_bus.execute(EntityDelete(index=aimed_ent))
             return True
 
         if tool == "box":
@@ -950,14 +1090,14 @@ class Zone3DEditor(
                     else:
                         self._box_select(aimed_box)
                 elif self._box_selected is not None:
-                    self._box_move_to_aimed()
+                    self.cmd_bus.execute(BoxMove())
                 else:
-                    self._box_place()
+                    self.cmd_bus.execute(BoxPlace())
             elif btn == 3:
                 if self._box_selected is not None:
                     self._box_deselect()
                 elif aimed_box is not None:
-                    self._box_delete(aimed_box)
+                    self.cmd_bus.execute(BoxDelete(index=aimed_box))
             return True
 
         # ── New utility tools ─────────────────────────────────────
@@ -973,23 +1113,23 @@ class Zone3DEditor(
                     else:
                         self._quad_select(aimed_quad)
                 elif self._quad_selected is not None:
-                    self._quad_move_to_aimed()
+                    self.cmd_bus.execute(QuadMove())
                 else:
-                    self._quad_place()
+                    self.cmd_bus.execute(QuadPlace())
             elif btn == 2:
-                self._quad_toggle_twosided()
+                self.cmd_bus.execute(QuadToggleTwosided())
             elif btn == 3:
                 if self._quad_selected is not None:
                     self._quad_deselect()
                 elif aimed_quad is not None:
-                    self._quad_delete(aimed_quad)
+                    self.cmd_bus.execute(QuadDelete(index=aimed_quad))
             return True
 
         if tool == "portal":
             if btn == 1:
-                self._portal_place()
+                self.cmd_bus.execute(PortalPlace())
             elif btn == 3:
-                self._portal_delete()
+                self.cmd_bus.execute(PortalDelete())
             return True
 
         if tool == "curve":
@@ -1003,38 +1143,38 @@ class Zone3DEditor(
                     else:
                         self._curve_select(aimed_curve)
                 elif self._curve_selected is not None:
-                    self._curve_move_to_aimed()
+                    self.cmd_bus.execute(CurveMove())
                 else:
-                    self._curve_place()
+                    self.cmd_bus.execute(CurvePlace())
             elif btn == 2:
-                self._curve_paint()
+                self.cmd_bus.execute(CurvePaint())
             elif btn == 3:
                 if self._curve_selected is not None:
                     self._curve_deselect()
                 elif aimed_curve is not None:
-                    self._curve_delete(aimed_curve)
+                    self.cmd_bus.execute(CurveDelete(index=aimed_curve))
             return True
 
         if tool == "overlay":
             aimed_ow = self._ow_find_aimed()
             if btn == 1:
                 if self._ow_placing:
-                    self._ow_finish_place()
+                    self.cmd_bus.execute(OverlayFinishPlace())
                 elif aimed_ow is not None:
                     self._ow_select(aimed_ow)
                 elif self._ow_selected is not None:
-                    self._ow_move_to_aimed()
+                    self.cmd_bus.execute(OverlayMove())
                 else:
                     self._ow_begin_place()
             elif btn == 2:
-                self._ow_toggle_transparent()
+                self.cmd_bus.execute(OverlayToggleTransparent())
             elif btn == 3:
                 if self._ow_placing:
                     self._ow_cancel_place()
                 elif self._ow_selected is not None:
                     self._ow_deselect()
                 elif aimed_ow is not None:
-                    self._ow_delete(aimed_ow)
+                    self.cmd_bus.execute(OverlayDelete(index=aimed_ow))
             return True
 
         # ── Universal eyedropper fallback: MMB picks texture in any tool ──
@@ -1078,7 +1218,7 @@ class Zone3DEditor(
         if tool == "entity":
             shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
             if shift and self._ent_selected is not None:
-                self._ent_rotate(event.y)
+                self.cmd_bus.execute(EntityRotate(direction=event.y))
             else:
                 self._ent_cycle_palette(event.y)
             return True
@@ -1089,19 +1229,19 @@ class Zone3DEditor(
             if self._box_selected is not None:
                 # Selected: Scroll=Z shift, Shift=fine rotate, Ctrl=height
                 if shift:
-                    self._box_rotate_fine(event.y)
+                    self.cmd_bus.execute(BoxRotateFine(direction=event.y))
                 elif ctrl:
-                    self._box_adjust_size(event.y, "h")
+                    self.cmd_bus.execute(BoxAdjustSize(direction=event.y, axis="h"))
                 else:
-                    self._box_shift_z(event.y)
+                    self.cmd_bus.execute(BoxShiftZ(direction=event.y))
             else:
                 # Unselected: Scroll=width, Shift=depth, Ctrl=height
                 if shift:
-                    self._box_adjust_size(event.y, "d")
+                    self.cmd_bus.execute(BoxAdjustSize(direction=event.y, axis="d"))
                 elif ctrl:
-                    self._box_adjust_size(event.y, "h")
+                    self.cmd_bus.execute(BoxAdjustSize(direction=event.y, axis="h"))
                 else:
-                    self._box_adjust_size(event.y, "w")
+                    self.cmd_bus.execute(BoxAdjustSize(direction=event.y, axis="w"))
             return True
 
         # ── New utility tool scroll handling ──────────────────────
@@ -1110,9 +1250,9 @@ class Zone3DEditor(
             shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
             ctrl = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
             if shift and self._quad_selected is not None:
-                self._quad_rotate(event.y)
+                self.cmd_bus.execute(QuadRotate(direction=event.y))
             elif ctrl:
-                self._quad_adjust_size(event.y)
+                self.cmd_bus.execute(QuadAdjustSize(direction=event.y))
             else:
                 palette = _ensure_palette()
                 if palette:
@@ -1129,17 +1269,17 @@ class Zone3DEditor(
             shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
             ctrl = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
             if shift:
-                self._curve_adjust_angle_start(event.y)
+                self.cmd_bus.execute(CurveAdjustAngleStart(direction=event.y))
             elif ctrl:
-                self._curve_adjust_angle_end(event.y)
+                self.cmd_bus.execute(CurveAdjustAngleEnd(direction=event.y))
             else:
-                self._curve_adjust_radius(event.y)
+                self.cmd_bus.execute(CurveAdjustRadius(direction=event.y))
             return True
 
         if tool == "overlay":
             shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
             if shift:
-                self._ow_adjust_height(event.y)
+                self.cmd_bus.execute(OverlayAdjustHeight(direction=event.y))
             else:
                 palette = _ensure_palette()
                 if palette:
@@ -1151,9 +1291,12 @@ class Zone3DEditor(
         if tool == "select":
             # When selection is active, scroll raises/lowers floors (or ceilings)
             if self._has_selection():
+                if self._sculpt_layer2:
+                    self.cmd_bus.execute(L2SelScroll(direction=event.y))
+                    return True
                 shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
                 ceiling = shift != self.selection.ceiling_mode  # Shift XORs mode
-                return self._sel_scroll(event.y, ceiling=ceiling)
+                return self.cmd_bus.execute(SelScroll(direction=event.y, ceiling=ceiling))
             # No active selection — cycle texture palette
             palette = _ensure_palette()
             if not palette:
@@ -1165,16 +1308,16 @@ class Zone3DEditor(
 
         if tool == "sculpt":
             shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
-            # Selection active → batch raise/lower via _sel_scroll
+            # Selection active → batch raise/lower via SelScroll
             if self._has_selection() and not self._sculpt_layer2:
                 ceiling = shift != self.selection.ceiling_mode  # Shift XORs mode
-                return self._sel_scroll(event.y, ceiling=ceiling)
+                return self.cmd_bus.execute(SelScroll(direction=event.y, ceiling=ceiling))
             # Layer 2 sub-mode: scroll raises/lowers L2 height (Shift = palette)
             if self._sculpt_layer2:
                 if self._has_selection():
-                    self._layer2_sel_scroll(event.y)
+                    self.cmd_bus.execute(L2SelScroll(direction=event.y))
                 else:
-                    self._layer2_scroll(event.y)
+                    self.cmd_bus.execute(L2Scroll(direction=event.y))
                 return True
             part = self.aimed.part if self.aimed else None
             # Map L2 surface hits to L1 equivalents so L2 geometry
@@ -1185,18 +1328,15 @@ class Zone3DEditor(
                 self.snap_idx = (self.snap_idx + event.y) % len(SNAP_Y_OPTIONS)
                 self.snap_y = SNAP_Y_OPTIONS[self.snap_idx]
             elif part == "ceiling":
-                self._scroll_upper_wall(event.y)
+                self.cmd_bus.execute(SculptScrollUpperWall(direction=event.y))
             elif part in ("floor", "wall", "ground"):
                 hit = self.aimed
                 if hit:
                     td_obj = tile_def(self.zone.tiles[hit.row][hit.col])
                     if td_obj and td_obj.wall:
-                        # Wall cells: scroll raises/lowers ceiling to
-                        # open or close the wall instead of moving the
-                        # floor (which is clamped uselessly on walls).
-                        self._extend_wall_ceiling(hit.row, hit.col, event.y)
+                        self.cmd_bus.execute(SculptExtendWallCeiling(cell=(hit.row, hit.col), direction=event.y))
                     else:
-                        self._extend_floor(hit.row, hit.col, event.y)
+                        self.cmd_bus.execute(SculptExtendFloor(cell=(hit.row, hit.col), direction=event.y))
             else:
                 self.snap_idx = (self.snap_idx + event.y) % len(SNAP_Y_OPTIONS)
                 self.snap_y = SNAP_Y_OPTIONS[self.snap_idx]
@@ -1270,14 +1410,12 @@ class Zone3DEditor(
 
         self._update_aim()
 
-        # Continuous paint: if LMB held + paint tool, paint every frame
-        # Skip undo push — a single undo entry was pushed on the initial
-        # MOUSEBUTTONDOWN so the entire stroke is one undo operation.
-        # Skip cell painting when crosshair is over a prism or quad — those
-        # are discrete objects, not drag-paintable surfaces.
+        # Continuous paint: if LMB held + paint tool, paint every frame.
+        # execute_continuation() skips the undo push so the entire drag
+        # stroke is captured by the single snapshot taken on MOUSEBUTTONDOWN.
         if self._lmb_held and self.tool == "paint" and self.aimed:
             if self._paint_aimed_prism is None and self._paint_aimed_quad is None:
-                self._paint_continuous()
+                self.cmd_bus.execute_continuation(ContinuousPaint())
 
     def _collides_xz(self, x: float, z: float, y: float, radius: float) -> bool:
         """True if a camera circle at *(x, z)* overlaps any solid cell at height *y*.
@@ -1434,6 +1572,29 @@ class Zone3DEditor(
                         split_y = round(hit.hit_y / snap) * snap
                         split_y = max(ch + 0.01, min(ct - 0.01, split_y))
                         self.preview_line = (c, r, split_y, COL_SEG_LINE, face)
+                elif hit.part == "floor2":
+                    f2 = getattr(zone, 'floor2_heights', None)
+                    if f2 and len(f2) > r:
+                        f2v = f2[r][c]
+                        if f2v > -999:
+                            lo = min(fh, f2v)
+                            hi = max(fh, f2v)
+                            if hi - lo > 0.02:
+                                split_y = round(hit.hit_y / snap) * snap
+                                split_y = max(lo + 0.01, min(hi - 0.01, split_y))
+                                self.preview_line = (c, r, split_y, COL_SEG_LINE, face)
+                elif hit.part == "ceiling2":
+                    c2 = getattr(zone, 'ceil2_heights', None)
+                    if c2 and len(c2) > r:
+                        c2v = c2[r][c]
+                        if c2v > -999:
+                            uwh2_grid = getattr(zone, 'upper_wall_height2', None)
+                            uwh2 = uwh2_grid[r][c] if (uwh2_grid and len(uwh2_grid) > r) else 0.0
+                            c2_top = uwh2 if uwh2 > c2v else c2v + 0.3
+                            if c2_top - c2v > 0.02:
+                                split_y = round(hit.hit_y / snap) * snap
+                                split_y = max(c2v + 0.01, min(c2_top - 0.01, split_y))
+                                self.preview_line = (c, r, split_y, COL_SEG_LINE, face)
             return
 
         if tool == "sculpt":
@@ -1450,6 +1611,22 @@ class Zone3DEditor(
                 min_ch = max(CEIL_MIN, fh + 0.05)
                 target_dn = max(ch - snap, min_ch)
                 self.preview_line = (c, r, target_dn, COL_TOOL_CEILING)
+            elif part == "floor2":
+                LAYER_NONE_VAL = -1000.0
+                f2h = getattr(zone, 'floor2_heights', None)
+                if f2h and len(f2h) > r:
+                    fv2 = f2h[r][c]
+                    if fv2 > LAYER_NONE_VAL + 1.0:
+                        target_up = min(fv2 + snap, FLOOR_MAX)
+                        self.preview_line = (c, r, target_up, (200, 160, 255))
+            elif part == "ceiling2":
+                LAYER_NONE_VAL = -1000.0
+                c2h = getattr(zone, 'ceil2_heights', None)
+                if c2h and len(c2h) > r:
+                    cv2 = c2h[r][c]
+                    if cv2 > LAYER_NONE_VAL + 1.0:
+                        target_dn = max(cv2 - snap, CEIL_MIN)
+                        self.preview_line = (c, r, target_dn, (160, 120, 230))
             return
 
     # -- State clipboard (Ctrl+C / Ctrl+V) -------------------------
@@ -1596,6 +1773,8 @@ class Zone3DEditor(
                     for ent in state["entities"]:
                         clone = {k: (v.copy() if isinstance(v, (dict, list)) else v)
                                  for k, v in ent.items()}
+                        # Assign fresh UID to the clone
+                        clone["uid"] = z.next_uid()
                         # Remap to target cell centre
                         orig_x = float(ent.get("x", 0))
                         orig_y = float(ent.get("y", 0))
@@ -1707,6 +1886,13 @@ class Zone3DEditor(
         ch = z.ceil_heights[r][c]
         tile = z.tiles[r][c]
         W, H = z.width, z.height
+        # L2 height matching when in L2 mode
+        l2 = getattr(self, '_sculpt_layer2', False)
+        LAYER_NONE = -1000.0
+        f2h_grid = getattr(z, 'floor2_heights', None) if l2 else None
+        c2h_grid = getattr(z, 'ceil2_heights', None) if l2 else None
+        ref_f2 = f2h_grid[r][c] if f2h_grid and len(f2h_grid) > r else LAYER_NONE
+        ref_c2 = c2h_grid[r][c] if c2h_grid and len(c2h_grid) > r else LAYER_NONE
         visited: set[tuple[int, int]] = set()
         stack = [(r, c)]
         while stack:
@@ -1721,6 +1907,15 @@ class Zone3DEditor(
                 continue
             if z.tiles[cr][cc] != tile:
                 continue
+            # L2 height match
+            if f2h_grid and len(f2h_grid) > cr:
+                nf2 = f2h_grid[cr][cc]
+                if abs(nf2 - ref_f2) > 0.01:
+                    continue
+            if c2h_grid and len(c2h_grid) > cr:
+                nc2 = c2h_grid[cr][cc]
+                if abs(nc2 - ref_c2) > 0.01:
+                    continue
             visited.add((cr, cc))
             stack.extend([(cr-1, cc), (cr+1, cc), (cr, cc-1), (cr, cc+1)])
         self.selection.cells.update(visited)
@@ -1738,6 +1933,13 @@ class Zone3DEditor(
         tile = z.tiles[r][c]
         ft = z.floor_textures[r][c] if z.floor_textures else ""
         wt = z.wall_textures[r][c] if z.wall_textures else ""
+        # L2 matching when in L2 mode
+        l2 = getattr(self, '_sculpt_layer2', False)
+        LAYER_NONE = -1000.0
+        f2h_grid = getattr(z, 'floor2_heights', None) if l2 else None
+        c2h_grid = getattr(z, 'ceil2_heights', None) if l2 else None
+        ref_f2 = f2h_grid[r][c] if f2h_grid and len(f2h_grid) > r else LAYER_NONE
+        ref_c2 = c2h_grid[r][c] if c2h_grid and len(c2h_grid) > r else LAYER_NONE
         for rr in range(z.height):
             for cc in range(z.width):
                 if abs(z.floor_heights[rr][cc] - fh) > 0.01:
@@ -1750,4 +1952,11 @@ class Zone3DEditor(
                 zwt = z.wall_textures[rr][cc] if z.wall_textures else ""
                 if zft != ft or zwt != wt:
                     continue
+                # L2 height match
+                if f2h_grid and len(f2h_grid) > rr:
+                    if abs(f2h_grid[rr][cc] - ref_f2) > 0.01:
+                        continue
+                if c2h_grid and len(c2h_grid) > rr:
+                    if abs(c2h_grid[rr][cc] - ref_c2) > 0.01:
+                        continue
                 self.selection.add_cell(rr, cc)

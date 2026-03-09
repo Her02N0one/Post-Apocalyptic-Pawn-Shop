@@ -57,6 +57,7 @@ py_render_entities(PyObject *self, PyObject *dict)
     }
 
     /* ── Extract scalars ─────────────────────────────────────────── */
+    int horizon_shift = 0;
     if (dict_get_int(dict, "sw",        &sw))        goto ent_cleanup;
     if (dict_get_int(dict, "sh",        &sh))        goto ent_cleanup;
     if (dict_get_int(dict, "tex_size",  &tex_size))  goto ent_cleanup;
@@ -68,6 +69,9 @@ py_render_entities(PyObject *self, PyObject *dict)
     if (dict_get_double(dict, "dir_y",   &dir_y))    goto ent_cleanup;
     if (dict_get_double(dict, "plane_x", &plane_x))  goto ent_cleanup;
     if (dict_get_double(dict, "plane_y", &plane_y))  goto ent_cleanup;
+    /* Optional horizon shift for pitch support */
+    { PyObject *hs = PyDict_GetItemString(dict, "horizon_shift");
+      if (hs) horizon_shift = (int)PyLong_AsLong(hs); }
 
     /* ── Extract buffers ─────────────────────────────────────────── */
     if (dict_get_buf(dict, "fb",       &fb_buf,       1)) goto ent_cleanup;
@@ -167,8 +171,9 @@ py_render_entities(PyObject *self, PyObject *dict)
         int spr_w = (int)(wall_h * e_wscale);
         if (spr_h < 1 || spr_w < 1) continue;
 
-        /* Vertical positioning: base at floor level */
-        int floor_y = (int)((sh + wall_h) / 2.0);
+        /* Vertical positioning: base at floor level, accounting for
+         * horizon shift so entities track the pitch correctly. */
+        int floor_y = (int)((sh + wall_h) / 2.0) + horizon_shift;
         int spr_y0 = floor_y - spr_h;
         int spr_x0 = scr_x - spr_w / 2;
 
@@ -296,6 +301,7 @@ PyObject *
 py_render_particles(PyObject *self, PyObject *dict)
 {
     int sw, sh, n_parts, tex_size, num_tiles;
+    int horizon_shift = 0;
     double cam_x, cam_y, dir_x, dir_y, plane_x, plane_y;
     double dt, gravity;
 
@@ -330,6 +336,9 @@ py_render_particles(PyObject *self, PyObject *dict)
     if (dict_get_double(dict, "plane_y",  &plane_y))     goto pcl_cleanup;
     if (dict_get_double(dict, "dt",       &dt))          goto pcl_cleanup;
     if (dict_get_double(dict, "gravity",  &gravity))     goto pcl_cleanup;
+    /* Optional horizon shift for pitch support */
+    { PyObject *hs = PyDict_GetItemString(dict, "horizon_shift");
+      if (hs) horizon_shift = (int)PyLong_AsLong(hs); }
 
     /* ── Buffers ─────────────────────────────────────────────────── */
     if (dict_get_buf(dict, "fb",        &fb_buf,    1)) goto pcl_cleanup;
@@ -408,7 +417,7 @@ py_render_particles(PyObject *self, PyObject *dict)
 
     /* ── PHASE C: Render ─────────────────────────────────────── */
     int half_w = sw / 2;
-    int half_h = sh / 2;
+    int half_h = sh / 2 + horizon_shift;
 
     for (int si = 0; si < n_alive; si++) {
         int pi = sorted[si].idx;

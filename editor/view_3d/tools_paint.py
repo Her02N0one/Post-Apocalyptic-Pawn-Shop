@@ -210,6 +210,27 @@ class PaintMixin:
                         else:
                             zone.ceil_step_textures[nr][nc][opp] = tex
                     changed = True
+            elif hit.part == "ceiling2":
+                old = zone.ceil_step_textures[r][c][fi]
+                if old != tex:
+                    _maybe_undo()
+                    zone.ceil_step_textures[r][c][fi] = tex
+                    dr, dc = [(-1, 0), (1, 0), (0, 1), (0, -1)][fi]
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < zone.height and 0 <= nc < zone.width:
+                        ntd = tile_def(zone.tiles[nr][nc])
+                        opp = fi ^ 1
+                        if ntd and ntd.wall:
+                            zone.face_textures[nr][nc][opp] = tex
+                        else:
+                            zone.ceil_step_textures[nr][nc][opp] = tex
+                    changed = True
+            elif hit.part == "floor2":
+                old = zone.floor_step_textures[r][c][fi]
+                if old != tex:
+                    _maybe_undo()
+                    zone.floor_step_textures[r][c][fi] = tex
+                    changed = True
             else:
                 old = zone.face_textures[r][c][fi]
                 if old != tex:
@@ -224,6 +245,22 @@ class PaintMixin:
                     _maybe_undo()
                     zone.floor_textures[r][c] = tex
                     changed = True
+            elif hit.part == "floor2":
+                ft2 = getattr(zone, 'floor2_textures', None)
+                if ft2 and len(ft2) > r and len(ft2[r]) > c:
+                    old = ft2[r][c]
+                    if old != tex:
+                        _maybe_undo()
+                        ft2[r][c] = tex
+                        changed = True
+            elif hit.part == "ceiling2":
+                ct2 = getattr(zone, 'ceil2_textures', None)
+                if ct2 and len(ct2) > r and len(ct2[r]) > c:
+                    old = ct2[r][c]
+                    if old != tex:
+                        _maybe_undo()
+                        ct2[r][c] = tex
+                        changed = True
             elif hit.part in ("wall", "ceiling") and zone.ceil_textures:
                 old = zone.ceil_textures[r][c]
                 if old != tex:
@@ -237,6 +274,22 @@ class PaintMixin:
                     _maybe_undo()
                     zone.ceil_textures[r][c] = tex
                     changed = True
+            elif hit.part == "ceiling2":
+                ct2 = getattr(zone, 'ceil2_textures', None)
+                if ct2 and len(ct2) > r and len(ct2[r]) > c:
+                    old = ct2[r][c]
+                    if old != tex:
+                        _maybe_undo()
+                        ct2[r][c] = tex
+                        changed = True
+            elif hit.part == "floor2":
+                ft2 = getattr(zone, 'floor2_textures', None)
+                if ft2 and len(ft2) > r and len(ft2[r]) > c:
+                    old = ft2[r][c]
+                    if old != tex:
+                        _maybe_undo()
+                        ft2[r][c] = tex
+                        changed = True
             elif hit.part in ("wall", "floor") and zone.floor_textures:
                 old = zone.floor_textures[r][c]
                 if old != tex:
@@ -293,6 +346,14 @@ class PaintMixin:
         if zone.ceil_step_textures and len(zone.ceil_step_textures) > r:
             zone.ceil_step_textures[r][c] = [tex, tex, tex, tex]
 
+        # Layer 2 flat textures
+        f2t = getattr(zone, 'floor2_textures', None)
+        if f2t and len(f2t) > r and len(f2t[r]) > c:
+            f2t[r][c] = tex
+        c2t = getattr(zone, 'ceil2_textures', None)
+        if c2t and len(c2t) > r and len(c2t[r]) > c:
+            c2t[r][c] = tex
+
         self.dirty = True
 
     def _erase_texture(self) -> None:
@@ -316,6 +377,10 @@ class PaintMixin:
                 zone.floor_step_textures[r][c][fi] = ""
             elif hit.part == "ceiling":
                 zone.ceil_step_textures[r][c][fi] = ""
+            elif hit.part == "ceiling2":
+                zone.ceil_step_textures[r][c][fi] = ""
+            elif hit.part == "floor2":
+                zone.floor_step_textures[r][c][fi] = ""
             else:
                 zone.face_textures[r][c][fi] = ""
                 if all(f == "" for f in zone.face_textures[r][c]):
@@ -323,11 +388,27 @@ class PaintMixin:
         elif hit.face == "top":
             if hit.part == "floor" and zone.floor_textures:
                 zone.floor_textures[r][c] = ""
+            elif hit.part == "floor2":
+                ft2 = getattr(zone, 'floor2_textures', None)
+                if ft2 and len(ft2) > r and len(ft2[r]) > c:
+                    ft2[r][c] = ""
+            elif hit.part == "ceiling2":
+                ct2 = getattr(zone, 'ceil2_textures', None)
+                if ct2 and len(ct2) > r and len(ct2[r]) > c:
+                    ct2[r][c] = ""
             elif hit.part in ("wall", "ceiling") and zone.ceil_textures:
                 zone.ceil_textures[r][c] = ""
         elif hit.face == "bot":
             if hit.part == "ceiling" and zone.ceil_textures:
                 zone.ceil_textures[r][c] = ""
+            elif hit.part == "ceiling2":
+                ct2 = getattr(zone, 'ceil2_textures', None)
+                if ct2 and len(ct2) > r and len(ct2[r]) > c:
+                    ct2[r][c] = ""
+            elif hit.part == "floor2":
+                ft2 = getattr(zone, 'floor2_textures', None)
+                if ft2 and len(ft2) > r and len(ft2[r]) > c:
+                    ft2[r][c] = ""
             elif hit.part in ("wall", "floor") and zone.floor_textures:
                 zone.floor_textures[r][c] = ""
         self.dirty = True
@@ -351,16 +432,36 @@ class PaintMixin:
                 picked = zone.floor_step_textures[r][c][fi]
             elif hit.part == "ceiling":
                 picked = zone.ceil_step_textures[r][c][fi]
+            elif hit.part == "ceiling2":
+                picked = zone.ceil_step_textures[r][c][fi]
+            elif hit.part == "floor2":
+                picked = zone.floor_step_textures[r][c][fi]
             else:
                 picked = zone.face_textures[r][c][fi] or zone.wall_textures[r][c]
         elif hit.face == "top":
             if hit.part == "floor" and zone.floor_textures:
                 picked = zone.floor_textures[r][c]
+            elif hit.part == "floor2":
+                ft2 = getattr(zone, 'floor2_textures', None)
+                if ft2 and len(ft2) > r and len(ft2[r]) > c:
+                    picked = ft2[r][c]
+            elif hit.part == "ceiling2":
+                ct2 = getattr(zone, 'ceil2_textures', None)
+                if ct2 and len(ct2) > r and len(ct2[r]) > c:
+                    picked = ct2[r][c]
             elif hit.part in ("wall", "ceiling") and zone.ceil_textures:
                 picked = zone.ceil_textures[r][c]
         elif hit.face == "bot":
             if hit.part == "ceiling" and zone.ceil_textures:
                 picked = zone.ceil_textures[r][c]
+            elif hit.part == "ceiling2":
+                ct2 = getattr(zone, 'ceil2_textures', None)
+                if ct2 and len(ct2) > r and len(ct2[r]) > c:
+                    picked = ct2[r][c]
+            elif hit.part == "floor2":
+                ft2 = getattr(zone, 'floor2_textures', None)
+                if ft2 and len(ft2) > r and len(ft2[r]) > c:
+                    picked = ft2[r][c]
             elif hit.part in ("wall", "floor") and zone.floor_textures:
                 picked = zone.floor_textures[r][c]
 

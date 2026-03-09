@@ -110,6 +110,7 @@ typedef struct {
     int    pci, ci;    /* previous / current cell indices           */
     int    sd;         /* side (0 = X-boundary, 1 = Y-boundary)    */
     int    ssx, ssy;   /* DDA step directions                      */
+    int    is_l2;      /* 1 if this hit is from Layer 2             */
 } StepWallHit;
 
 #define MAX_STEP_HITS 64

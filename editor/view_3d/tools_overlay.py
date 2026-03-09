@@ -35,7 +35,7 @@ class OverlayWallMixin:
     """Overlay wall (free-form wall segment) tool mixin for Zone3DEditor."""
 
     # ── Tool state ────────────────────────────────────────────────
-    _ow_selected: int | None = None
+    # Selected overlay: managed by Zone3DEditor bridge property
     _ow_placing: bool = False       # True while setting second endpoint
     _ow_start_x: float = 0.0       # first endpoint (tile coords)
     _ow_start_z: float = 0.0
@@ -146,6 +146,7 @@ class OverlayWallMixin:
             height_scale=round(self._ow_height, 3),
             transparent=False,
             blocks=True,
+            uid=zone.next_uid(),
         )
         zone.overlay_walls.append(ow)
         self._ow_placing = False
@@ -176,14 +177,12 @@ class OverlayWallMixin:
         if idx is None or idx < 0 or idx >= len(zone.overlay_walls):
             return
         self._push_undo()
+        uid = zone.overlay_walls[idx].uid
         zone.overlay_walls.pop(idx)
         self._flash("Overlay wall deleted — Ct+Z to undo",
                      1.5, (1.0, 0.6, 0.5, 1.0))
-        if self._ow_selected is not None:
-            if self._ow_selected == idx:
-                self._ow_selected = None
-            elif self._ow_selected > idx:
-                self._ow_selected -= 1
+        if uid:
+            self.selection.on_object_deleted(uid)
         self.dirty = True
 
     # ── Move ──────────────────────────────────────────────────────

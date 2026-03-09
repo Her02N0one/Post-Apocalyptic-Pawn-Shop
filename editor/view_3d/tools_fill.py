@@ -106,7 +106,8 @@ class FillMixin:
         """Determine fill mode and reference height.
 
         Returns (mode, ref_height) or None if not fillable.
-        mode is one of: "floor_top", "ceil_top", "wall_face", "floor_step", "ceil_step"
+        mode is one of: "floor_top", "ceil_top", "wall_face", "floor_step", "ceil_step",
+                        "floor2_top", "ceil2_top", "floor2_step", "ceil2_step"
         """
         zone = self.zone
         td = tile_def(zone.tiles[r][c])
@@ -115,8 +116,16 @@ class FillMixin:
         if face == "top":
             if part == "floor":
                 return ("floor_top", zone.floor_heights[r][c])
+            elif part == "floor2":
+                f2h = getattr(zone, 'floor2_heights', None)
+                if f2h:
+                    return ("floor2_top", f2h[r][c])
             elif part in ("wall", "ceiling"):
                 return ("ceil_top", zone.ceil_heights[r][c])
+            elif part == "ceiling2":
+                c2h = getattr(zone, 'ceil2_heights', None)
+                if c2h:
+                    return ("ceil2_top", c2h[r][c])
 
         if face in self._FACE_IDX_FILL:
             if is_wall:
@@ -125,12 +134,28 @@ class FillMixin:
                 return ("floor_step", zone.floor_heights[r][c])
             elif part == "ceiling":
                 return ("ceil_step", zone.ceil_heights[r][c])
+            elif part == "floor2":
+                f2h = getattr(zone, 'floor2_heights', None)
+                if f2h:
+                    return ("floor2_step", f2h[r][c])
+            elif part == "ceiling2":
+                c2h = getattr(zone, 'ceil2_heights', None)
+                if c2h:
+                    return ("ceil2_step", c2h[r][c])
 
         if face == "bot":
             if part == "floor":
                 return ("floor_top", zone.floor_heights[r][c])
             elif part == "ceiling":
                 return ("ceil_top", zone.ceil_heights[r][c])
+            elif part == "floor2":
+                f2h = getattr(zone, 'floor2_heights', None)
+                if f2h:
+                    return ("floor2_top", f2h[r][c])
+            elif part == "ceiling2":
+                c2h = getattr(zone, 'ceil2_heights', None)
+                if c2h:
+                    return ("ceil2_top", c2h[r][c])
 
         return None
 
@@ -141,13 +166,19 @@ class FillMixin:
             return zone.floor_textures[r][c] if zone.floor_textures else ""
         if mode == "ceil_top":
             return zone.ceil_textures[r][c] if zone.ceil_textures else ""
-        if mode in ("wall_face", "floor_step", "ceil_step"):
+        if mode == "floor2_top":
+            ft2 = getattr(zone, 'floor2_textures', None)
+            return ft2[r][c] if ft2 else ""
+        if mode == "ceil2_top":
+            ct2 = getattr(zone, 'ceil2_textures', None)
+            return ct2[r][c] if ct2 else ""
+        if mode in ("wall_face", "floor_step", "ceil_step", "floor2_step", "ceil2_step"):
             fi = self._FACE_IDX_FILL.get(face, 0)
             if mode == "wall_face":
                 return zone.face_textures[r][c][fi] if zone.face_textures else ""
-            elif mode == "floor_step":
+            elif mode in ("floor_step", "floor2_step"):
                 return zone.floor_step_textures[r][c][fi] if zone.floor_step_textures else ""
-            elif mode == "ceil_step":
+            elif mode in ("ceil_step", "ceil2_step"):
                 return zone.ceil_step_textures[r][c][fi] if zone.ceil_step_textures else ""
         return ""
 
@@ -160,16 +191,24 @@ class FillMixin:
         elif mode == "ceil_top":
             if zone.ceil_textures:
                 zone.ceil_textures[r][c] = tex
+        elif mode == "floor2_top":
+            ft2 = getattr(zone, 'floor2_textures', None)
+            if ft2:
+                ft2[r][c] = tex
+        elif mode == "ceil2_top":
+            ct2 = getattr(zone, 'ceil2_textures', None)
+            if ct2:
+                ct2[r][c] = tex
         elif mode == "wall_face":
             fi = self._FACE_IDX_FILL.get(face, 0)
             if zone.face_textures:
                 zone.face_textures[r][c][fi] = tex
                 zone.wall_textures[r][c] = tex
-        elif mode == "floor_step":
+        elif mode in ("floor_step", "floor2_step"):
             fi = self._FACE_IDX_FILL.get(face, 0)
             if zone.floor_step_textures:
                 zone.floor_step_textures[r][c][fi] = tex
-        elif mode == "ceil_step":
+        elif mode in ("ceil_step", "ceil2_step"):
             fi = self._FACE_IDX_FILL.get(face, 0)
             if zone.ceil_step_textures:
                 zone.ceil_step_textures[r][c][fi] = tex
@@ -243,6 +282,68 @@ class FillMixin:
             if is_wall_n:
                 return False
             if abs(zone.ceil_heights[nr][nc] - ref_height) > tol:
+                return False
+            fi = self._FACE_IDX_FILL.get(face, 0)
+            cur = zone.ceil_step_textures[nr][nc][fi] if zone.ceil_step_textures else ""
+            if cur != origin_tex:
+                return False
+            if self._fill_has_segments(r, c, nr, nc, "ceil_step"):
+                return False
+            return True
+
+        LAYER_NONE = -1000.0
+
+        if mode == "floor2_top":
+            if is_wall_n:
+                return False
+            f2h = getattr(zone, 'floor2_heights', None)
+            if not f2h or f2h[nr][nc] <= LAYER_NONE + 1.0:
+                return False
+            if abs(f2h[nr][nc] - ref_height) > tol:
+                return False
+            ft2 = getattr(zone, 'floor2_textures', None)
+            cur = ft2[nr][nc] if ft2 else ""
+            if cur != origin_tex:
+                return False
+            return True
+
+        if mode == "ceil2_top":
+            if is_wall_n:
+                return False
+            c2h = getattr(zone, 'ceil2_heights', None)
+            if not c2h or c2h[nr][nc] <= LAYER_NONE + 1.0:
+                return False
+            if abs(c2h[nr][nc] - ref_height) > tol:
+                return False
+            ct2 = getattr(zone, 'ceil2_textures', None)
+            cur = ct2[nr][nc] if ct2 else ""
+            if cur != origin_tex:
+                return False
+            return True
+
+        if mode == "floor2_step":
+            if is_wall_n:
+                return False
+            f2h = getattr(zone, 'floor2_heights', None)
+            if not f2h or f2h[nr][nc] <= LAYER_NONE + 1.0:
+                return False
+            if abs(f2h[nr][nc] - ref_height) > tol:
+                return False
+            fi = self._FACE_IDX_FILL.get(face, 0)
+            cur = zone.floor_step_textures[nr][nc][fi] if zone.floor_step_textures else ""
+            if cur != origin_tex:
+                return False
+            if self._fill_has_segments(r, c, nr, nc, "floor_step"):
+                return False
+            return True
+
+        if mode == "ceil2_step":
+            if is_wall_n:
+                return False
+            c2h = getattr(zone, 'ceil2_heights', None)
+            if not c2h or c2h[nr][nc] <= LAYER_NONE + 1.0:
+                return False
+            if abs(c2h[nr][nc] - ref_height) > tol:
                 return False
             fi = self._FACE_IDX_FILL.get(face, 0)
             cur = zone.ceil_step_textures[nr][nc][fi] if zone.ceil_step_textures else ""
