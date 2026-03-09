@@ -1,17 +1,15 @@
 """editor/view_3d/objects.py — Unified object layer for the zone editor.
 
 Provides a single entry-point for picking, selecting, deselecting, deleting,
-and moving *all* placeable object types (entity, prism, quad, portal, curve)
-without requiring the user to be in the matching tool.
+and moving *all* placeable object types (entity, prism, quad, portal, curve,
+overlay) without requiring the user to be in the matching tool.
 
-Designed to work with ``SelectionState.objects`` for multi-object selection
-and with the per-type mixin code for type-specific operations (resize, rotate,
-arc adjust, etc.).
+Works with the :class:`SelectionStore` (Phase 2) via UIDs.  The per-type
+mixin code handles type-specific operations (resize, rotate, arc adjust).
 
 Usage in editor.py::
 
     self.objects = ObjectLayer(self)
-    # In _on_click — universal pick regardless of tool:
     hit = self.objects.find_aimed()
     if hit: self.objects.select(hit)
 """
@@ -22,6 +20,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass  # Zone3DEditor is a complex mixin class; avoid import cycles
+
+from editor.view_3d.selection_store import _get_uid
 
 
 # Object type → zone attribute name
@@ -225,14 +225,18 @@ class ObjectLayer:
         """
         obj_type, idx = hit
         ed = self.ed
-
-        if add:
-            # Multi-select via SelectionState
-            if hasattr(ed, 'selection'):
-                ed.selection.add_object(obj_type, idx)
+        store = self.get_store(obj_type)
+        if not store or idx < 0 or idx >= len(store):
+            return
+        uid = _get_uid(store[idx])
+        if not uid:
             return
 
-        # Single-select: clear other type selections, then set this one
+        if add:
+            ed.selection.add_object(obj_type, uid)
+            return
+
+        # Single-select: the bridge property setter handles store update
         self.deselect_all()
 
         method_name = _SELECT_METHODS.get(obj_type)
@@ -241,40 +245,40 @@ class ObjectLayer:
             if method:
                 method(idx)
         else:
-            # Portal: direct field set
+            # Portal / other: direct field set (triggers bridge property)
             field = _SELECTED_FIELDS.get(obj_type)
             if field:
                 setattr(ed, field, idx)
-
-        # Also add to universal selection
-        if hasattr(ed, 'selection'):
-            ed.selection.select_object(obj_type, idx)
 
     def toggle_select(self, hit: tuple[str, int]) -> None:
         """Toggle an object's selection (Ctrl+click)."""
         obj_type, idx = hit
         ed = self.ed
-        if hasattr(ed, 'selection'):
-            ed.selection.toggle_object(obj_type, idx)
-            # Sync legacy field
-            if ed.selection.contains_object(obj_type, idx):
-                field = _SELECTED_FIELDS.get(obj_type)
-                if field:
-                    setattr(ed, field, idx)
-            else:
-                field = _SELECTED_FIELDS.get(obj_type)
-                if field and getattr(ed, field, None) == idx:
-                    setattr(ed, field, None)
+        store = self.get_store(obj_type)
+        if not store or idx < 0 or idx >= len(store):
+            return
+        uid = _get_uid(store[idx])
+        if not uid:
+            return
+        ed.selection.toggle_object(obj_type, uid)
+        # Sync legacy singleton from store state
+        if ed.selection.is_object_selected(uid):
+            field = _SELECTED_FIELDS.get(obj_type)
+            if field:
+                setattr(ed, field, idx)
+        else:
+            field = _SELECTED_FIELDS.get(obj_type)
+            if field and getattr(ed, field, None) == idx:
+                setattr(ed, field, None)
 
     # ── Unified deselect ──────────────────────────────────────────
 
     def deselect_all(self) -> None:
         """Deselect all objects across all types."""
         ed = self.ed
-        for otype, field in _SELECTED_FIELDS.items():
-            setattr(ed, field, None)
-        if hasattr(ed, 'selection'):
-            ed.selection.clear_objects()
+        # Clear the store (single source of truth).
+        # Bridge property getters will see None automatically.
+        ed.selection.clear_objects()
 
     def deselect_type(self, obj_type: str) -> None:
         """Deselect objects of a specific type."""
@@ -291,36 +295,40 @@ class ObjectLayer:
         ed = self.ed
         deleted = False
 
-        # First check universal selection objects
-        if hasattr(ed, 'selection') and ed.selection.has_objects():
-            # Collect objects grouped by type, sorted by descending index
-            # so deletions don't shift indices of earlier items
-            by_type: dict[str, list[int]] = {}
-            for otype, idx in ed.selection.iter_objects():
-                by_type.setdefault(otype, []).append(idx)
+        # Check universal selection first (UID-based)
+        if ed.selection.has_objects():
+            # Group by type, resolve UIDs → indices
+            by_type: dict[str, list[tuple[int, int]]] = {}  # type → [(uid, idx), ...]
+            zone = ed.zone
+            for otype, uid in ed.selection.iter_objects():
+                store = self.get_store(otype)
+                if not store:
+                    continue
+                # Find index by scanning for matching UID
+                for i, obj in enumerate(store):
+                    if _get_uid(obj) == uid:
+                        by_type.setdefault(otype, []).append((uid, i))
+                        break
+
+            if not by_type:
+                return False
 
             ed._push_undo()
-            for otype, indices in by_type.items():
+            for otype, uid_idx_pairs in by_type.items():
                 store = self.get_store(otype)
-                # Delete in reverse order to preserve indices
-                for idx in sorted(indices, reverse=True):
+                # Sort by descending index so pops don't shift earlier items
+                for uid, idx in sorted(uid_idx_pairs, key=lambda p: p[1], reverse=True):
                     if 0 <= idx < len(store):
                         store.pop(idx)
                         deleted = True
-                        # Notify selection of deletion
-                        ed.selection.on_object_deleted(otype, idx)
-
-            # Clear legacy fields
-            for otype in by_type:
-                field = _SELECTED_FIELDS.get(otype)
-                if field:
-                    setattr(ed, field, None)
+                        # Notify store (just discards the UID — no fixup needed)
+                        ed.selection.on_object_deleted(uid)
 
             if deleted:
                 ed.dirty = True
             return deleted
 
-        # Fallback: delete whatever is legacy-selected
+        # Fallback: delete whatever is legacy-selected (via bridge properties)
         sel = self.any_selected()
         if sel:
             otype, idx = sel
@@ -331,11 +339,13 @@ class ObjectLayer:
                     method(idx)
                     deleted = True
             elif otype == "portal":
-                # Portal uses its own delete pattern
                 zone = ed.zone
                 if zone and zone.render_portals and 0 <= idx < len(zone.render_portals):
+                    uid = _get_uid(zone.render_portals[idx])
                     ed._push_undo()
                     zone.render_portals.pop(idx)
+                    if uid:
+                        ed.selection.on_object_deleted(uid)
                     ed._portal_selected = None
                     ed.dirty = True
                     ed._flash("Portal deleted — Ct+Z to undo", 1.5, (1.0, 0.6, 0.5, 1.0))
@@ -377,14 +387,11 @@ class ObjectLayer:
     def selected_count(self) -> int:
         """Number of currently selected objects."""
         ed = self.ed
-        count = 0
-        if hasattr(ed, 'selection'):
-            count += ed.selection.object_count()
+        count = ed.selection.object_count()
         if count == 0:
-            # Fallback: count legacy selections
-            for field in _SELECTED_FIELDS.values():
-                if getattr(ed, field, None) is not None:
-                    count += 1
+            # Bridge property fallback: check if a primary is set
+            if ed.selection.primary_uid is not None:
+                count = 1
         return count
 
     # ── Type label ────────────────────────────────────────────────

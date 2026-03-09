@@ -1,69 +1,16 @@
-"""editor/view_3d/cell_ops.py — Shared cell-level operations.
+"""editor/view_3d/cell_ops.py — Backwards-compatible re-exports.
 
-Provides helpers used by multiple tool mixins so that cell reset,
-texture clearing, etc. are defined in exactly one place.
+The actual implementations now live in :mod:`editor.zone_ops` which has
+no ``editor.view_3d`` package dependency.   Existing imports like
+``from editor.view_3d.cell_ops import reset_cell`` continue to work.
 """
 
 from __future__ import annotations
 
-from core.tiles import tile_def
-from editor.view_3d.constants import DEFAULT_FLOOR, SKY_HEIGHT
-
-LAYER_NONE = -1000.0
-
-
-def reset_cell(zone, r: int, c: int, open_tile: str) -> None:
-    """Reset cell (r, c) to default state: flat ground, open sky, no textures.
-
-    Parameters
-    ----------
-    zone : Zone
-        The zone whose cell is being reset.
-    r, c : int
-        Row and column of the cell.
-    open_tile : str
-        Tile key to use for open (non-wall) cells.
-    """
-    td = tile_def(zone.tiles[r][c])
-    if td and td.wall:
-        zone.tiles[r][c] = open_tile
-
-    zone.floor_heights[r][c] = DEFAULT_FLOOR
-    zone.ceil_heights[r][c] = SKY_HEIGHT
-
-    if zone.upper_wall_height and len(zone.upper_wall_height) > r:
-        zone.upper_wall_height[r][c] = 0.0
-
-    # Textures
-    if zone.face_textures and len(zone.face_textures) > r:
-        zone.face_textures[r][c] = ["", "", "", ""]
-    if zone.wall_textures and len(zone.wall_textures) > r:
-        zone.wall_textures[r][c] = ""
-    if zone.floor_textures and len(zone.floor_textures) > r:
-        zone.floor_textures[r][c] = ""
-    if zone.ceil_textures and len(zone.ceil_textures) > r:
-        zone.ceil_textures[r][c] = ""
-    if zone.floor_step_textures and len(zone.floor_step_textures) > r:
-        zone.floor_step_textures[r][c] = ["", "", "", ""]
-    if zone.ceil_step_textures and len(zone.ceil_step_textures) > r:
-        zone.ceil_step_textures[r][c] = ["", "", "", ""]
-
-    # Segments
-    if zone.wall_segments and len(zone.wall_segments) > r:
-        zone.wall_segments[r][c] = [[], [], [], []]
-    if zone.floor_step_segments and len(zone.floor_step_segments) > r:
-        zone.floor_step_segments[r][c] = [[], [], [], []]
-    if zone.ceil_step_segments and len(zone.ceil_step_segments) > r:
-        zone.ceil_step_segments[r][c] = [[], [], [], []]
-
-    # Layer 2
-    if hasattr(zone, 'floor2_heights') and zone.floor2_heights and len(zone.floor2_heights) > r:
-        zone.floor2_heights[r][c] = LAYER_NONE
-    if hasattr(zone, 'ceil2_heights') and zone.ceil2_heights and len(zone.ceil2_heights) > r:
-        zone.ceil2_heights[r][c] = LAYER_NONE
-    if hasattr(zone, 'floor2_textures') and zone.floor2_textures and len(zone.floor2_textures) > r:
-        zone.floor2_textures[r][c] = ""
-    if hasattr(zone, 'ceil2_textures') and zone.ceil2_textures and len(zone.ceil2_textures) > r:
-        zone.ceil2_textures[r][c] = ""
-    if hasattr(zone, 'upper_wall_height2') and zone.upper_wall_height2 and len(zone.upper_wall_height2) > r:
-        zone.upper_wall_height2[r][c] = 0.0
+from editor.zone_ops import (          # noqa: F401 — re-export
+    reset_cell,
+    clear_cell_textures,
+    DEFAULT_FLOOR,
+    SKY_HEIGHT,
+    LAYER_NONE,
+)

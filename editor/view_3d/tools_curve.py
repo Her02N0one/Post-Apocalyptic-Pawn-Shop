@@ -30,7 +30,7 @@ class CurveMixin:
     """Curved/cylindrical wall segment placement and manipulation."""
 
     _curve_radius: float = _DEFAULT_RADIUS
-    _curve_selected: int | None = None
+    # Selected curve: managed by Zone3DEditor bridge property
 
     # ── Picking ───────────────────────────────────────────────────
 
@@ -92,6 +92,7 @@ class CurveMixin:
 
         self._push_undo()
         cv: dict = {
+            "uid": zone.next_uid(),
             "cx": round(wx, 3),
             "cy": round(wz, 3),
             "radius": round(self._curve_radius, 3),
@@ -125,13 +126,11 @@ class CurveMixin:
         if idx is None or idx < 0 or idx >= len(zone.curves):
             return
         self._push_undo()
+        uid = zone.curves[idx].get("uid", 0)
         zone.curves.pop(idx)
         self._flash("Curve deleted — Ct+Z to undo", 1.5, (1.0, 0.6, 0.5, 1.0))
-        if self._curve_selected is not None:
-            if self._curve_selected == idx:
-                self._curve_selected = None
-            elif self._curve_selected > idx:
-                self._curve_selected -= 1
+        if uid:
+            self.selection.on_object_deleted(uid)
         self.dirty = True
 
     # ── Move ──────────────────────────────────────────────────────

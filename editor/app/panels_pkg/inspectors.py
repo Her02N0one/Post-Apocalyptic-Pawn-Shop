@@ -1431,8 +1431,12 @@ class InspectorMixin:
         imgui.push_style_color(imgui.COLOR_BUTTON, 0.6, 0.15, 0.15, 1.0)
         if imgui.button("Delete##pinsp_del"):
             ed._push_undo()
+            uid = zone.render_portals[idx].get("uid", 0)
             zone.render_portals.pop(idx)
-            ed._portal_selected = None
+            if uid:
+                ed.selection.on_object_deleted(uid)
+            else:
+                ed._portal_selected = None
             self.dirty = True
         imgui.pop_style_color()
         imgui.separator()

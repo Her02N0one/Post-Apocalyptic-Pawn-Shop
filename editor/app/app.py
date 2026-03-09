@@ -35,9 +35,13 @@ from editor.app.dialogs import DialogsMixin
 from editor.app.asset_browser import AssetBrowserMixin
 from editor.app.data_viewers import DataViewersMixin
 from editor.app.session_cfg import load_session, save_session, push_recent
+from editor.input_context import InputStack
+from editor.dialog_manager import DialogManager, DialogPropertyBridge
+from editor.contexts import GlobalShortcutsContext, CapturedViewportContext
 
 
 class ZoneEditorApp(
+    DialogPropertyBridge,
     EventsMixin,
     ViewportMixin,
     RaycasterMixin,
@@ -58,6 +62,22 @@ class ZoneEditorApp(
     * :class:`AssetBrowserMixin`  — floating texture browser window
     * :class:`DataViewersMixin`   — read-only TOML data browsers
     """
+
+    # ── mouse_captured property (backed by InputStack) ────────────
+
+    @property
+    def mouse_captured(self) -> bool:
+        """True when the viewport owns all input (replaces the old boolean)."""
+        return self.input_stack.is_captured
+
+    @mouse_captured.setter
+    def mouse_captured(self, value: bool) -> None:
+        """Backwards-compat setter.  ``True`` pushes, ``False`` pops
+        the CapturedViewportContext (if not already in the desired state)."""
+        if value and not self.input_stack.is_captured:
+            self._capture_mouse()
+        elif not value and self.input_stack.is_captured:
+            self._release_mouse()
 
     # ── Init ──────────────────────────────────────────────────────
 
@@ -95,6 +115,11 @@ class ZoneEditorApp(
         # Session persistence (MRU, layout, bookmarks)
         self._session = load_session()
 
+        # Input stack + dialog manager (must exist before any show_* write)
+        self.input_stack = InputStack()
+        self.dialog_manager = DialogManager()
+        self._wants_quit: bool = False
+
         # Mutable state for texture browser (avoids class-level mutable defaults)
         self._ab_init()
 
@@ -113,7 +138,7 @@ class ZoneEditorApp(
         self._vp_tex: int = 0
         self._vp_surface: pygame.Surface | None = None
         self._vp_size: tuple[int, int] = (800, 600)
-        self.mouse_captured: bool = False
+        # mouse_captured is now a property backed by the InputStack
         _sw = self._session.get("window_w", WINDOW_W)
         _sh = self._session.get("window_h", WINDOW_H)
         self.win_size: tuple[int, int] = (_sw, _sh)
@@ -151,16 +176,13 @@ class ZoneEditorApp(
             self._load_zone(_restore)
 
         # New-zone dialog state
-        self.show_new_zone: bool = False
         self.new_zone_w: int = 20
         self.new_zone_h: int = 20
 
         # Save-as dialog state
-        self.show_save_as: bool = False
         self.save_as_name: str = ""
 
         # Unsaved changes guard
-        self._show_unsaved_guard: bool = False
         self._guard_action: str = ""
         self._guard_payload: str = ""
         self._pending_quit: bool = False
@@ -171,29 +193,24 @@ class ZoneEditorApp(
         self._transient_color: tuple = (0.95, 0.90, 0.75, 1.0)
 
         # Keybind editor window state
-        self.show_keybind_editor: bool = False
         self._kb_capturing: str = ""   # action being rebound (empty = not capturing)
         self._kb_filter: str = ""      # search filter text
         self._kb_show_conflicts: bool = False  # filter to conflicts only
 
         # Resize Zone dialog state
-        self.show_resize_zone: bool = False
         self._resize_new_w: int = 20
         self._resize_new_h: int = 20
         self._resize_anchor: str = "top-left"  # where old data is placed
 
         # Find / Replace Texture dialog state
-        self.show_find_replace_tex: bool = False
         self._frt_find: str = ""
         self._frt_replace: str = ""
         self._frt_result: str = ""
 
         # Validate Zone results window state
-        self.show_validate_zone: bool = False
         self._validate_results: list[str] = []
 
         # Zone Settings dialog state
-        self.show_zone_settings: bool = False
         self._zs_skybox: str = ""
         self._zs_sky_r: int = 0
         self._zs_sky_g: int = 0
@@ -202,32 +219,28 @@ class ZoneEditorApp(
         self._zs_anchor_c: float = 0.0
 
         # Duplicate Zone dialog state
-        self.show_duplicate_zone: bool = False
         self._dup_name: str = ""
 
         # Export Top-Down Image dialog state
-        self.show_export_image: bool = False
         self._export_scale: int = 8
         self._export_entities: bool = True
 
         # Data viewer windows
-        self.show_entity_defs_viewer: bool = False
         self._entity_defs_cache: dict | None = None
         self._dv_ent_filter: str = ""
 
-        self.show_items_viewer: bool = False
         self._items_cache: dict | None = None
         self._dv_item_filter: str = ""
 
-        self.show_loot_tables_viewer: bool = False
         self._loot_cache: dict | None = None
-
-        self.show_presets_viewer: bool = False
         self._presets_cache: dict | None = None
 
         # Performance
         self.frame_ms: float = 0.0
         self.fps: float = 60.0
+
+        # Bootstrap the input stack — GlobalShortcutsContext is always present
+        self.input_stack.push(GlobalShortcutsContext(), self)
 
     # ── Zone loading / creation ───────────────────────────────────
 
@@ -395,8 +408,19 @@ class ZoneEditorApp(
     # ── Mouse capture ─────────────────────────────────────────────
 
     def _capture_mouse(self) -> None:
-        """Enter edit mode: hide cursor, grab mouse, all input -> viewport."""
-        self.mouse_captured = True
+        """Enter edit mode: push CapturedViewportContext onto the InputStack."""
+        if not self.input_stack.is_captured:
+            self.input_stack.push(CapturedViewportContext(), self)
+
+    def _release_mouse(self) -> None:
+        """Leave edit mode: pop CapturedViewportContext from the InputStack."""
+        if self.input_stack.is_captured:
+            self.input_stack.remove("captured_viewport", self)
+
+    # Low-level helpers called by CapturedViewportContext.on_push / on_pop
+
+    def _do_capture_mouse(self) -> None:
+        """Hide cursor, grab mouse, clear imgui state."""
         pygame.mouse.set_visible(False)
         pygame.event.set_grab(True)
         pygame.mouse.get_rel()  # flush stale delta
@@ -405,9 +429,8 @@ class ZoneEditorApp(
             self.editor_3d._capture_name = ""
         self._clear_imgui_input_state()
 
-    def _release_mouse(self) -> None:
-        """Leave edit mode: show cursor, ungrab, all input -> imgui panels."""
-        self.mouse_captured = False
+    def _do_release_mouse(self) -> None:
+        """Show cursor, ungrab mouse, clear imgui state."""
         pygame.mouse.set_visible(True)
         pygame.event.set_grab(False)
         if self.editor_3d:
@@ -441,7 +464,7 @@ class ZoneEditorApp(
 
             running = self._process_events()
 
-            if self._pending_quit:
+            if self._pending_quit or self._wants_quit:
                 running = False
 
             if self._transient_time > 0:

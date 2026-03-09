@@ -17,8 +17,7 @@ from editor.view_3d.constants import FACE_IDX
 
 class PortalMixin:
     """Render portal placement and inspection."""
-
-    _portal_selected: int | None = None
+    # Selected portal: managed by Zone3DEditor bridge property
 
     def _portal_find_at_face(self, r: int, c: int, face_name: str) -> int | None:
         """Find portal index at a specific cell face, or None."""
@@ -55,6 +54,7 @@ class PortalMixin:
 
         self._push_undo()
         portal = {
+            "uid": zone.next_uid(),
             "cell": [r, c],
             "face": face_idx,
             "dest_x": float(c) + 0.5,   # default: points to self
@@ -79,13 +79,11 @@ class PortalMixin:
             return
 
         self._push_undo()
+        uid = self.zone.render_portals[existing].get("uid", 0)
         self.zone.render_portals.pop(existing)
         self._flash("Portal deleted — Ct+Z to undo", 1.5, (1.0, 0.6, 0.5, 1.0))
-        if self._portal_selected is not None:
-            if self._portal_selected == existing:
-                self._portal_selected = None
-            elif self._portal_selected > existing:
-                self._portal_selected -= 1
+        if uid:
+            self.selection.on_object_deleted(uid)
         self.dirty = True
 
     def _portal_cycle(self, direction: int) -> None:

@@ -195,6 +195,7 @@ def save_binary_zone(
                 "render_portals": zone.render_portals,
                 "skybox": zone.skybox,
                 "sky_color": list(zone.sky_color) if zone.sky_color else [],
+                "next_uid": zone._next_uid,
             }
             enty_bytes = msgpack.packb(enty_payload, use_bin_type=True)
             _write_chunk(f, CHUNK_ENTY, enty_bytes)
@@ -379,6 +380,7 @@ def load_binary_zone(
                     result["render_portals"] = enty.get("render_portals", [])
                     result["skybox"] = enty.get("skybox", "")
                     result["sky_color"] = tuple(enty.get("sky_color", []))
+                    result["next_uid"] = enty.get("next_uid", 1)
 
                 # -- Unknown chunk — skip ---------------------------
                 else:
