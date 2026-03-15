@@ -1,132 +1,354 @@
-# Entity Definitions — rendering & editor placement properties.
+# Entity Definitions — unified type registry.
 #
-# Each entry defines a placeable entity type.  Only visual/placement
-# data lives here; gameplay logic (ECS components, AI, etc.) is
-# separate and resolved at runtime.
+# Each entry defines a placeable entity type.  Everything about an
+# entity lives here: visual/placement data (editor + renderer) AND
+# default ECS component values (spawner).
 #
-# Fields:
+# ── Top-level fields ──────────────────────────────────────────────
 #   display_name  — Human-readable label
-#   category      — Grouping for the editor palette
+#   category      — Editor palette grouping
+#   render_type   — "billboard" | "prism" (default: "billboard")
 #   color         — [R, G, B] flat-colour fallback (0-255)
-#   scale         — Height in world units (also drives billboard size)
+#   scale         — Billboard height in world units (default 1.0)
 #   directional   — Whether the entity has facing-dependent visuals
 #   states        — Visual state keys (texture/animation variants)
+#   sprite_key    — Base texture key for billboard sprites
+#   width/depth/height/elevation — Prism geometry (render_type = "prism")
+#   movable       — Player can push this object (default false)
+#
+# ── Component sub-tables ─────────────────────────────────────────
+#   [id.identity]    — name, kind
+#   [id.sprite]      — char, color, layer, billboard_mode, sprite_key
+#   [id.health]      — current, maximum
+#   [id.collider]    — w, h, solid
+#   [id.facing]      — direction
+#   [id.player]      — speed
+#   [id.inventory]   — items
+#   [id.tile_entity] — tile_type, loot_table, item_id, item_qty
+#   [id.wall_sprite] — texture_key, width, height, elevation
+#   [id.combat]      — damage, attack_range, attack_cooldown, hostile
+#   [id.dialogue]    — bark
+#   [id.textures]    — north, south, east, west, top, bottom (prism faces)
 
-[barrel]
-display_name = "Barrel"
-category     = "props"
-color        = [120, 90, 60]
-scale        = 0.5
-directional  = false
-states       = ["default", "exploded"]
+# ═════════════════════════════════════════════════════════════════
+#  Characters — billboard entities with directional sprites
+# ═════════════════════════════════════════════════════════════════
 
-[wooden_crate]
-display_name = "Wooden Crate"
+[dummy]
+display_name = "Dummy"
+category     = "characters"
+render_type  = "billboard"
+color        = [180, 180, 180]
+scale        = 1.0
+directional  = true
+sprite_key   = "dummy"
+states       = ["idle", "walk", "hurt"]
+
+[dummy.identity]
+name = "Dummy"
+kind = "npc"
+
+[dummy.sprite]
+char  = "D"
+color = [180, 180, 180]
+layer = 10
+
+[dummy.health]
+current = 100
+maximum = 100
+
+[dummy.collider]
+w     = 0.6
+h     = 0.6
+solid = true
+
+[player]
+display_name = "Player"
+category     = "characters"
+render_type  = "billboard"
+color        = [255, 255, 100]
+scale        = 1.0
+directional  = true
+states       = ["idle", "walk", "attack", "hurt", "death"]
+
+[player.identity]
+name = "You"
+kind = "player"
+
+[player.sprite]
+char  = "@"
+color = [255, 255, 100]
+layer = 10
+
+[player.health]
+current = 100
+maximum = 100
+
+[player.collider]
+w     = 0.6
+h     = 0.6
+solid = true
+
+[player.facing]
+direction = "down"
+
+[player.player]
+speed = 6.0
+
+[player.inventory]
+items = { scrap_metal = 5, cloth = 3, bottlecap = 10 }
+
+[test]
+display_name = "Test Guy"
+category     = "characters"
+render_type  = "billboard"
+color        = [178, 178, 178]
+scale        = 1.0
+directional  = true
+sprite_key   = "test"
+states       = ["idle", "walking"]
+movable      = false
+
+# ═════════════════════════════════════════════════════════════════
+#  Example billboards — one per simple case
+# ═════════════════════════════════════════════════════════════════
+#
+#  These demonstrate every combination of directional / states /
+#  animation frames so the texture pipeline can be tested.
+#
+#  After adding an entity here, generate its template sheet with:
+#    python gen_entity_textures.py <id> --force [--frames ...]
+
+# ── Case 1: non-directional, 1 state, 1 frame (simplest) ──────
+#    Purely static decoration — no animation, no facing.
+[vent_grate]
+display_name  = "Vent Grate"
+category      = "props"
+render_type   = "billboard"
+color         = [100, 100, 110]
+scale         = 0.4
+directional   = false
+sprite_key    = "vent_grate"
+states        = ["default"]
+frame_width   = 32
+frame_height  = 32
+
+[vent_grate.identity]
+name = "Vent Grate"
+kind = "prop"
+
+[vent_grate.collider]
+w     = 0.3
+h     = 0.3
+solid = false
+
+# ── Case 2: non-directional, 1 state, multiple frames ─────────
+#    Animated but always looks the same from every angle.
+#    Generate with:  --frames 4
+[candle]
+display_name  = "Candle"
+category      = "props"
+render_type   = "billboard"
+color         = [255, 200, 80]
+scale         = 0.3
+directional   = false
+sprite_key    = "candle"
+states        = ["lit", "unlit"]
+frame_width   = 16
+frame_height  = 32
+
+[candle.identity]
+name = "Candle"
+kind = "prop"
+
+[candle.collider]
+w     = 0.2
+h     = 0.2
+solid = false
+
+# ── Case 3: non-directional, multi-state, mixed frames ────────
+#    Two visual states with different frame counts.
+#    Generate with:  --frames 'on=4,off=1'
+[wall_lamp]
+display_name  = "Wall Lamp"
+category      = "props"
+render_type   = "billboard"
+color         = [220, 190, 80]
+scale         = 0.4
+directional   = false
+sprite_key    = "wall_lamp"
+states        = ["on", "off"]
+frame_width   = 32
+frame_height  = 32
+
+[wall_lamp.identity]
+name = "Wall Lamp"
+kind = "prop"
+
+[wall_lamp.collider]
+w     = 0.3
+h     = 0.3
+solid = false
+
+# ── Case 4: directional, 1 state, 1 frame ─────────────────────
+#    8-way facing but no animation — e.g. a static sign or turret.
+[sign_post]
+display_name  = "Sign Post"
+category      = "props"
+render_type   = "billboard"
+color         = [140, 100, 60]
+scale         = 0.8
+directional   = true
+sprite_key    = "sign_post"
+states        = ["default"]
+frame_width   = 32
+frame_height  = 64
+
+[sign_post.identity]
+name = "Sign Post"
+kind = "prop"
+
+[sign_post.collider]
+w     = 0.3
+h     = 0.3
+solid = true
+
+# ── Case 5: directional, multi-state, mixed frames ────────────
+#    Full creature with walk animation and static idle/hurt.
+#    Generate with:  --frames 'walk=4'
+[crawler]
+display_name  = "Crawler"
+category      = "characters"
+render_type   = "billboard"
+color         = [100, 160, 80]
+scale         = 0.7
+directional   = true
+sprite_key    = "crawler"
+states        = ["idle", "crawl", "hurt"]
+frame_width   = 48
+frame_height  = 32
+
+[crawler.identity]
+name = "Crawler"
+kind = "hostile"
+
+[crawler.health]
+current = 40
+maximum = 40
+
+[crawler.collider]
+w     = 0.5
+h     = 0.5
+solid = true
+
+[crawler.combat]
+damage         = 8
+attack_range   = 1.0
+attack_cooldown = 1.5
+hostile        = true
+
+# ═════════════════════════════════════════════════════════════════
+#  Props — textured prism entities
+# ═════════════════════════════════════════════════════════════════
+
+# ── Example: prism, 2 states, no animation ─────────────────────
+[vending_machine]
+display_name = "Vending Machine"
 category     = "props"
-color        = [160, 120, 80]
-scale        = 0.6
-directional  = false
+render_type  = "prism"
+color        = [120, 120, 140]
+directional  = true
 states       = ["default", "broken"]
+width        = 0.4
+depth        = 0.35
+height       = 0.8
+elevation    = 0.0
 
-[old_tv]
-display_name = "Old Television"
-category     = "props"
-color        = [60, 60, 70]
-scale        = 0.4
-directional  = false
-states       = ["default", "static", "off"]
+[vending_machine.textures]
+north  = "vending_machine:front"
+south  = "vending_machine:back"
+east   = "vending_machine:side"
+west   = "vending_machine:side"
+top    = "vending_machine:top"
+bottom = ""
 
-[street_lamp]
-display_name = "Street Lamp"
-category     = "props"
-color        = [200, 200, 150]
-scale        = 1.2
-directional  = false
-states       = ["default", "on", "broken"]
+[vending_machine.identity]
+name = "Vending Machine"
+kind = "container"
 
-[dumpster]
-display_name = "Dumpster"
-category     = "props"
-color        = [70, 90, 60]
-scale        = 0.7
-directional  = true
-states       = ["default", "open"]
+[vending_machine.health]
+current = 50
+maximum = 50
 
-[pine_tree]
-display_name = "Pine Tree"
-category     = "nature"
-color        = [40, 120, 50]
-scale        = 1.2
-directional  = false
-states       = ["default", "burning", "dead"]
+[vending_machine.collider]
+w     = 0.4
+h     = 0.35
+solid = true
 
-[dead_tree]
-display_name = "Dead Tree"
-category     = "nature"
-color        = [100, 80, 55]
-scale        = 1.0
+[vending_machine.inventory]
+items = {}
+
+[vending_machine.tile_entity]
+tile_type  = "container"
+loot_table = "vending_machine"
+
+# ═════════════════════════════════════════════════════════════════
+#  Gameplay — system entities
+# ═════════════════════════════════════════════════════════════════
+
+[ground_item]
+display_name = "Ground Item"
+category     = "gameplay"
+render_type  = "billboard"
+color        = [220, 220, 180]
+scale        = 0.3
 directional  = false
 states       = ["default"]
 
-[bush]
-display_name = "Bush"
-category     = "nature"
-color        = [50, 100, 40]
-scale        = 0.4
-directional  = false
-states       = ["default"]
+[ground_item.identity]
+name = "Item"
+kind = "ground_item"
 
-[survivor_npc]
-display_name = "Survivor NPC"
-category     = "characters"
-color        = [100, 220, 160]
-scale        = 1.0
-directional  = true
-states       = ["default", "hostile", "dead"]
+[ground_item.sprite]
+char  = "*"
+color = [220, 220, 180]
+layer = 2
 
-[guard_npc]
-display_name = "Guard NPC"
-category     = "characters"
-color        = [180, 140, 100]
-scale        = 1.0
-directional  = true
-states       = ["default", "alert", "dead"]
+[ground_item.collider]
+w     = 0.4
+h     = 0.4
+solid = false
 
-[beast]
-display_name = "Beast"
-category     = "characters"
-color        = [200, 60, 60]
-scale        = 0.8
-directional  = true
-states       = ["default", "aggro", "dead"]
-
-[door_keypad]
-display_name = "Door Keypad"
-category     = "interactive"
-color        = [100, 200, 100]
-scale        = 0.3
-directional  = true
-states       = ["locked", "unlocked", "broken"]
-
-[switch_lever]
-display_name = "Switch / Lever"
-category     = "interactive"
-color        = [180, 180, 80]
-scale        = 0.3
-directional  = true
-states       = ["off", "on"]
+[ground_item.tile_entity]
+tile_type = "ground_item"
 
 [loot_socket]
 display_name = "Loot Socket"
 category     = "gameplay"
+render_type  = "billboard"
 color        = [255, 200, 60]
 scale        = 0.5
 directional  = false
 states       = ["default", "empty"]
 
+[loot_socket.identity]
+name = "Loot Socket"
+kind = "container"
+
+[loot_socket.sprite]
+char  = "$"
+color = [255, 200, 60]
+layer = 3
+
+[loot_socket.collider]
+w     = 0.5
+h     = 0.5
+solid = false
+
 [spawn_point]
 display_name = "Spawn Point"
 category     = "gameplay"
+render_type  = "billboard"
 color        = [60, 200, 255]
 scale        = 0.3
 directional  = true
@@ -135,7 +357,9 @@ states       = ["default"]
 [trigger_zone]
 display_name = "Trigger Zone"
 category     = "gameplay"
+render_type  = "billboard"
 color        = [255, 100, 255]
 scale        = 0.3
 directional  = false
 states       = ["default", "triggered"]
+

@@ -142,15 +142,38 @@ class WallSprite(Component):
 
 
 @dataclass
+class PrismShape(Component):
+    """Oriented rectangular prism for 3D rendering + collision.
+
+    Rendered via the C ``box_data`` pipeline (Phase 4 deferred hits).
+    Player collision uses 2D SAT on the rotated footprint.
+    NPCs ignore prisms entirely (no pathfinding impact).
+
+    Not persisted — rebuilt from :class:`EntityDef` + zone descriptor
+    on load (same as Sprite, Collider, etc.).
+    """
+    width: float = 1.0          # local X extent (tiles)
+    depth: float = 1.0          # local Y extent (tiles)
+    height: float = 1.0         # vertical extent (tiles)
+    elevation: float = 0.0      # base Z offset from floor
+    yaw: float = 0.0            # rotation (radians, 0 = east-facing)
+    textures: dict[str, str] = field(default_factory=dict)
+    movable: bool = False       # player can push this
+
+
+@dataclass
 class PrefabRef(Component):
     """Links entity to its prefab template for rebuilding transient components.
 
-    uid:    unique identifier matching ``"id"`` in zone descriptor files.
-    prefab: prefab name used to look up default component values.
+    uid:         unique identifier matching ``"id"`` in zone descriptor files.
+    prefab:      prefab name used to look up default component values.
+    def_version: hash of the EntityDef's component structure at spawn time.
+                 Used to detect when entity definitions change between saves.
     """
     _persist = True
     uid: str = ""
     prefab: str = ""
+    def_version: str = ""
 
 
 # ── Player ───────────────────────────────────────────────────────────
@@ -285,7 +308,7 @@ __all__ = [
     # Components
     "Position", "Velocity", "Facing", "Collider",
     "Sprite", "Identity",
-    "Health", "Inventory", "TileEntity", "WallSprite",
+    "Health", "Inventory", "TileEntity", "WallSprite", "PrismShape",
     "PrefabRef", "Player",
     "CoarsePos", "Timers", "CombatStats",
     # Resources

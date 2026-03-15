@@ -17,10 +17,34 @@ from __future__ import annotations
 
 import array
 import math
+import os
 import struct
 from typing import TYPE_CHECKING
 
 import pygame
+
+# Always-on fast required-key check (prevents C crashes from missing keys).
+from engine.render_schema import assert_required_keys as _assert_keys
+
+# Full schema validation: enabled in debug mode (__debug__=True),
+# can be forced on/off via PAPS_VALIDATE_RENDER=1|0.
+_VALIDATE_ENV = os.environ.get("PAPS_VALIDATE_RENDER", "")
+if _VALIDATE_ENV == "1":
+    _VALIDATE = True
+elif _VALIDATE_ENV == "0":
+    _VALIDATE = False
+else:
+    _VALIDATE = __debug__  # True unless running with python -O
+
+if _VALIDATE:
+    from engine.render_schema import (
+        validate_render_frame as _validate_rf,
+        validate_render_entities as _validate_re,
+        validate_render_particles as _validate_rp,
+        validate_ssao as _validate_ssao,
+    )
+else:
+    _validate_rf = _validate_re = _validate_rp = _validate_ssao = None  # type: ignore[assignment]
 
 try:
     import numpy as np
@@ -38,6 +62,14 @@ from core.tiles import (
     transparent_lut,
     hs_lut,
     anim_lut,
+    register_extra_texture_keys,
+    extra_texture_keys,
+    total_texture_count,
+)
+from core.entity_defs import (
+    entity_texture_keys,
+    get_entity_def,
+    face_to_box_index,
 )
 from core.types import FACE_NAMES
 from core.zones.format import NAV_SOLID
@@ -167,6 +199,10 @@ class RayRenderer:
         # Animation tick counter (incremented every render call)
         self._anim_tick: int = 0
 
+        # Zone change-detection: tracks the zone's _generation counter
+        # so update_zone() can skip rebuilds when nothing changed.
+        self._zone_generation: int = 0
+
         # Build all static buffers from zone + atlas
         self._build_buffers(zone, atlas, dn)
 
@@ -184,6 +220,13 @@ class RayRenderer:
         self._map_w = zone.width
         self._map_h = zone.height
         self._is_interior = int(zone.first_person)
+
+        # ── Per-zone sky colour override ──
+        sc = getattr(zone, "sky_color", ())
+        self._sky_color: tuple[int, int, int] | None = (
+            (int(sc[0]), int(sc[1]), int(sc[2])) if sc and len(sc) >= 3
+            else None
+        )
 
         # ── Per-zone skybox override ──
         self._skybox_buf: bytes | None = None
@@ -213,11 +256,14 @@ class RayRenderer:
         self._cell_solid = self._build_cell_solid(zone)
         self._wall_buf = bytes(self._cell_solid)
 
-        # ── Number of tiles (determines per-tile LUT sizes & atlas) ──
-        num_tiles = max(len(thin_wall_lut()), 1)
+        # ── Register entity face textures so tile_str_to_int resolves ──
+        register_extra_texture_keys(entity_texture_keys())
+
+        # ── Number of textures (tiles + entity faces → LUT + atlas size) ──
+        num_tiles = total_texture_count()
         self._num_tiles = num_tiles
 
-        # ── Texture atlas (packed RGB: num_tiles × 64 × 64 × 3) ──
+        # ── Texture atlas (packed RGBA: num_tiles × TEX_SIZE × TEX_SIZE × 4) ──
         self._atlas_buf = self._build_atlas(atlas, num_tiles)
 
         # ── Fog LUT ──
@@ -301,8 +347,8 @@ class RayRenderer:
         self._trans_buf = bytes(trans_ba[:num_tiles])
 
         # ── Overlay wall buffers (free-form segments) ──
-        #    Packed as 7 doubles per wall:
-        #      [x1, y1, x2, y2, height_scale, tile_id, flags]
+        #    Packed as 8 doubles per wall:
+        #      [x1, y1, x2, y2, height_scale, base_y, tile_id, flags]
         ov_walls = getattr(zone, "overlay_walls", [])
         self._n_overlay = len(ov_walls)
         if ov_walls:
@@ -312,11 +358,12 @@ class RayRenderer:
                 flags = (1 if ow.transparent else 0)
                 ov_data.extend([
                     ow.x1, ow.y1, ow.x2, ow.y2,
-                    ow.height_scale, float(tid), float(flags),
+                    ow.height_scale, getattr(ow, 'base_y', 0.0),
+                    float(tid), float(flags),
                 ])
             self._overlay_buf = array.array("d", ov_data).tobytes()
         else:
-            self._overlay_buf = array.array("d", [0.0] * 7).tobytes()
+            self._overlay_buf = array.array("d", [0.0] * 8).tobytes()
 
         # ── Two-sided quad buffers (fences, barricades, thin decals) ──
         #    Packed as 8 doubles per quad:
@@ -361,32 +408,35 @@ class RayRenderer:
         #      [x, y, z, w, h, d, yaw, tex_n, tex_s, tex_e, tex_w,
         #       tex_top, tex_bot, flags]
         boxes = getattr(zone, "boxes", [])
-        self._n_boxes = len(boxes)
-        if boxes:
-            bx_data: list[float] = []
-            for b in boxes:
-                tex = b.get("textures", {})
-                def _tid(k: str) -> int:
-                    v = tex.get(k, 0)
-                    return v if isinstance(v, int) else _s2i(v)
-                flags = 1 if b.get("collision", False) else 0
-                # BX_TEX_N (index 7) = +Y face in C = south in editor
-                # BX_TEX_S (index 8) = -Y face in C = north in editor
-                # Swap N↔S so editor face names map to the correct
-                # raycaster faces (Y axis = editor Z, +Y = south).
-                bx_data.extend([
-                    float(b.get("x", 0.0)),
-                    float(b.get("y", 0.0)),
-                    float(b.get("z", 0.0)),
-                    float(b.get("w", 1.0)),
-                    float(b.get("h", 1.0)),
-                    float(b.get("d", 1.0)),
-                    float(b.get("yaw", 0.0)),
-                    float(_tid("S")), float(_tid("N")),
-                    float(_tid("E")), float(_tid("W")),
-                    float(_tid("top")), float(_tid("bot")),
-                    float(flags),
-                ])
+        bx_data: list[float] = []
+        for b in boxes:
+            tex = b.get("textures", {})
+            def _tid(k: str) -> int:
+                v = tex.get(k, 0)
+                return v if isinstance(v, int) else _s2i(v)
+            flags = 1 if b.get("collision", False) else 0
+            # BX_TEX_N (index 7) = +Y face in C = south in editor
+            # BX_TEX_S (index 8) = -Y face in C = north in editor
+            # Swap N↔S so editor face names map to the correct
+            # raycaster faces (Y axis = editor Z, +Y = south).
+            bx_data.extend([
+                float(b.get("x", 0.0)),
+                float(b.get("y", 0.0)),
+                float(b.get("z", 0.0)),
+                float(b.get("w", 1.0)),
+                float(b.get("h", 1.0)),
+                float(b.get("d", 1.0)),
+                float(b.get("yaw", 0.0)),
+                float(_tid("S")), float(_tid("N")),
+                float(_tid("E")), float(_tid("W")),
+                float(_tid("top")), float(_tid("bot")),
+                float(flags),
+            ])
+
+        # ── Entity prisms → box_data ──
+        bx_data.extend(self._collect_entity_prisms(zone))
+        self._n_boxes = len(bx_data) // 14
+        if bx_data:
             self._box_buf: bytes | None = array.array("d", bx_data).tobytes()
         else:
             self._box_buf = None
@@ -409,7 +459,7 @@ class RayRenderer:
                 tid = cv.get("texture", 0)
                 if isinstance(tid, str):
                     tid = _s2i(tid)
-                flags = 1 if cv.get("transparent", False) else 0
+                flags = int(cv.get("flags", 0))
                 crv_data.extend([
                     float(cv.get("cx", 0.0)),
                     float(cv.get("cy", 0.0)),
@@ -847,20 +897,35 @@ class RayRenderer:
         return cell_solid
 
     def _build_atlas(self, atlas: TextureAtlas, num_tiles: int) -> bytes:
-        """Pack all tile textures into a flat RGBA buffer for C."""
+        """Pack all tile + entity-face textures into a flat RGBA buffer for C."""
         ts = TEX_SIZE
         tex_bytes = ts * ts * 4
         buf = bytearray(num_tiles * tex_bytes)
 
+        # ── Tile textures ──
         for tid_str in TILE_REGISTRY:
             tid_int = tile_str_to_int(tid_str)
             if tid_int >= num_tiles:
                 continue
             surf = atlas.get(tid_str)
-            # Ensure correct size
             if surf.get_size() != (ts, ts):
                 surf = pygame.transform.scale(surf, (ts, ts))
-            # Convert to display format with alpha then extract RGBA
+            try:
+                surf = surf.convert_alpha()
+            except pygame.error:
+                pass
+            raw = pygame.image.tostring(surf, "RGBA")
+            offset = tid_int * tex_bytes
+            buf[offset : offset + tex_bytes] = raw
+
+        # ── Entity face textures (extra keys beyond tile range) ──
+        for key in extra_texture_keys():
+            tid_int = tile_str_to_int(key)
+            if tid_int >= num_tiles:
+                continue
+            surf = atlas.get_by_key(key)
+            if surf.get_size() != (ts, ts):
+                surf = pygame.transform.scale(surf, (ts, ts))
             try:
                 surf = surf.convert_alpha()
             except pygame.error:
@@ -870,6 +935,124 @@ class RayRenderer:
             buf[offset : offset + tex_bytes] = raw
 
         return bytes(buf)
+
+    def _collect_entity_prisms(self, zone: Zone) -> list[float]:
+        """Build box_data doubles for entities with render_type == 'prism'.
+
+        Reads each entity descriptor from ``zone.entities``, looks up its
+        :class:`EntityDef`, and if the render type is ``"prism"`` emits
+        14 doubles matching the C ``BX_STRIDE`` layout.
+
+        Face textures are mapped through :func:`face_to_box_index` which
+        encapsulates the north↔south coordinate swap.
+        """
+        _s2i = tile_str_to_int
+        data: list[float] = []
+
+        fh = getattr(zone, "floor_heights", None)
+        w = zone.width
+        h = zone.height
+
+        for ent in getattr(zone, "entities", []):
+            type_id = ent.get("type", "")
+            edef = get_entity_def(type_id)
+            if edef is None or edef.render_type != "prism":
+                continue
+
+            # Position (flat x/y, already migrated)
+            ex = float(ent.get("x", 0.0))
+            ey = float(ent.get("y", 0.0))
+
+            # Floor height at entity cell
+            ci = max(0, min(w - 1, int(ex)))
+            ri = max(0, min(h - 1, int(ey)))
+            floor_z = float(fh[ri][ci]) if fh else 0.0
+
+            # Prism geometry from entity def
+            bx_z = floor_z + edef.elevation
+            yaw = float(ent.get("angle", 0.0))
+
+            # Per-face texture IDs.
+            # EntityDef.textures is ((face, key), ...).
+            # Overrides from the entity descriptor can replace faces.
+            tex_map = edef.texture_map()
+            ent_tex = ent.get("overrides", {}).get("textures")
+            if isinstance(ent_tex, dict):
+                tex_map.update(ent_tex)
+
+            # Build the 14-double BX_STRIDE entry.
+            # face_to_box_index handles the N↔S swap, but for the flat
+            # array we fill slots 7..12 in order: N, S, E, W, top, bot
+            # (matching the C layout BX_TEX_N..BX_TEX_B).
+            def _ftid(face: str) -> float:
+                k = tex_map.get(face, "")
+                return float(_s2i(k)) if k else 0.0
+
+            # C layout: [BX_TEX_N, BX_TEX_S, BX_TEX_E, BX_TEX_W, BX_TEX_T, BX_TEX_B]
+            # face_to_box_index("north") → 8 (= BX_TEX_S slot) due to N↔S swap
+            # We build a 6-slot temp array indexed by (offset - 7).
+            face_tex = [0.0] * 6
+            for face_name in ("north", "south", "east", "west", "top", "bottom"):
+                slot = face_to_box_index(face_name) - 7  # 0..5
+                k = tex_map.get(face_name, "")
+                face_tex[slot] = float(_s2i(k)) if k else 0.0
+
+            movable = ent.get("overrides", {}).get("movable", edef.movable)
+            flags = 1.0 if movable else 0.0
+
+            data.extend([
+                ex, ey, bx_z,
+                edef.width, edef.height, edef.depth,
+                yaw,
+                face_tex[0], face_tex[1],  # BX_TEX_N, BX_TEX_S
+                face_tex[2], face_tex[3],  # BX_TEX_E, BX_TEX_W
+                face_tex[4], face_tex[5],  # BX_TEX_T, BX_TEX_B
+                flags,
+            ])
+
+        return data
+
+    def update_entity_boxes(
+        self,
+        zone: Zone,
+    ) -> None:
+        """Rebuild the box buffer with current entity prism positions.
+
+        Call this per-frame if any prism entity has moved or rotated,
+        or after zone entities are modified.  Re-merges zone static
+        boxes with entity prism data.
+        """
+        _s2i = tile_str_to_int
+        bx_data: list[float] = []
+
+        # Zone static freeform boxes
+        for b in getattr(zone, "boxes", []):
+            tex = b.get("textures", {})
+            def _tid(k: str) -> int:
+                v = tex.get(k, 0)
+                return v if isinstance(v, int) else _s2i(v)
+            flags = 1 if b.get("collision", False) else 0
+            bx_data.extend([
+                float(b.get("x", 0.0)),
+                float(b.get("y", 0.0)),
+                float(b.get("z", 0.0)),
+                float(b.get("w", 1.0)),
+                float(b.get("h", 1.0)),
+                float(b.get("d", 1.0)),
+                float(b.get("yaw", 0.0)),
+                float(_tid("S")), float(_tid("N")),
+                float(_tid("E")), float(_tid("W")),
+                float(_tid("top")), float(_tid("bot")),
+                float(flags),
+            ])
+
+        # Entity prisms
+        bx_data.extend(self._collect_entity_prisms(zone))
+        self._n_boxes = len(bx_data) // 14
+        if bx_data:
+            self._box_buf = array.array("d", bx_data).tobytes()
+        else:
+            self._box_buf = None
 
     @staticmethod
     def _build_tex_override(
@@ -903,55 +1086,26 @@ class RayRenderer:
         compact texture int to use for that face.  -1 means "use the base
         tile texture" (no per-face override).
 
-        Resolution order (highest priority first):
-        1. zone.face_textures[r][c][face] — per-face override (sculpt editor)
-        2. zone.wall_textures[r][c]       — single texture, all 4 faces
-        3. TileDef per-face (tex_n/s/e/w, front/back)
-        4. Default wall_tex()
+        Delegates texture resolution to the canonical
+        :func:`~core.zones.tex_priority.resolve_wall_texture` so the
+        priority chain is defined in exactly one place.
         """
+        from core.zones.tex_priority import resolve_wall_texture, FACE_NAMES as _TPFN
         _s2i = tile_str_to_int
         _tdef = tile_def
-        has_wt = (hasattr(zone, "wall_textures")
-                  and zone.wall_textures
-                  and len(zone.wall_textures) == zone.height)
-        has_ft = (hasattr(zone, "face_textures")
-                  and zone.face_textures
-                  and len(zone.face_textures) == zone.height)
         values: list[int] = []
         for r in range(zone.height):
             for c in range(zone.width):
                 tid_str = zone.tiles[r][c]
                 rot = zone.rotations[r][c] if zone.rotations else 0
                 td = _tdef(tid_str)
-                base_tex = td.wall_tex()
-                base_int = _s2i(base_tex)
+                base_int = _s2i(td.wall_tex())
 
-                # ── face_textures: per-face overrides ─────────────
-                ft: list[str] | None = None
-                if has_ft:
-                    ft_cell = zone.face_textures[r][c]
-                    if ft_cell and any(ft_cell):
-                        ft = ft_cell  # [N, S, E, W]
-
-                # ── wall_textures: single override for all faces ──
-                wt = ""
-                if has_wt:
-                    wt = zone.wall_textures[r][c]
-
-                for fi, face_name in enumerate(FACE_NAMES):  # N,S,E,W
-                    # Priority 1: face_textures per-face
-                    if ft and ft[fi]:
-                        values.append(_s2i(ft[fi]))
-                        continue
-                    # Priority 2: wall_textures (all faces)
-                    if wt:
-                        values.append(_s2i(wt))
-                        continue
-                    # Priority 3: TileDef per-face
-                    ftex = td.tex_for_face(face_name, rot)
-                    ftex_int = _s2i(ftex) if ftex else base_int
-                    if ftex_int != base_int:
-                        values.append(ftex_int)
+                for face_name in _TPFN:  # N, S, E, W
+                    resolved = resolve_wall_texture(zone, r, c, face_name, td, rot)
+                    resolved_int = _s2i(resolved) if resolved else base_int
+                    if resolved_int != base_int:
+                        values.append(resolved_int)
                     else:
                         values.append(-1)
         return array.array("i", values).tobytes()
@@ -1192,7 +1346,8 @@ class RayRenderer:
         # vertical look for moderate angles.
         horizon_shift = int(math.tan(pitch) * self.sh)
         self._horizon_shift = horizon_shift
-        _c_render_frame({
+        self._cam_h = cam_h
+        ctx = {
             "fb":       self._fb,
             "cam_x":    px,
             "cam_y":    py,
@@ -1256,6 +1411,8 @@ class RayRenderer:
             "sky_w":    self._sky_w,
             "sky_h":    self._sky_h,
             "sky_vspan": self._sky_vspan,
+            # Sky colour override (optional — tuple or None)
+            "sky_color": self._sky_color,
             # Fog volumes (optional — None = no per-cell fog)
             "fog_density": self._fog_den_buf,
             "fog_color":   self._fog_col_buf,
@@ -1292,7 +1449,11 @@ class RayRenderer:
             "portal_map":   self._portal_map_buf,
             "portal_data":  self._portal_data_buf,
             "n_portals":    self._n_portals,
-        })
+        }
+        _assert_keys(ctx, "render_frame")
+        if _validate_rf is not None:
+            _validate_rf(ctx)
+        _c_render_frame(ctx)
         self._anim_tick += 1
         return self._surf
 
@@ -1318,6 +1479,10 @@ class RayRenderer:
             if "type" in e and "x" in e:
                 from core.entity_defs import get_entity_def as _get_edef
                 edef = _get_edef(e["type"])
+                # Skip prism entities — they're rendered by the box_data
+                # pipeline, not as billboards.
+                if edef and edef.render_type == "prism":
+                    continue
                 if edef:
                     color = edef.color
                     h_scale = edef.scale * 0.6
@@ -1325,6 +1490,27 @@ class RayRenderer:
                 else:
                     color = (200, 200, 200)
                     h_scale, w_scale = 0.6, 0.4
+
+                # Resolve billboard texture from sprite_key
+                # Atlas layout: consecutive entries per entity —
+                #   keys: state_0_s, state_0_sw, …, state_0_se,
+                #         state_1_s, … (multi-frame), next_state_0_s, …
+                # base_tex = atlas index of the very first key.
+                tex_id = -1.0
+                n_facings = 1.0
+                if edef and edef.sprite_key:
+                    n_facings_i = 8 if edef.directional else 1
+                    n_facings = float(n_facings_i)
+                    first_state = edef.states[0] if edef.states else "default"
+                    if n_facings_i > 1:
+                        first_key = f"{edef.sprite_key}:{first_state}_0_s"
+                    else:
+                        first_key = f"{edef.sprite_key}:{first_state}_0"
+                    try:
+                        tex_id = float(tile_str_to_int(first_key))
+                    except Exception:
+                        tex_id = -1.0
+
                 ent_list.extend([
                     float(e["x"]),
                     float(e["y"]),
@@ -1333,9 +1519,9 @@ class RayRenderer:
                     float(color[2]),
                     h_scale,
                     w_scale,
-                    -1.0,                          # base_tex (flat colour)
+                    tex_id,                            # base_tex
                     float(e.get("angle", 0.0)),    # facing
-                    1.0,                            # n_facings
+                    n_facings,                      # n_facings
                     0.0,                            # anim_offset
                     0.0,                            # flags
                 ])
@@ -1415,7 +1601,7 @@ class RayRenderer:
         plane_x = -dir_y * tan_hf
         plane_y = dir_x * tan_hf
 
-        _c_render_entities({
+        _ent_ctx = {
             "fb":        self._fb,
             "sw":        self.sw,
             "sh":        self.sh,
@@ -1433,7 +1619,12 @@ class RayRenderer:
             "ent_data":  ent_buf,
             "n_ents":    n_ents,
             "horizon_shift": getattr(self, '_horizon_shift', 0),
-        })
+            "cam_h":     getattr(self, '_cam_h', 0.5),
+        }
+        _assert_keys(_ent_ctx, "render_entities")
+        if _validate_re is not None:
+            _validate_re(_ent_ctx)
+        _c_render_entities(_ent_ctx)
 
     # ──────────────────────────────────────────────────────────────
     #  Particle rendering
@@ -1457,7 +1648,7 @@ class RayRenderer:
         plane_x = -dir_y * tan_hf
         plane_y = dir_x * tan_hf
 
-        _c_render_particles({
+        _part_ctx = {
             "fb":           self._fb,
             "depth_px":     self._depth_px,
             "fog_lut":      self._fog_buf,
@@ -1477,7 +1668,12 @@ class RayRenderer:
             "dt":           dt,
             "gravity":      particles.gravity,
             "horizon_shift": getattr(self, '_horizon_shift', 0),
-        })
+            "cam_h":        getattr(self, '_cam_h', 0.5),
+        }
+        _assert_keys(_part_ctx, "render_particles")
+        if _validate_rp is not None:
+            _validate_rp(_part_ctx)
+        _c_render_particles(_part_ctx)
         # Sweep dead after C ticked them
         particles.sweep_dead()
 
@@ -1508,7 +1704,7 @@ class RayRenderer:
         """
         if _c_ssao_pass is None or strength <= 0.0:
             return
-        _c_ssao_pass({
+        _ssao_ctx = {
             "fb":       self._fb,
             "depth_px": self._depth_px,
             "sw":       self.sw,
@@ -1516,7 +1712,11 @@ class RayRenderer:
             "strength": strength,
             "radius":   radius,
             "bias":     bias,
-        })
+        }
+        _assert_keys(_ssao_ctx, "ssao_pass")
+        if _validate_ssao is not None:
+            _validate_ssao(_ssao_ctx)
+        _c_ssao_pass(_ssao_ctx)
 
     # ──────────────────────────────────────────────────────────────
     #  Collision helpers (for the demo)
@@ -1704,14 +1904,26 @@ class RayRenderer:
     # ──────────────────────────────────────────────────────────────
 
     def update_zone(
-        self, zone: Zone, atlas: TextureAtlas, dn: float = 1.0
+        self, zone: Zone, atlas: TextureAtlas, dn: float = 1.0,
+        *, force: bool = False,
     ) -> None:
         """Rebuild all buffers for a new zone.
 
         Clears the zone's ``compiled`` cache so the renderer always
         picks up the live Python attributes (floor_heights, light_levels,
         etc.) that the editor may have modified.
+
+        If *force* is False and the zone hasn't changed since the last
+        rebuild (tracked via ``_zone_generation``), this is a no-op.
+        Set *force=True* after editing zone data or switching zones.
+
+        The ``zone_generation`` counter should be bumped by the editor
+        (or any mutation code) when the zone is modified.
         """
+        gen = getattr(zone, '_generation', 0)
+        if not force and gen == self._zone_generation and gen > 0:
+            return
+        self._zone_generation = gen
         if hasattr(zone, "compiled"):
             zone.compiled = None
         self._build_buffers(zone, atlas, dn)

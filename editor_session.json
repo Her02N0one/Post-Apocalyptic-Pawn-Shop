@@ -1,11 +1,12 @@
 {
   "last_zone": "",
   "recent_zones": [],
-  "left_panel_w": 280,
-  "right_panel_w": 250,
+  "left_panel_w": 279,
+  "right_panel_w": 249,
   "window_w": 1600,
   "window_h": 900,
   "view_mode": "2d",
   "show_texture_browser": false,
-  "camera_bookmarks": []
+  "camera_bookmarks": [],
+  "window_maximized": false
 }

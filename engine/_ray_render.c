@@ -151,7 +151,8 @@ static void fill_background(uint8_t *fb, int sw, int sh, int half,
                              int is_interior,
                              const uint8_t *skybox, int sky_w, int sky_h,
                              double cam_angle, double cam_fov,
-                             double sky_vspan)
+                             double sky_vspan,
+                             int sky_r, int sky_g, int sky_b)
 {
     /* Top half: sky texture (if available), gradient, or dark ceiling. */
     int sky_lim = half < sh ? half : sh;
@@ -220,9 +221,9 @@ static void fill_background(uint8_t *fb, int sw, int sh, int half,
                 g = (int)(22 + 15 * t);
                 b = (int)(25 + 18 * t);
             } else {
-                r = SKY_TOP_R + (int)((SKY_BOT_R - SKY_TOP_R) * t);
-                g = SKY_TOP_G + (int)((SKY_BOT_G - SKY_TOP_G) * t);
-                b = SKY_TOP_B + (int)((SKY_BOT_B - SKY_TOP_B) * t);
+                r = sky_r + (int)((SKY_BOT_R - sky_r) * t);
+                g = sky_g + (int)((SKY_BOT_G - sky_g) * t);
+                b = sky_b + (int)((SKY_BOT_B - sky_b) * t);
             }
             for (int x = 0; x < sw; x++)
                 put_px(fb, sw, x, y, r, g, b);
@@ -374,6 +375,7 @@ py_render_frame(PyObject *self, PyObject *dict)
     int anim_tick = 0;
     Py_buffer skybox_buf     = {0};   /* uint8[sky_h*sky_w*3] (optional) */
     int sky_w = 0, sky_h = 0;
+    int sky_top_r = SKY_TOP_R, sky_top_g = SKY_TOP_G, sky_top_b = SKY_TOP_B;
     Py_buffer fog_den_buf    = {0};   /* float64[map_h*map_w] (optional) */
     Py_buffer fog_col_buf    = {0};   /* uint8[map_h*map_w*3] (optional) */
     Py_buffer lens_buf       = {0};   /* float64[sw] (optional)          */
@@ -474,6 +476,16 @@ py_render_frame(PyObject *self, PyObject *dict)
         if (sk_o && sk_o != Py_None) {
             if (PyObject_GetBuffer(sk_o, &skybox_buf, 0) < 0)
                 goto cleanup;
+        }
+    }
+    /* ── Optional sky colour override ─────────────────────────── */
+    {
+        PyObject *sc_o = PyDict_GetItemString(dict, "sky_color");
+        if (sc_o && sc_o != Py_None && PyTuple_Check(sc_o) &&
+            PyTuple_GET_SIZE(sc_o) >= 3) {
+            sky_top_r = (int)PyLong_AsLong(PyTuple_GET_ITEM(sc_o, 0));
+            sky_top_g = (int)PyLong_AsLong(PyTuple_GET_ITEM(sc_o, 1));
+            sky_top_b = (int)PyLong_AsLong(PyTuple_GET_ITEM(sc_o, 2));
         }
     }
     /* ── Optional fog-volume buffers ──────────────────────────── */
@@ -872,7 +884,7 @@ py_render_frame(PyObject *self, PyObject *dict)
     }
     fill_background(fb, sw, sh, half, is_interior,
                     skybox_data, sky_w, sky_h, cam_angle, cam_fov,
-                    sky_vspan);
+                    sky_vspan, sky_top_r, sky_top_g, sky_top_b);
 
     /* Initialize per-pixel depth to MAX_DEPTH */
     for (int i = 0; i < sw * sh; i++) depth_px[i] = (float)MAX_DEPTH;
@@ -1426,13 +1438,14 @@ py_render_frame(PyObject *self, PyObject *dict)
          * Hits are added to the deferred list for compositing in Phase 4.
          * Uses 2D ray-segment intersection: P + t*D vs A + u*(B-A).      */
         for (int ow = 0; ow < n_overlay && n_def[x] < MAX_DEF_PER_COL; ow++) {
-            double ox1    = ov_data[ow * 7 + 0];
-            double oy1    = ov_data[ow * 7 + 1];
-            double ox2    = ov_data[ow * 7 + 2];
-            double oy2    = ov_data[ow * 7 + 3];
-            double ohs    = ov_data[ow * 7 + 4];
-            int    otid   = (int)ov_data[ow * 7 + 5];
-            int    oflags = (int)ov_data[ow * 7 + 6];
+            double ox1    = ov_data[ow * 8 + 0];
+            double oy1    = ov_data[ow * 8 + 1];
+            double ox2    = ov_data[ow * 8 + 2];
+            double oy2    = ov_data[ow * 8 + 3];
+            double ohs    = ov_data[ow * 8 + 4];
+            double oby    = ov_data[ow * 8 + 5];
+            int    otid   = (int)ov_data[ow * 8 + 6];
+            int    oflags = (int)ov_data[ow * 8 + 7];
             (void)oflags;
 
             double sdx_ov = ox2 - ox1;
@@ -1475,7 +1488,7 @@ py_render_frame(PyObject *self, PyObject *dict)
             dh->face      = -1;
             dh->wall_frac = wfrac;
             dh->hs        = ohs;
-            dh->base_y    = -1e9;
+            dh->base_y    = (oby > -1e8) ? oby : -1e9;
             dh->top_tid   = -1;
             dh->box_idx   = -1;
         }
@@ -1607,19 +1620,23 @@ py_render_frame(PyObject *self, PyObject *dict)
                     double local_hit_y = lo_y + t_near * ld_y;
                     b_u = (local_hit_y + hd) / (2.0 * hd);
                     b_side = 0;  /* X-boundary → same shading as DDA side=0 */
-                    if (ld_x > 0)
+                    if (ld_x > 0) {
                         b_tid = (int)B[BX_TEX_W];  /* entered from -X = west */
-                    else
+                    } else {
                         b_tid = (int)B[BX_TEX_E];  /* entered from +X = east */
+                        b_u = 1.0 - b_u;           /* flip U for east face */
+                    }
                 } else {
                     /* Hit Y slab face (north/south) */
                     double local_hit_x = lo_x + t_near * ld_x;
                     b_u = (local_hit_x + hw) / (2.0 * hw);
                     b_side = 1;  /* Y-boundary → same shading as DDA side=1 */
-                    if (ld_y > 0)
+                    if (ld_y > 0) {
                         b_tid = (int)B[BX_TEX_S];  /* entered from -Y (north) */
-                    else
+                        b_u = 1.0 - b_u;           /* flip U for north face */
+                    } else {
                         b_tid = (int)B[BX_TEX_N];  /* entered from +Y (south) */
+                    }
                 }
 
                 b_u = b_u - floor(b_u);  /* wrap to [0,1) */
@@ -1956,6 +1973,7 @@ py_render_frame(PyObject *self, PyObject *dict)
             int ao_h = clampi(line_h >> 3, 1, 6);
             int ao_end = mini(y1 + ao_h, sh - 1);
             for (int y = y1 + 1; y <= ao_end; y++) {
+                if ((float)perp >= depth_px[y * sw + x]) continue;
                 double alpha = 0.35 * (1.0 - (double)(y - y1) / (double)ao_h);
                 int off = (y * sw + x) * 3;
                 fb[off]   = (uint8_t)(fb[off]   * (1.0 - alpha));
@@ -2908,6 +2926,7 @@ py_render_frame(PyObject *self, PyObject *dict)
                 int ao_h = clampi(d_scaled_h >> 3, 1, 4);
                 int ao_end = mini(d_y1 + ao_h, sh - 1);
                 for (int y = d_y1 + 1; y <= ao_end; y++) {
+                    if ((float)d_perp >= depth_px[y * sw + dx]) continue;
                     double al = 0.25 * (1.0 - (double)(y - d_y1)
                                         / (double)ao_h);
                     int off = (y * sw + dx) * 3;
@@ -2970,6 +2989,9 @@ py_render_frame(PyObject *self, PyObject *dict)
                         /* Distance at which this ray hits counter_h */
                         double td = (double)sh * dh_cam / p;
 
+                        /* Depth test: skip if something closer already drawn */
+                        if ((float)td >= depth_px[y * sw + dx]) continue;
+
                         /* World coordinates on the counter-top plane */
                         double wx = cam_x + td * rx;
                         double wy = cam_y + td * ry;
@@ -2977,18 +2999,23 @@ py_render_frame(PyObject *self, PyObject *dict)
                         /* Containment test: OBB for boxes, cell for walls */
                         int wxi = (int)floor(wx);
                         int wyi = (int)floor(wy);
+                        int u, v;
                         if (use_obb) {
                             double ldx = wx - obb_cx, ldy = wy - obb_cy;
                             double lx =  ldx * obb_cos + ldy * obb_sin;
                             double ly = -ldx * obb_sin + ldy * obb_cos;
                             if (lx < -obb_hw || lx > obb_hw ||
                                 ly < -obb_hd || ly > obb_hd) break;
+                            /* Map box-local coords to [0,1] UV */
+                            double fu = (lx + obb_hw) / (2.0 * obb_hw);
+                            double fv = (ly + obb_hd) / (2.0 * obb_hd);
+                            u = (int)(ts * fu) & ts_mask;
+                            v = (int)(ts * fv) & ts_mask;
                         } else {
                             if (wxi != tile_x || wyi != tile_y) break;
+                            u = (int)(ts * (wx - floor(wx))) & ts_mask;
+                            v = (int)(ts * (wy - floor(wy))) & ts_mask;
                         }
-
-                        int u = (int)(ts * (wx - floor(wx))) & ts_mask;
-                        int v = (int)(ts * (wy - floor(wy))) & ts_mask;
 
                         int r, g, b, a;
                         sample_tex(atlas, ts, top_tid, u, v, &r, &g, &b, &a);

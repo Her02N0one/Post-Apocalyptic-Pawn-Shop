@@ -28,6 +28,8 @@ from typing import Any, TYPE_CHECKING
 from core.zones import load_zone, Zone
 from core.types import Direction
 from core.constants import DAY_LENGTH
+from core.zone_map import ZoneMap
+from core.status_bar import StatusBar
 from components import (
     Camera, GameClock, WorldClock, WorldEventLog,
     Position, Player, Velocity, Facing, CoarsePos, Identity,
@@ -54,35 +56,24 @@ class Session(TransitionMixin, WorldTickerMixin):
 
     The scene reads ``session.tiles``, ``session.zone_name``, etc.
     but never calls ``load_zone`` or ``spawn_*`` itself.
+
+    Internally, zone layout data lives in :attr:`zone_map` (a
+    :class:`~core.zone_map.ZoneMap`) and HUD toast state in
+    :attr:`status_bar` (a :class:`~core.status_bar.StatusBar`).
+    Property shims keep the old ``session.tiles`` / ``session.status``
+    API working transparently.
     """
 
     def __init__(self, world: "World") -> None:
         self.world = world
-        self.zone_name: str = ""
-        self.tiles: list[list[str]] = []
-        self.rotations: list[list[int]] = []
-        self.map_w: int = 0
-        self.map_h: int = 0
         self.visited_zones: set[str] = set()
 
-        self.first_person: bool = False
-
-        # Per-cell floor/ceiling heights
-        self.floor_heights: list[list[float]] = []
-        self.ceil_heights: list[list[float]] = []
-        self.floor_textures: list[list[str]] = []
-        self.ceil_textures: list[list[str]] = []
-
-        # Layer-2 (secondary) floor/ceiling heights
-        self.floor2_heights: list[list[float]] = []
-        self.ceil2_heights: list[list[float]] = []
+        # ── Composed data objects ────────────────────────────────
+        self.zone_map = ZoneMap()
+        self.status_bar = StatusBar()
 
         # uid → zone descriptor dict (for rebuilding transient components)
         self._descriptor_index: dict[str, dict[str, Any]] = {}
-
-        # Status message — the scene can read & display this
-        self.status: str = ""
-        self.status_timer: float = 0.0
 
         # Portal lookup built when a zone is loaded
         self._portal_map: dict[tuple[int,int], tuple[str, float, float, str]] = {}
@@ -105,6 +96,124 @@ class Session(TransitionMixin, WorldTickerMixin):
         self.zone_sim = ZoneSim(world, tick_interval=1.0)
         self.beast_spawner = BeastSpawner(world)
         self._restock_timer: float = 60.0
+
+    # ── Property shims (ZoneMap delegation) ──────────────────────
+    # These let existing code keep reading ``session.tiles`` etc.
+    # without changing every consumer at once.
+
+    @property
+    def zone_name(self) -> str:
+        return self.zone_map.zone_name
+
+    @zone_name.setter
+    def zone_name(self, value: str) -> None:
+        self.zone_map.zone_name = value
+
+    @property
+    def tiles(self) -> list[list[str]]:
+        return self.zone_map.tiles
+
+    @tiles.setter
+    def tiles(self, value: list[list[str]]) -> None:
+        self.zone_map.tiles = value
+
+    @property
+    def rotations(self) -> list[list[int]]:
+        return self.zone_map.rotations
+
+    @rotations.setter
+    def rotations(self, value: list[list[int]]) -> None:
+        self.zone_map.rotations = value
+
+    @property
+    def map_w(self) -> int:
+        return self.zone_map.map_w
+
+    @map_w.setter
+    def map_w(self, value: int) -> None:
+        self.zone_map.map_w = value
+
+    @property
+    def map_h(self) -> int:
+        return self.zone_map.map_h
+
+    @map_h.setter
+    def map_h(self, value: int) -> None:
+        self.zone_map.map_h = value
+
+    @property
+    def first_person(self) -> bool:
+        return self.zone_map.first_person
+
+    @first_person.setter
+    def first_person(self, value: bool) -> None:
+        self.zone_map.first_person = value
+
+    @property
+    def floor_heights(self) -> list[list[float]]:
+        return self.zone_map.floor_heights
+
+    @floor_heights.setter
+    def floor_heights(self, value: list[list[float]]) -> None:
+        self.zone_map.floor_heights = value
+
+    @property
+    def ceil_heights(self) -> list[list[float]]:
+        return self.zone_map.ceil_heights
+
+    @ceil_heights.setter
+    def ceil_heights(self, value: list[list[float]]) -> None:
+        self.zone_map.ceil_heights = value
+
+    @property
+    def floor_textures(self) -> list[list[str]]:
+        return self.zone_map.floor_textures
+
+    @floor_textures.setter
+    def floor_textures(self, value: list[list[str]]) -> None:
+        self.zone_map.floor_textures = value
+
+    @property
+    def ceil_textures(self) -> list[list[str]]:
+        return self.zone_map.ceil_textures
+
+    @ceil_textures.setter
+    def ceil_textures(self, value: list[list[str]]) -> None:
+        self.zone_map.ceil_textures = value
+
+    @property
+    def floor2_heights(self) -> list[list[float]]:
+        return self.zone_map.floor2_heights
+
+    @floor2_heights.setter
+    def floor2_heights(self, value: list[list[float]]) -> None:
+        self.zone_map.floor2_heights = value
+
+    @property
+    def ceil2_heights(self) -> list[list[float]]:
+        return self.zone_map.ceil2_heights
+
+    @ceil2_heights.setter
+    def ceil2_heights(self, value: list[list[float]]) -> None:
+        self.zone_map.ceil2_heights = value
+
+    # ── Property shims (StatusBar delegation) ────────────────────
+
+    @property
+    def status(self) -> str:
+        return self.status_bar.message
+
+    @status.setter
+    def status(self, value: str) -> None:
+        self.status_bar.message = value
+
+    @property
+    def status_timer(self) -> float:
+        return self.status_bar.timer
+
+    @status_timer.setter
+    def status_timer(self, value: float) -> None:
+        self.status_bar.timer = value
 
     @property
     def portal_positions(self) -> set[tuple[int, int]]:
@@ -206,21 +315,8 @@ class Session(TransitionMixin, WorldTickerMixin):
     def _load_zone_template(self, name: str) -> Zone:
         """Load tiles from a zone file and cache its entity descriptors."""
         zd = load_zone(name)
-        self.zone_name = name
-        self.tiles = zd.tiles
-        self.rotations = zd.rotations if zd.rotations else [
-            [0] * (len(zd.tiles[0]) if zd.tiles else 0)
-            for _ in range(len(zd.tiles))
-        ]
-        self.map_h = len(zd.tiles)
-        self.map_w = len(zd.tiles[0]) if zd.tiles else 0
-        self.first_person = zd.first_person
-        self.floor_heights = zd.floor_heights
-        self.ceil_heights = zd.ceil_heights
-        self.floor_textures = zd.floor_textures
-        self.ceil_textures = zd.ceil_textures
-        self.floor2_heights = getattr(zd, 'floor2_heights', [])
-        self.ceil2_heights = getattr(zd, 'ceil2_heights', [])
+        self.zone_map.load_from_zone(zd)
+        self.zone_map.zone_name = name
         self._cache_descriptors_from_list(zd.entities)
         self._build_portal_map(zd)
         return zd

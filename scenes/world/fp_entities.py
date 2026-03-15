@@ -16,7 +16,7 @@ import pygame
 from core.tiles import PLATFORM_IDS, tile_def
 from core.types import Direction
 from components import (
-    Position, Sprite, Player, Facing, Identity, Health, WallSprite,
+    Position, Sprite, Player, Facing, Identity, Health, WallSprite, PrismShape,
 )
 from engine.raycaster import project_entities
 from scenes.world.fp_lighting import build_fog_lut
@@ -125,6 +125,9 @@ def draw_entities(
             continue
         # Skip entities with WallSprite — rendered by wall-entity system
         if app.world.has(eid, WallSprite):
+            continue
+        # Skip entities with PrismShape — rendered by wall-entity system
+        if app.world.has(eid, PrismShape):
             continue
         # Early distance cull before any other work
         _ddx = epos.x - px

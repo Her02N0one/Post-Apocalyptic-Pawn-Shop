@@ -27,6 +27,7 @@ class EntityKind(Enum):
     BEAST = auto()
     GROUND_ITEM = auto()
     CROP = auto()
+    PROP = auto()
 
 
 # ── Wall face constants (used by raycaster + renderer) ───────────

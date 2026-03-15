@@ -20,6 +20,9 @@ if TYPE_CHECKING:
     from core.zones.game_registry import GameRegistry
 
 from core.paths import ZONES_DIR
+from core.zones.objects import (
+    EntityDescriptor, Box, Quad, Curve, RenderPortal,
+)
 
 
 @dataclass
@@ -36,6 +39,7 @@ class OverlayWall:
     y2: float
     texture: str = "brick_wall"
     height_scale: float = 1.0
+    base_y: float = 0.0             # vertical offset (0 = floor-anchored)
     transparent: bool = False   # color-key: magenta pixels see through
     blocks: bool = True         # blocks player movement
     uid: int = 0                # persistent object ID (assigned by Zone)
@@ -155,6 +159,68 @@ class Zone:
     # are stable across save/load cycles.
     _next_uid: int = field(default=1, repr=False)
 
+    # ── Change-detection generation counter ───────────────────────
+    # Bumped on every mutation; the renderer checks this to skip
+    # redundant buffer rebuilds.  Not persisted.
+    _generation: int = field(default=0, repr=False)
+
+    def bump_generation(self) -> None:
+        """Signal that zone data has changed and buffers need rebuilding."""
+        self._generation += 1
+
+    # ── CellLayer property bridges ────────────────────────────────
+    # These return CellLayer *views* wrapping the existing raw fields.
+    # Mutations through the layer propagate to the Zone because they
+    # share the same underlying lists (no copy).
+
+    @property
+    def floor_layer(self) -> "CellLayer":
+        """Primary floor surface as a :class:`CellLayer`."""
+        from core.zones.cell_layer import CellLayer
+        return CellLayer(
+            heights=self.floor_heights,
+            textures=self.floor_textures,
+            upper_wall_height=self.upper_wall_height,
+            step_textures=self.floor_step_textures,
+            step_segments=self.floor_step_segments,
+        )
+
+    @property
+    def ceil_layer(self) -> "CellLayer":
+        """Primary ceiling surface as a :class:`CellLayer`."""
+        from core.zones.cell_layer import CellLayer
+        return CellLayer(
+            heights=self.ceil_heights,
+            textures=self.ceil_textures,
+            upper_wall_height=self.upper_wall_height,
+            step_textures=self.ceil_step_textures,
+            step_segments=self.ceil_step_segments,
+        )
+
+    @property
+    def floor2_layer(self) -> "CellLayer":
+        """Secondary floor surface as a :class:`CellLayer`."""
+        from core.zones.cell_layer import CellLayer
+        return CellLayer(
+            heights=self.floor2_heights,
+            textures=self.floor2_textures,
+            upper_wall_height=self.upper_wall_height2,
+            step_textures=[],
+            step_segments=[],
+        )
+
+    @property
+    def ceil2_layer(self) -> "CellLayer":
+        """Secondary ceiling surface as a :class:`CellLayer`."""
+        from core.zones.cell_layer import CellLayer
+        return CellLayer(
+            heights=self.ceil2_heights,
+            textures=self.ceil2_textures,
+            upper_wall_height=self.upper_wall_height2,
+            step_textures=[],
+            step_segments=[],
+        )
+
     def next_uid(self) -> int:
         """Allocate and return the next unique object ID."""
         uid = self._next_uid
@@ -185,6 +251,90 @@ class Zone:
         for ow in self.overlay_walls:
             if not ow.uid:
                 ow.uid = self.next_uid()
+
+    # ── UID-based object lookup ───────────────────────────────────
+
+    def _uid_of(self, obj) -> int:
+        """Extract UID from a dict or dataclass object."""
+        if isinstance(obj, dict):
+            return obj.get("uid", 0)
+        return getattr(obj, "uid", 0)
+
+    def object_by_uid(self, uid: int) -> tuple[str, int, Any] | None:
+        """Find a zone object by UID across all object lists.
+
+        Returns ``(type_tag, index, obj)`` or ``None``.
+        ``type_tag`` is one of ``"entity"``, ``"prism"``, ``"quad"``,
+        ``"portal"``, ``"curve"``, ``"overlay"``.
+        """
+        _LISTS: list[tuple[str, list]] = [
+            ("entity", self.entities),
+            ("prism", self.boxes),
+            ("quad", self.quads),
+            ("portal", self.render_portals),
+            ("curve", self.curves),
+            ("overlay", self.overlay_walls),
+        ]
+        for tag, lst in _LISTS:
+            for i, obj in enumerate(lst):
+                if self._uid_of(obj) == uid:
+                    return (tag, i, obj)
+        return None
+
+    def index_of_uid(self, type_tag: str, uid: int) -> int | None:
+        """Return the list index of an object with *uid* in the named list.
+
+        ``type_tag`` is ``"entity"`` | ``"prism"`` | ``"quad"`` |
+        ``"portal"`` | ``"curve"`` | ``"overlay"``.
+
+        Returns ``None`` if not found.
+        """
+        _TAG_TO_LIST: dict[str, list] = {
+            "entity": self.entities,
+            "prism": self.boxes,
+            "quad": self.quads,
+            "portal": self.render_portals,
+            "curve": self.curves,
+            "overlay": self.overlay_walls,
+        }
+        lst = _TAG_TO_LIST.get(type_tag)
+        if lst is None:
+            return None
+        for i, obj in enumerate(lst):
+            if self._uid_of(obj) == uid:
+                return i
+        return None
+
+    def uid_at(self, type_tag: str, index: int) -> int:
+        """Return the UID of the object at *index* in the named list.
+
+        Returns ``0`` if out of bounds or the object has no UID.
+        """
+        _TAG_TO_LIST: dict[str, list] = {
+            "entity": self.entities,
+            "prism": self.boxes,
+            "quad": self.quads,
+            "portal": self.render_portals,
+            "curve": self.curves,
+            "overlay": self.overlay_walls,
+        }
+        lst = _TAG_TO_LIST.get(type_tag)
+        if lst is None or index < 0 or index >= len(lst):
+            return 0
+        return self._uid_of(lst[index])
+
+    # ── Validation ─────────────────────────────────────────────────
+
+    def validate(self, **kwargs: Any) -> list:
+        """Run the structured validation pass and return a list of issues.
+
+        Keyword arguments are forwarded to
+        :func:`core.zones.validation.validate_zone` — pass
+        ``entity_registry``, ``tile_registry``, and/or ``texture_dir``
+        to enable the corresponding optional checks.
+        """
+        from core.zones.validation import validate_zone
+        return validate_zone(self, **kwargs)
 
     # ── Persistence ───────────────────────────────────────────────
 
@@ -263,6 +413,7 @@ class Zone:
                 x2=float(ow.get("x2", 0)), y2=float(ow.get("y2", 0)),
                 texture=str(ow.get("texture", "brick_wall")),
                 height_scale=float(ow.get("height_scale", 1.0)),
+                base_y=float(ow.get("base_y", 0.0)),
                 transparent=bool(ow.get("transparent", False)),
                 blocks=bool(ow.get("blocks", True)),
                 uid=int(ow.get("uid", 0)),
@@ -316,7 +467,7 @@ class Zone:
             tiles=tiles,
             rotations=rotations,
             portals=portals,
-            entities=data.get("entities", []),
+            entities=[EntityDescriptor.from_dict(d) for d in data.get("entities", [])],
             first_person=bool(data.get("first_person", False)),
             floor_heights=floor_heights,
             ceil_heights=ceil_heights,
@@ -332,10 +483,10 @@ class Zone:
             ceil_step_segments=_grid_seg_or_default("ceil_step_segments", H, W),
             upper_wall_height=_grid_or_default("upper_wall_height", 0.0, H, W),
             overlay_walls=overlay_walls,
-            quads=data.get("quads", []),
-            boxes=data.get("boxes", []),
+            quads=[Quad.from_dict(d) for d in data.get("quads", [])],
+            boxes=[Box.from_dict(d) for d in data.get("boxes", [])],
             reflect_map=_grid_or_default("reflect_map", 0, H, W),
-            curves=data.get("curves", []),
+            curves=[Curve.from_dict(d) for d in data.get("curves", [])],
             floor_slope_dx=_grid_or_default("floor_slope_dx", 0.0, H, W),
             floor_slope_dy=_grid_or_default("floor_slope_dy", 0.0, H, W),
             floor_slope_div=_grid_or_default("floor_slope_div", 0, H, W),
@@ -346,7 +497,7 @@ class Zone:
             upper_wall_height2=_grid_or_default("upper_wall_height2", 0.0, H, W),
             fog_density=_grid_or_default("fog_density", 0.0, H, W),
             fog_color=data.get("fog_color", [[(128, 128, 128)] * W for _ in range(H)]),
-            render_portals=data.get("render_portals", []),
+            render_portals=[RenderPortal.from_dict(d) for d in data.get("render_portals", [])],
             skybox=data.get("skybox", ""),
             sky_color=tuple(data.get("sky_color", ())),
             compiled=compiled,

@@ -1,0 +1,26 @@
+# wall_lamp_sheet.toml — Sprite sheet layout for wall_lamp_sheet.png
+#
+# Describes how the engine extracts cells from the grid.
+# Each cell fills one row × all facing columns.
+# Multi-frame states occupy consecutive rows.
+#
+#   Columns (left to right)  = facing directions
+#   Rows    (top to bottom)  = animation frames, grouped by state
+#   Cell size                = frame_width × frame_height pixels
+
+[grid]
+frame_width  = 32
+frame_height = 32
+
+columns = ["S"]
+
+[states.on]
+row    = 0
+frames = 4
+
+[states.off]
+row    = 4
+frames = 1
+
+[meta]
+entity_def_hash = "4ed2e86c9a2b"

@@ -211,6 +211,18 @@ class Zone3DEditor(
         """Compatibility shim — sets active_layer from bool."""
         self.active_layer = 2 if value else 1
 
+    # ── Dirty flag with zone generation tracking ──────────────────
+
+    @property
+    def dirty(self) -> bool:
+        return self._dirty
+
+    @dirty.setter
+    def dirty(self, value: bool) -> None:
+        self._dirty = value
+        if value and hasattr(self, 'zone'):
+            self.zone.bump_generation()
+
     # ── Phase 2: bridge properties ────────────────────────────────
     # These translate between the legacy ``_*_selected`` index-based
     # API and the UID-based SelectionStore.  Existing mixin and panel
@@ -366,7 +378,7 @@ class Zone3DEditor(
         self.show_axes  = True
         self.show_hud   = True   # pygame HUD overlay (disable when ImGui panels provide the info)
 
-        self.dirty = False
+        self._dirty = False
 
         # Flash callback — set by the owning app for visual feedback
         self.on_flash: callable | None = None
@@ -1219,6 +1231,11 @@ class Zone3DEditor(
             shift = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
             if shift and self._ent_selected is not None:
                 self.cmd_bus.execute(EntityRotate(direction=event.y))
+            elif shift and self._ent_selected is None:
+                # Rotate placement yaw for prism entity ghost preview
+                from core.entity_defs import snap_angle_8dir
+                self._ent_place_yaw = snap_angle_8dir(
+                    self._ent_place_yaw + event.y * (math.pi / 4.0))
             else:
                 self._ent_cycle_palette(event.y)
             return True

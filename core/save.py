@@ -184,6 +184,10 @@ def restore_entity(world: "World", entry: dict[str, Any]) -> int:
     _ensure_registry()
     eid = world.spawn()
 
+    # Mark transients as needing rebuild — the caller MUST call
+    # rebuild_transients() after restoring all entities.
+    world._transients_valid = False
+
     for key, val in entry.items():
         if key == "eid":
             continue

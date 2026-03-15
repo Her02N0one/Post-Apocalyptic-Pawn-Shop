@@ -75,6 +75,15 @@ class MenuBarMixin:
                     self._toggle_view_mode()
 
                 imgui.separator()
+                alive = getattr(self, '_preview_alive', False)
+                label = "Close Preview Window" if alive else "Preview Window"
+                if imgui.menu_item(label, "")[0]:
+                    if alive:
+                        self._kill_preview()
+                    else:
+                        self._launch_preview()
+
+                imgui.separator()
                 if self.editor_3d:
                     _, self.editor_3d.show_axes = imgui.menu_item(
                         "Show Axes", "F10", self.editor_3d.show_axes)
@@ -134,6 +143,11 @@ class MenuBarMixin:
                 imgui.separator()
                 if imgui.menu_item("Presets")[0]:
                     self.show_presets_viewer = True
+                imgui.separator()
+                if imgui.menu_item("Entity Textures")[0]:
+                    self.show_entity_textures = True
+                if imgui.menu_item("New Entity Type")[0]:
+                    self._ec_open_new()
                 imgui.separator()
                 if imgui.menu_item("Open Data Folder")[0]:
                     self._open_data_folder()

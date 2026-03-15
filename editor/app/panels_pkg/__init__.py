@@ -60,6 +60,7 @@ class PanelsMixin(MenuBarMixin, ToolboxMixin, InspectorMixin, OverlaysMixin):
         self._left_panel()
         self._properties_panel()
         self._status_bar()
+        self._draw_validation_hud()
         self._draw_splitters()
         if self.show_new_zone:
             self._new_zone_dialog()
@@ -107,6 +108,10 @@ class PanelsMixin(MenuBarMixin, ToolboxMixin, InspectorMixin, OverlaysMixin):
             self._draw_loot_tables_viewer()
         if self.show_presets_viewer:
             self._draw_presets_viewer()
+        if self.show_entity_textures:
+            self._draw_entity_textures()
+        if self.show_entity_creator:
+            self._draw_entity_creator()
 
     # ── Shared helpers ────────────────────────────────────────────
 
@@ -238,6 +243,57 @@ class PanelsMixin(MenuBarMixin, ToolboxMixin, InspectorMixin, OverlaysMixin):
         imgui.text_colored(f"  {self._transient_text}", r, g, b, alpha)
         imgui.end()
         imgui.pop_style_color(2)
+
+    # ── Persistent validation HUD ─────────────────────────────────
+
+    _VALIDATION_HUD_H = 26
+
+    def _draw_validation_hud(self) -> None:
+        """Persistent bar above the status-bar showing last-save validation issues."""
+        issues = getattr(self, "_save_issues", None)
+        if not issues:
+            return
+        n_err = sum(1 for i in issues if i.severity == "error")
+        n_warn = sum(1 for i in issues if i.severity == "warning")
+        if n_err == 0 and n_warn == 0:
+            return
+
+        win_w, win_h = self.win_size
+        bar_y = win_h - STATUS_BAR_H - self._VALIDATION_HUD_H
+        imgui.set_next_window_position(0, bar_y)
+        imgui.set_next_window_size(win_w, self._VALIDATION_HUD_H)
+        flags = (imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_RESIZE
+                 | imgui.WINDOW_NO_TITLE_BAR | imgui.WINDOW_NO_SCROLLBAR
+                 | imgui.WINDOW_NO_SCROLL_WITH_MOUSE | imgui.WINDOW_NO_COLLAPSE
+                 | imgui.WINDOW_NO_FOCUS_ON_APPEARING | imgui.WINDOW_NO_NAV)
+        bg = (0.20, 0.08, 0.04, 0.97) if n_err else (0.18, 0.14, 0.03, 0.97)
+        imgui.push_style_color(imgui.COLOR_WINDOW_BACKGROUND, *bg)
+        imgui.begin("##ValidationHUD", flags=flags)
+
+        # Icon + summary
+        parts: list[str] = []
+        if n_err:
+            parts.append(f"{n_err} error{'s' * (n_err > 1)}")
+        if n_warn:
+            parts.append(f"{n_warn} warning{'s' * (n_warn > 1)}")
+        summary = "\u26a0  " + ", ".join(parts)
+        col = (1.0, 0.45, 0.25, 1.0) if n_err else (0.95, 0.78, 0.30, 1.0)
+        imgui.text_colored(summary, *col)
+
+        # "Details" button opens the validate-zone dialog
+        imgui.same_line()
+        if imgui.small_button("Details"):
+            # Pass ZoneIssue list directly to the validate dialog
+            self._validate_results = list(issues)
+            self.show_validate_zone = True
+
+        # Dismiss button
+        imgui.same_line()
+        if imgui.small_button("\u00d7"):
+            self._save_issues = []
+
+        imgui.end()
+        imgui.pop_style_color()
 
     # ── Global state bar (Layer + View mode) ──────────────────────
 
@@ -435,6 +491,11 @@ class PanelsMixin(MenuBarMixin, ToolboxMixin, InspectorMixin, OverlaysMixin):
             self._draw_cell_inspector(zone)
         else:
             imgui.text_colored("Aim at a cell to inspect", 0.45, 0.45, 0.5, 1.0)
+
+        # Display options (FOV, visibility toggles)
+        imgui.spacing()
+        if self.editor_3d:
+            self._draw_display_section(self.editor_3d)
 
         # Zone settings
         imgui.spacing()

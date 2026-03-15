@@ -259,11 +259,13 @@ class RenderingMixin:
         wz = max(0.1, min(zone.height - 0.1, wz))
 
         # Build a temporary entity dict for the ghost
+        # For prism entities, use the current placement yaw
+        ghost_angle = getattr(self, '_ent_place_yaw', 0.0) if (edef and edef.render_type == 'prism') else 0.0
         ghost_ent = {
             "type": etype,
             "x": wx,
             "y": wz,
-            "angle": 0.0,
+            "angle": ghost_angle,
             "state": "default",
         }
         self._draw_one_entity(
@@ -306,10 +308,18 @@ class RenderingMixin:
                 col = (255, 180, 60)
             def_scale = 0.5
 
-        # Per-entity scale override (from properties)
-        scale = float(ent.get("properties", {}).get("scale", def_scale))
-        half_w = max(scale * 0.22, 0.08)
-        height = scale
+        # Per-entity scale override (from overrides)
+        scale = float(ent.get("overrides", {}).get("scale", def_scale))
+
+        # Prism entities use real geometry from their def
+        if edef and edef.render_type == "prism":
+            half_w = edef.width * 0.5
+            half_d = edef.depth * 0.5
+            height = edef.height
+        else:
+            half_w = max(scale * 0.22, 0.08)
+            half_d = half_w
+            height = scale
 
         # Override visuals for selection / ghost
         if ghost:
@@ -322,27 +332,44 @@ class RenderingMixin:
 
         edge_col = self._COL_ENT_SELECTED if is_selected else None
 
+        # Elevation offset (prism entities can float above the floor)
+        elev = edef.elevation if edef else 0.0
+        base_y = fh + elev
+        angle = float(ent.get("angle", 0.0))
+
         # Draw the filled box body
-        self._filled_box(
-            surface, vp, hw, hh,
-            ex - half_w, fh, ez - half_w,
-            ex + half_w, fh + height, ez + half_w,
-            base_color=col,
-            edge_color=edge_col if is_selected else (
-                min(255, col[0] + 40),
-                min(255, col[1] + 40),
-                min(255, col[2] + 40),
-            ),
-            edge_width=3 if is_selected else 1,
-            alpha=alpha,
+        bright_edge = edge_col if is_selected else (
+            min(255, col[0] + 40),
+            min(255, col[1] + 40),
+            min(255, col[2] + 40),
         )
+        if edef and edef.render_type == "prism":
+            self._filled_rotated_box(
+                surface, vp, hw, hh,
+                ex, ez,
+                edef.width, height, edef.depth,
+                base_y, angle,
+                base_color=col,
+                edge_color=bright_edge,
+                edge_width=3 if is_selected else 1,
+                alpha=alpha,
+            )
+        else:
+            self._filled_box(
+                surface, vp, hw, hh,
+                ex - half_w, base_y, ez - half_d,
+                ex + half_w, base_y + height, ez + half_d,
+                base_color=col,
+                edge_color=bright_edge,
+                edge_width=3 if is_selected else 1,
+                alpha=alpha,
+            )
 
         # Direction indicator line for directional entities
         if edef and edef.directional:
-            angle = float(ent.get("angle", 0.0))
             dx = math.cos(angle) * half_w * 3.0
             dz = -math.sin(angle) * half_w * 3.0
-            mid_y = fh + height * 0.5
+            mid_y = base_y + height * 0.5
             dir_col = self._COL_ENT_SELECTED if is_selected else (
                 min(255, col[0] + 80),
                 min(255, col[1] + 80),
@@ -371,7 +398,7 @@ class RenderingMixin:
         # Label — entity type name rendered at screen position above the box
         if not ghost:
             from editor.view_3d.math3d import _project
-            sp = _project(vp, ex, fh + height + 0.12, ez, hw, hh)
+            sp = _project(vp, ex, base_y + height + 0.12, ez, hw, hh)
             if sp is not None:
                 sx, sy = int(sp[0]), int(sp[1])
                 sw2, sh2 = int(hw * 2), int(hh * 2)

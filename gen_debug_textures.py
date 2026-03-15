@@ -181,15 +181,107 @@ def _draw_text(surf: pygame.Surface, x: int, y: int, text: str,
 
 def _text_width(text: str, scale: int = 1) -> int:
     """Calculate pixel width of text *without* drawing it."""
-    return max(0, len(text) * (5 + 1) * scale - scale)
+    n = len(text)
+    if n == 0:
+        return 0
+    # Each glyph is 5 cols wide, plus 1-col gap between glyphs.
+    return (n * 5 + (n - 1)) * scale
+
+
+def _text_height(scale: int = 1) -> int:
+    """Pixel height of one line of text at *scale*."""
+    return 7 * scale
+
+
+def _fit_text(text: str, max_w: int, max_h: int,
+              min_scale: int = 1, max_scale: int = 16
+              ) -> tuple[str, int]:
+    """Choose the largest scale that fits *text* inside *max_w* × *max_h*.
+
+    Returns ``(possibly_truncated_text, scale)``.
+    If even ``min_scale`` doesn't fit, the text is truncated to fit.
+    """
+    best_scale = min_scale
+    for s in range(max_scale, min_scale - 1, -1):
+        tw = _text_width(text, s)
+        th = _text_height(s)
+        if tw <= max_w and th <= max_h:
+            best_scale = s
+            break
+    else:
+        best_scale = min_scale
+    # Truncate if still too wide at chosen scale
+    glyph_w = 6 * best_scale  # 5 col + 1 gap
+    max_chars = max(1, max_w // glyph_w)
+    return text[:max_chars], best_scale
 
 
 def _draw_text_centered(surf: pygame.Surface, cx: int, cy: int, text: str,
                         color: tuple[int, int, int], scale: int = 1) -> None:
-    """Draw text centred at (cx, cy)."""
+    """Draw text centred at (cx, cy), clamped to surface bounds."""
     tw = _text_width(text, scale)
-    th = 7 * scale
-    _draw_text(surf, cx - tw // 2, cy - th // 2, text, color, scale)
+    th = _text_height(scale)
+    x = max(0, min(cx - tw // 2, surf.get_width() - tw))
+    y = max(0, min(cy - th // 2, surf.get_height() - th))
+    _draw_text(surf, x, y, text, color, scale)
+
+
+def _wrap_words(text: str, max_w: int, scale: int) -> list[str]:
+    """Split *text* on ``_`` / `` `` boundaries into lines that fit *max_w*."""
+    import re
+    tokens = re.split(r'[_ ]', text)
+    lines: list[str] = []
+    cur = ""
+    for tok in tokens:
+        candidate = f"{cur}_{tok}" if cur else tok
+        if _text_width(candidate, scale) <= max_w:
+            cur = candidate
+        else:
+            if cur:
+                lines.append(cur)
+            cur = tok
+    if cur:
+        lines.append(cur)
+    return lines or [text]
+
+
+def _fit_text_block(text: str, max_w: int, max_h: int,
+                    min_scale: int = 1, max_scale: int = 16,
+                    line_gap: int = 2,
+                    ) -> tuple[list[str], int]:
+    """Word-wrap *text* on ``_`` boundaries, picking the largest scale that fits.
+
+    Returns ``(lines, scale)``.  Lines that are still too wide at the
+    chosen scale are truncated.
+    """
+    for s in range(max_scale, min_scale - 1, -1):
+        lines = _wrap_words(text, max_w, s)
+        lh = _text_height(s)
+        block_h = len(lines) * lh + max(0, len(lines) - 1) * line_gap
+        if block_h <= max_h and all(_text_width(ln, s) <= max_w for ln in lines):
+            return lines, s
+    # Fallback: scale 1, wrap, then truncate any overlong lines
+    s = min_scale
+    lines = _wrap_words(text, max_w, s)
+    glyph_w = 6 * s
+    max_chars = max(1, max_w // glyph_w)
+    lines = [ln[:max_chars] for ln in lines]
+    # Drop lines that won't fit vertically
+    lh = _text_height(s)
+    max_lines = max(1, (max_h + line_gap) // (lh + line_gap))
+    return lines[:max_lines], s
+
+
+def _draw_text_block_centered(surf: pygame.Surface, cx: int, cy: int,
+                              lines: list[str], color: tuple[int, int, int],
+                              scale: int = 1, line_gap: int = 2) -> None:
+    """Draw multiple lines of text centred at (cx, cy)."""
+    lh = _text_height(scale)
+    total_h = len(lines) * lh + max(0, len(lines) - 1) * line_gap
+    start_y = cy - total_h // 2
+    for i, line in enumerate(lines):
+        ly = start_y + i * (lh + line_gap) + lh // 2
+        _draw_text_centered(surf, cx, ly, line, color, scale)
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -270,20 +362,27 @@ def gen_spritesheet(
                 pygame.draw.rect(cell, (255, 255, 255, 180),
                                  (0, 0, frame_w, frame_h), 1)
 
-                # Text labels
+                # Text labels — auto-scale to fit cell
                 text_col = (255, 255, 255)
+                pad = max(2, frame_w // 16)
+                usable_w = frame_w - pad * 2
                 # State name (top-left)
-                _draw_text(cell, 2, 2, state_name[:8], text_col, 1)
+                st_text, st_sc = _fit_text(state_name, usable_w // 2, frame_h // 4)
+                _draw_text(cell, pad, pad, st_text, text_col, st_sc)
                 # Facing (top-right area)
                 if facing_label:
-                    fw = _text_width(facing_label, 1)
-                    _draw_text(cell, frame_w - fw - 2, 2, facing_label, text_col, 1)
+                    fl_text, fl_sc = _fit_text(facing_label, usable_w // 3, frame_h // 4)
+                    fw_px = _text_width(fl_text, fl_sc)
+                    _draw_text(cell, frame_w - fw_px - pad, pad, fl_text, text_col, fl_sc)
                 # Frame number (large, centred)
                 frame_str = f"F{fr}"
+                fr_text, fr_sc = _fit_text(frame_str, usable_w, frame_h // 2)
                 _draw_text_centered(cell, frame_w // 2, frame_h // 2,
-                                    frame_str, text_col, 2)
+                                    fr_text, text_col, fr_sc)
                 # Row index (bottom-left, small)
-                _draw_text(cell, 2, frame_h - 9, f"R{row}", (200, 200, 200), 1)
+                r_text, r_sc = _fit_text(f"R{row}", usable_w // 3, frame_h // 5)
+                _draw_text(cell, pad, frame_h - _text_height(r_sc) - pad,
+                           r_text, (200, 200, 200), r_sc)
 
                 sheet.blit(cell, (cx, cy))
 
@@ -435,7 +534,7 @@ def gen_skybox(
 def gen_tile_texture(
     name: str,
     color: tuple[int, int, int] = (128, 128, 128),
-    size: int = 64,
+    size: int = 128,
     output_dir: Path | None = None,
 ) -> Path:
     """Generate a labelled solid-colour tile texture.
@@ -466,16 +565,131 @@ def gen_tile_texture(
     surf.set_at((2, 1), (255, 255, 0))
     surf.set_at((1, 2), (255, 255, 0))
 
-    # Label
+    # Label — auto-scale to fit tile
     text_col = (255, 255, 255) if sum(color) < 384 else (0, 0, 0)
-    # Fit name: use scale 1, truncate if needed
-    label = name[:10]
-    _draw_text_centered(surf, size // 2, size // 2, label, text_col, 1)
+    usable = int(size * 0.9)
+    label, lbl_scale = _fit_text(name, usable, usable)
+    _draw_text_centered(surf, size // 2, size // 2, label, text_col, lbl_scale)
 
     png_path = output_dir / f"{name}.png"
     pygame.image.save(surf, str(png_path))
     print(f"  Tile: {png_path}  ({size}×{size}, {color})")
     return png_path
+
+
+# ═════════════════════════════════════════════════════════════════════
+#  Entity face texture generator (proportional W:H)
+# ═════════════════════════════════════════════════════════════════════
+
+def gen_entity_face_texture(
+    key: str,
+    width: int,
+    height: int,
+    color: tuple[int, int, int] = (128, 128, 128),
+    label: str = "",
+    output_dir: Path | None = None,
+) -> Path:
+    """Generate a labelled entity face texture at *width* × *height*.
+
+    Unlike tile textures (always square), entity face textures use the
+    correct aspect ratio for the physical face they represent.
+    """
+    if output_dir is None:
+        output_dir = TILE_TEX_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    surf = pygame.Surface((width, height))
+    surf.fill(color)
+
+    # Border
+    border_col = (
+        min(255, color[0] + 60),
+        min(255, color[1] + 60),
+        min(255, color[2] + 60),
+    )
+    pygame.draw.rect(surf, border_col, (0, 0, width, height), 1)
+
+    # UV origin dot (top-left)
+    if width > 4 and height > 4:
+        surf.set_at((1, 1), (255, 255, 0))
+        surf.set_at((2, 1), (255, 255, 0))
+        surf.set_at((1, 2), (255, 255, 0))
+
+    # Label — word-wrap on '_' boundaries, auto-scale to fill
+    text_col = (255, 255, 255) if sum(color) < 384 else (0, 0, 0)
+    disp = label or key
+
+    # Reserve bottom ~25% for dimension label, use top ~65% for main label
+    main_h = int(height * 0.60)
+    dim_h  = int(height * 0.20)
+    pad_x  = max(2, int(width * 0.05))
+    usable_w = width - pad_x * 2
+
+    lines, txt_scale = _fit_text_block(disp, usable_w, main_h)
+    _draw_text_block_centered(surf, width // 2,
+                              int(height * 0.38),
+                              lines, text_col, txt_scale)
+
+    # Dimension label at bottom — single line, auto-scale
+    dim_label = f"{width}x{height}"
+    dim_label, dim_scale = _fit_text(dim_label, usable_w, dim_h)
+    dim_col = (180, 180, 180) if sum(color) < 384 else (60, 60, 60)
+    _draw_text_centered(surf, width // 2,
+                        height - _text_height(dim_scale) // 2 - 2,
+                        dim_label, dim_col, dim_scale)
+
+    png_path = output_dir / f"{key}.png"
+    pygame.image.save(surf, str(png_path))
+    print(f"  Entity face: {png_path}  ({width}×{height}, {color})")
+    return png_path
+
+
+def gen_all_entity_textures(base_px: int = 256) -> None:
+    """Generate proportional placeholder textures for all prism entities.
+
+    Reads entity defs from ``data/entity_defs.toml``, computes correct
+    W:H pixel sizes per face based on entity geometry, and writes PNGs
+    with the right aspect ratios.
+
+    *base_px* controls the resolution — the longest dimension of each
+    face maps to this many pixels (default 256 = "quad resolution"
+    vs a 64-px tile).
+    """
+    from core.entity_defs import entity_registry, EntityDef
+
+    reg = entity_registry()
+    print(f"\n── Entity face textures (base {base_px}px) ──")
+
+    # Per-face colour tints (distinguishable at a glance)
+    _FACE_COLORS: dict[str, tuple[int, int, int]] = {
+        "north":  (60, 140, 200),   # front = blue
+        "south":  (100, 100, 100),  # back  = grey
+        "east":   (80, 120, 160),   # side  = muted blue
+        "west":   (80, 120, 160),   # side  = muted blue
+        "top":    (50, 50, 60),     # top   = dark
+        "bottom": (40, 40, 45),     # bottom = darker
+    }
+
+    generated: set[str] = set()
+    for edef in reg.values():
+        if edef.render_type != "prism":
+            continue
+        # Single reference dimension → consistent pixel density across
+        # all faces of this entity.
+        ref = max(edef.width, edef.depth, edef.height, 0.01)
+        for face, tex_key in edef.textures:
+            if not tex_key or tex_key in generated:
+                continue
+            fw, fh = edef.face_dimensions(face)
+            w_px, h_px = EntityDef.face_tex_size(fw, fh, base_px,
+                                                  ref_dim=ref)
+            color = edef.color if edef.color != (120, 120, 140) else _FACE_COLORS.get(face, (128, 128, 128))
+            color = _FACE_COLORS.get(face, color)
+            gen_entity_face_texture(
+                tex_key, w_px, h_px,
+                color=color,
+            )
+            generated.add(tex_key)
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -636,6 +850,9 @@ Examples:
 
   # Slice a sprite sheet into individual tile PNGs
   python gen_debug_textures.py slice --sheet assets/textures/billboards/guard.png
+
+  # Generate entity face textures with correct proportions
+  python gen_debug_textures.py entity --base 128
 """)
 
     parser.add_argument("--all", action="store_true",
@@ -668,7 +885,7 @@ Examples:
     ti.add_argument("--name", required=True, help="Texture name (output stem)")
     ti.add_argument("--color", required=True,
                     help="RGB colour as R,G,B (e.g., 120,80,60)")
-    ti.add_argument("--size", type=int, default=64, help="Texture size")
+    ti.add_argument("--size", type=int, default=128, help="Texture size")
 
     # ── slice sub-command ─────────────────────────────────────
     sl = sub.add_parser("slice",
@@ -679,12 +896,19 @@ Examples:
     sl.add_argument("--out", default=None,
                     help="Output directory (default: assets/textures/tiles/)")
 
+    # ── entity sub-command ────────────────────────────────────
+    en = sub.add_parser("entity",
+                        help="Generate entity face textures with correct W:H")
+    en.add_argument("--base", type=int, default=256,
+                    help="Base resolution (longest face dim in px, default 256)")
+
     args = parser.parse_args()
 
     if args.all:
         _example_spritesheet()
         _example_skybox()
         _example_tiles()
+        gen_all_entity_textures()
         print("\nDone! All debug textures generated.")
         return
 
@@ -711,6 +935,8 @@ Examples:
         toml_path = Path(args.toml) if args.toml else None
         out_dir = Path(args.out) if args.out else None
         slice_spritesheet(sheet_path, toml_path, out_dir)
+    elif args.command == "entity":
+        gen_all_entity_textures(base_px=args.base)
     else:
         parser.print_help()
 

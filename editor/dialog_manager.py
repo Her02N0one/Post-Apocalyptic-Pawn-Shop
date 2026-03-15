@@ -31,6 +31,7 @@ class DialogManager:
         "entity_defs_viewer", "items_viewer",
         "loot_tables_viewer", "presets_viewer",
         "keybind_editor", "texture_browser",
+        "entity_textures", "entity_creator",
     })
 
     MODAL: frozenset[str] = frozenset({
@@ -84,6 +85,7 @@ class DialogManager:
             "entity_defs_viewer", "items_viewer",
             "loot_tables_viewer", "presets_viewer",
             "keybind_editor", "texture_browser",
+            "entity_textures", "entity_creator",
         ):
             if name in self._open:
                 self._open.discard(name)
@@ -141,3 +143,5 @@ class DialogPropertyBridge:
     show_loot_tables_viewer  = _make_dialog_prop("loot_tables_viewer")
     show_presets_viewer       = _make_dialog_prop("presets_viewer")
     show_texture_browser     = _make_dialog_prop("texture_browser")
+    show_entity_textures     = _make_dialog_prop("entity_textures")
+    show_entity_creator      = _make_dialog_prop("entity_creator")

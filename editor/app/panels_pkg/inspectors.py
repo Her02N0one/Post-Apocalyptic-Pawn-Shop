@@ -1161,18 +1161,36 @@ class InspectorMixin:
             imgui.text(state)
 
         def_scale = edef.scale if edef else 0.5
-        props = ent.setdefault("properties", {})
-        cur_scale = float(props.get("scale", def_scale))
-        changed_sc, new_scale = imgui.slider_float(
-            "Scale##einsp_scale", cur_scale, 0.1, 3.0, "%.2f")
-        if changed_sc:
-            ed._push_undo()
-            props["scale"] = round(new_scale, 2)
-            self.dirty = True
-        imgui.same_line()
-        if imgui.small_button("Reset##einsp_scale_reset"):
-            props.pop("scale", None)
-            self.dirty = True
+        props = ent.setdefault("overrides", {})
+
+        # ── Prism-specific geometry info ──
+        if edef and edef.render_type == "prism":
+            imgui.spacing()
+            imgui.text_disabled("Prism Geometry (from def)")
+            imgui.text(f"  {edef.width:.2f} x {edef.depth:.2f} x {edef.height:.2f}")
+            if edef.elevation != 0.0:
+                imgui.text(f"  elevation: {edef.elevation:.2f}")
+            imgui.spacing()
+
+            # Show per-face texture keys (read-only from def)
+            if edef.textures:
+                imgui.text_disabled("Textures:")
+                for face, key in edef.textures:
+                    imgui.text(f"  {face}: {key}")
+                imgui.spacing()
+        else:
+            # Scale slider only for billboard/8way entities
+            cur_scale = float(props.get("scale", def_scale))
+            changed_sc, new_scale = imgui.slider_float(
+                "Scale##einsp_scale", cur_scale, 0.1, 3.0, "%.2f")
+            if changed_sc:
+                ed._push_undo()
+                props["scale"] = round(new_scale, 2)
+                self.dirty = True
+            imgui.same_line()
+            if imgui.small_button("Reset##einsp_scale_reset"):
+                props.pop("scale", None)
+                self.dirty = True
 
         imgui.pop_item_width()
 

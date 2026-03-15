@@ -53,6 +53,11 @@ from core.zones.format import (
 )
 from core.tiles.types import TileType
 from core.tiles.registry import tile_def
+from core.zones.tex_priority import (
+    resolve_wall_texture,
+    resolve_floor_ceil_texture,
+    FACE_NAMES as _TEX_FACE_NAMES,
+)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -81,7 +86,7 @@ _NO_TEX_KEY = ""
 #  CompiledZone — result container
 # ═══════════════════════════════════════════════════════════════════
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class CompiledZone:
     """Immutable container for compiled zone arrays.
 
@@ -152,29 +157,11 @@ def _resolve_wall_tex(
 ) -> int:
     """Resolve a single wall-face texture with the full priority chain.
 
-    Priority (highest → lowest):
-      1. ``zone.face_textures[r][c][face_idx]`` — per-cell per-face override
-      2. ``zone.wall_textures[r][c]``           — per-cell wall override
-      3. ``TileDef.tex_for_face(face, rotation)`` — tile definition default
+    Delegates to :func:`~core.zones.tex_priority.resolve_wall_texture`
+    for the priority logic, then maps the resulting key to a uint16 ID.
     """
-    # 1. Per-cell per-face override
-    if zone.face_textures and r < len(zone.face_textures):
-        row = zone.face_textures[r]
-        if c < len(row):
-            faces = row[c]  # [N, S, E, W]
-            face_idx = _FACE_NAMES.index(face)
-            if face_idx < len(faces) and faces[face_idx]:
-                return _resolve_tex(faces[face_idx], tex_ns)
-
-    # 2. Per-cell wall override
-    if zone.wall_textures and r < len(zone.wall_textures):
-        row = zone.wall_textures[r]
-        if c < len(row) and row[c]:
-            return _resolve_tex(row[c], tex_ns)
-
-    # 3. Tile definition default
-    tex_name = tdef.tex_for_face(face, rotation)
-    return _resolve_tex(tex_name, tex_ns)
+    key = resolve_wall_texture(zone, r, c, face, tdef, rotation)
+    return _resolve_tex(key, tex_ns)
 
 
 def _resolve_floor_ceil_tex(
@@ -185,19 +172,13 @@ def _resolve_floor_ceil_tex(
 ) -> int:
     """Resolve floor or ceiling texture for a cell.
 
-    Uses the zone-level per-cell texture grid.  Falls back to the
-    tile definition's ``wall_tex()`` if the zone grid is empty.
+    Delegates to :func:`~core.zones.tex_priority.resolve_floor_ceil_texture`
+    for the priority logic, then maps the resulting key to a uint16 ID.
     """
-    grid = zone.ceil_textures if is_ceil else zone.floor_textures
-    if grid and r < len(grid):
-        row = grid[r]
-        if c < len(row) and row[c]:
-            return _resolve_tex(row[c], tex_ns)
-
-    # Fallback: use tile's default texture
     tile_id = zone.tiles[r][c] if (r < len(zone.tiles) and c < len(zone.tiles[r])) else ""
     tdef = tile_def(tile_id)
-    return _resolve_tex(tdef.wall_tex(), tex_ns)
+    key = resolve_floor_ceil_texture(zone, r, c, is_ceil, tdef)
+    return _resolve_tex(key, tex_ns)
 
 
 # ═══════════════════════════════════════════════════════════════════

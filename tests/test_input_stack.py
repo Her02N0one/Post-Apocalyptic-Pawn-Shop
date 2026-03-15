@@ -435,6 +435,7 @@ class TestDialogPropertyBridge:
             "show_validate_zone", "show_entity_defs_viewer",
             "show_items_viewer", "show_loot_tables_viewer",
             "show_presets_viewer", "show_texture_browser",
+            "show_entity_textures",
         ]
         for prop_name in floating_props:
             setattr(obj, prop_name, True)

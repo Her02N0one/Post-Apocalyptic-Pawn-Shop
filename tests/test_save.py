@@ -192,7 +192,7 @@ class TestTileEntity:
         w = World()
         eid = spawn_from_descriptor(w, {
             "id": "chest_1",
-            "prefab": "container",
+            "prefab": "vending_machine",
             "position": {"x": 5.0, "y": 3.0},
             "tile_entity": {"loot_table": "treasure_chest"},
         }, "test_zone")

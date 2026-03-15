@@ -318,7 +318,8 @@ class TestPathfindingWithZoneSim(unittest.TestCase):
         cp = w.get(eid, CoarsePos)
         self.assertEqual(cp.zone, "zone_b")
 
-        # Second tick: entity is on portal in zone_b but has portal_cd
+        # Second tick: entity is on portal in zone_b but arrival tracking
+        # prevents bounce-back (positional, not timer-based)
         sim.tick(1.0, active_zone="__none__")
         cp = w.get(eid, CoarsePos)
         # Should still be in zone_b (not bounced back to zone_a)

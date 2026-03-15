@@ -1,0 +1,38 @@
+# vending_machine_net.toml — Net layout for vending_machine_net.png
+#
+# Describes how the engine extracts face textures from the
+# box-unfold (cross pattern) image.
+#
+#           ┌──top──┐
+#  ┌──left──┼─front──┼─right─┬──back──┐
+#  └────────┼────────┼───────┴────────┘
+#
+# Each [faces.X] section gives the pixel rectangle for
+# that face within the image.  x,y = top-left corner.
+
+[faces.front]
+x = 112
+y = 112
+w = 128
+h = 256
+
+[faces.back]
+x = 352
+y = 112
+w = 128
+h = 256
+
+[faces.side]
+x = 0
+y = 112
+w = 112
+h = 256
+
+[faces.top]
+x = 112
+y = 0
+w = 128
+h = 112
+
+[meta]
+entity_def_hash = "3586df2a2229"

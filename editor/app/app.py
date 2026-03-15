@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import math
+import sys
 import time
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 import pygame
 from pygame.locals import DOUBLEBUF, OPENGL, RESIZABLE
@@ -34,6 +38,8 @@ from editor.app.panels_pkg import PanelsMixin
 from editor.app.dialogs import DialogsMixin
 from editor.app.asset_browser import AssetBrowserMixin
 from editor.app.data_viewers import DataViewersMixin
+from editor.app.entity_textures import EntityTexturesMixin
+from editor.app.entity_creator import EntityCreatorMixin
 from editor.app.session_cfg import load_session, save_session, push_recent
 from editor.input_context import InputStack
 from editor.dialog_manager import DialogManager, DialogPropertyBridge
@@ -49,6 +55,8 @@ class ZoneEditorApp(
     DialogsMixin,
     AssetBrowserMixin,
     DataViewersMixin,
+    EntityTexturesMixin,
+    EntityCreatorMixin,
 ):
     """Standalone 3D zone editor with ImGui panels.
 
@@ -84,14 +92,42 @@ class ZoneEditorApp(
     def __init__(self, zone_name: str = ""):
         # Pygame + OpenGL
         pygame.init()
+
+        # Restore saved window size / maximized state from session
+        _sess = load_session()
+        _init_w = _sess.get("window_w", WINDOW_W)
+        _init_h = _sess.get("window_h", WINDOW_H)
+        _was_maximized = _sess.get("window_maximized", False)
+
         self.screen = pygame.display.set_mode(
-            (WINDOW_W, WINDOW_H), DOUBLEBUF | OPENGL | RESIZABLE,
+            (_init_w, _init_h), DOUBLEBUF | OPENGL | RESIZABLE,
         )
         pygame.display.set_caption(WINDOW_TITLE)
         _icon_path = Path(__file__).resolve().parent.parent.parent / "assets" / "textures" / "icon" / "moonPAPS.png"
         if _icon_path.exists():
             pygame.display.set_icon(pygame.image.load(str(_icon_path)))
         self.clock = pygame.time.Clock()
+        self._window_maximized: bool = False
+
+        # Re-maximize if it was maximized last session
+        if _was_maximized:
+            try:
+                import ctypes
+                sdl_win = ctypes.cast(pygame.display.get_wm_info()["window"],
+                                      ctypes.c_void_p)
+                for _lib_name in ("libSDL2-2.0.so.0", "libSDL2.so", "SDL2"):
+                    try:
+                        _sdl2 = ctypes.CDLL(_lib_name)
+                        break
+                    except OSError:
+                        continue
+                else:
+                    _sdl2 = None
+                if _sdl2 is not None:
+                    _sdl2.SDL_MaximizeWindow(sdl_win)
+                    self._window_maximized = True
+            except Exception:
+                pass
 
         gl.glEnable(gl.GL_BLEND)
         gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
@@ -113,7 +149,7 @@ class ZoneEditorApp(
         self.registry = GameRegistry()
 
         # Session persistence (MRU, layout, bookmarks)
-        self._session = load_session()
+        self._session = _sess
 
         # Input stack + dialog manager (must exist before any show_* write)
         self.input_stack = InputStack()
@@ -139,9 +175,9 @@ class ZoneEditorApp(
         self._vp_surface: pygame.Surface | None = None
         self._vp_size: tuple[int, int] = (800, 600)
         # mouse_captured is now a property backed by the InputStack
-        _sw = self._session.get("window_w", WINDOW_W)
-        _sh = self._session.get("window_h", WINDOW_H)
-        self.win_size: tuple[int, int] = (_sw, _sh)
+        # Use actual SDL window size (accounts for maximize on start)
+        _actual = pygame.display.get_window_size()
+        self.win_size: tuple[int, int] = (_actual[0], _actual[1])
         self.left_panel_w: int = self._session.get("left_panel_w", LEFT_PANEL_W)
         self.right_panel_w: int = self._session.get("right_panel_w", RIGHT_PANEL_W)
         self._dragging_splitter: str = ""
@@ -207,8 +243,14 @@ class ZoneEditorApp(
         self._frt_replace: str = ""
         self._frt_result: str = ""
 
-        # Validate Zone results window state
-        self._validate_results: list[str] = []
+        # Validate Zone results window state (ZoneIssue objects)
+        self._validate_results: list = []
+
+        # Persistent validation issues from last save (ZoneIssue list)
+        self._save_issues: list = []
+
+        # Zone preview subprocess
+        self._preview_proc: object | None = None  # subprocess.Popen or None
 
         # Zone Settings dialog state
         self._zs_skybox: str = ""
@@ -234,6 +276,12 @@ class ZoneEditorApp(
 
         self._loot_cache: dict | None = None
         self._presets_cache: dict | None = None
+
+        # Entity texture manager state
+        self._et_init()
+
+        # Entity creator state
+        self._ec_init()
 
         # Performance
         self.frame_ms: float = 0.0
@@ -349,6 +397,35 @@ class ZoneEditorApp(
             return
         self.zone.name = name
         self.zone_name = name
+
+        # ── Validation gate ──────────────────────────────────────
+        from core.zones.validation import validate_zone
+        from core.entity_defs import entity_registry
+        from core.tiles import TILE_REGISTRY
+        from core.paths import TILE_TEX_DIR
+        issues = validate_zone(
+            self.zone,
+            entity_registry=entity_registry(),
+            tile_registry=TILE_REGISTRY,
+            texture_dir=TILE_TEX_DIR,
+        )
+        errors = [i for i in issues if i.severity == "error"]
+        warnings = [i for i in issues if i.severity == "warning"]
+        # Store persistently so the HUD can display them until next save
+        self._save_issues = list(issues)
+        if errors:
+            n = len(errors)
+            self._flash_transient(
+                f"\u26a0 {n} validation error{'s' * (n > 1)} — see HUD",
+                3.0, (1.0, 0.5, 0.2, 1.0))
+            for e in errors:
+                _log.warning("zone-validate ERROR: %s [%s]",
+                             e.message, e.location or e.category)
+        if warnings:
+            for w in warnings:
+                _log.info("zone-validate warn: %s [%s]",
+                          w.message, w.location or w.category)
+
         path = ZONES_DIR / f"{name}.zone"
         try:
             self.zone.save_to_file(path, self.registry)
@@ -486,8 +563,51 @@ class ZoneEditorApp(
             pygame.display.flip()
 
         self._save_session()
+        self._kill_preview()
         self.imgui_impl.shutdown()
         pygame.quit()
+
+    # ── Zone preview subprocess ──────────────────────────────────
+
+    def _launch_preview(self) -> None:
+        """Spawn (or re-focus) the standalone zone preview window."""
+        import subprocess
+        # Kill any existing preview first
+        self._kill_preview()
+        if not self.zone_name or self.zone_name == "untitled":
+            self._flash_transient("Save zone first", 1.5, (1.0, 0.5, 0.2, 1.0))
+            return
+        # Ensure latest data is on disk
+        if self.dirty:
+            self._do_save(self.zone_name)
+        script = Path(__file__).resolve().parent.parent.parent / "zone_preview.py"
+        try:
+            self._preview_proc = subprocess.Popen(
+                [sys.executable, str(script), self.zone_name])
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("Failed to launch preview: %s", exc)
+            self._flash_transient(
+                f"Preview launch failed: {exc}", 3.0, (1.0, 0.3, 0.3, 1.0))
+
+    def _kill_preview(self) -> None:
+        """Terminate the preview subprocess if running."""
+        p = self._preview_proc
+        if p is None:
+            return
+        try:
+            p.poll()
+            if p.returncode is None:
+                p.terminate()
+        except OSError:
+            pass
+        self._preview_proc = None
+
+    @property
+    def _preview_alive(self) -> bool:
+        p = self._preview_proc
+        if p is None:
+            return False
+        return p.poll() is None
 
     # ── Camera bookmarks ─────────────────────────────────────────
 
@@ -555,6 +675,7 @@ class ZoneEditorApp(
         self._session["right_panel_w"] = self.right_panel_w
         self._session["window_w"] = self.win_size[0]
         self._session["window_h"] = self.win_size[1]
+        self._session["window_maximized"] = getattr(self, '_window_maximized', False)
         self._session["view_mode"] = self.view_mode
         self._session["show_texture_browser"] = getattr(
             self, "show_texture_browser", False)

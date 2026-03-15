@@ -29,6 +29,7 @@
  *                    facing_angle, n_facings, anim_offset, flags]
  *                   per entity
  *   n_ents      : int — number of entities
+ *   cam_h       : double — camera height in world units (0=floor, 1=ceil)
  *
  * Returns None.
  */
@@ -58,6 +59,7 @@ py_render_entities(PyObject *self, PyObject *dict)
 
     /* ── Extract scalars ─────────────────────────────────────────── */
     int horizon_shift = 0;
+    double cam_h = 0.5;
     if (dict_get_int(dict, "sw",        &sw))        goto ent_cleanup;
     if (dict_get_int(dict, "sh",        &sh))        goto ent_cleanup;
     if (dict_get_int(dict, "tex_size",  &tex_size))  goto ent_cleanup;
@@ -72,6 +74,9 @@ py_render_entities(PyObject *self, PyObject *dict)
     /* Optional horizon shift for pitch support */
     { PyObject *hs = PyDict_GetItemString(dict, "horizon_shift");
       if (hs) horizon_shift = (int)PyLong_AsLong(hs); }
+    /* Optional camera height for elevation-aware positioning */
+    { PyObject *ch = PyDict_GetItemString(dict, "cam_h");
+      if (ch) cam_h = PyFloat_AsDouble(ch); }
 
     /* ── Extract buffers ─────────────────────────────────────────── */
     if (dict_get_buf(dict, "fb",       &fb_buf,       1)) goto ent_cleanup;
@@ -88,6 +93,9 @@ py_render_entities(PyObject *self, PyObject *dict)
     const double  *ent     = (const double *)ent_buf.buf;
     const int      ts      = tex_size;
     const int      ts_mask = ts - 1;
+
+    /* Half screen height including horizon shift */
+    int half_h = sh / 2 + horizon_shift;
 
     /* Inverse determinant of the camera matrix */
     double inv_det = 1.0 / (plane_x * dir_y - dir_x * plane_y);
@@ -171,9 +179,10 @@ py_render_entities(PyObject *self, PyObject *dict)
         int spr_w = (int)(wall_h * e_wscale);
         if (spr_h < 1 || spr_w < 1) continue;
 
-        /* Vertical positioning: base at floor level, accounting for
-         * horizon shift so entities track the pitch correctly. */
-        int floor_y = (int)((sh + wall_h) / 2.0) + horizon_shift;
+        /* Vertical positioning: entity base sits at floor level (z=0),
+         * offset by cam_h so entities move down when camera goes up.
+         * half_h already includes horizon_shift.  */
+        int floor_y = half_h + (int)(cam_h * wall_h);
         int spr_y0 = floor_y - spr_h;
         int spr_x0 = scr_x - spr_w / 2;
 
@@ -339,7 +348,9 @@ py_render_particles(PyObject *self, PyObject *dict)
     /* Optional horizon shift for pitch support */
     { PyObject *hs = PyDict_GetItemString(dict, "horizon_shift");
       if (hs) horizon_shift = (int)PyLong_AsLong(hs); }
-
+    double p_cam_h = 0.5;
+    { PyObject *ch = PyDict_GetItemString(dict, "cam_h");
+      if (ch) p_cam_h = PyFloat_AsDouble(ch); }
     /* ── Buffers ─────────────────────────────────────────────────── */
     if (dict_get_buf(dict, "fb",        &fb_buf,    1)) goto pcl_cleanup;
     if (dict_get_buf(dict, "depth_px",  &dp_buf,    1)) goto pcl_cleanup;
@@ -460,9 +471,9 @@ py_render_particles(PyObject *self, PyObject *dict)
         if (spr_h < 1) spr_h = 1;
         if (spr_w < 1) spr_w = 1;
 
-        /* Vertical position: pz is height above floor (0.5 = eye level)
+        /* Vertical position: pz is height above floor
          * Offset from screen center by (cam_h - pz) projected. */
-        int scr_y = half_h + (int)((0.5 - pz) * wall_h);
+        int scr_y = half_h + (int)((p_cam_h - pz) * wall_h);
 
         /* Alpha from life fraction + distance fog */
         int fog = fog_val(fog_lt, ty);

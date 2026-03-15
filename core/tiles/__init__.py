@@ -29,6 +29,7 @@ from core.tiles.registry import (                             # noqa: F401
     wall_lut, half_wall_lut, platform_lut, hs_lut,
     transparent_lut, thin_wall_lut, tall_wall_lut, alt_tex_lut,
     anim_lut,
+    register_extra_texture_keys, extra_texture_keys, total_texture_count,
 )
 
 # TOML I/O

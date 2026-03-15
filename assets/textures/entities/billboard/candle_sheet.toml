@@ -1,0 +1,26 @@
+# candle_sheet.toml — Sprite sheet layout for candle_sheet.png
+#
+# Describes how the engine extracts cells from the grid.
+# Each cell fills one row × all facing columns.
+# Multi-frame states occupy consecutive rows.
+#
+#   Columns (left to right)  = facing directions
+#   Rows    (top to bottom)  = animation frames, grouped by state
+#   Cell size                = frame_width × frame_height pixels
+
+[grid]
+frame_width  = 16
+frame_height = 32
+
+columns = ["S"]
+
+[states.lit]
+row    = 0
+frames = 4
+
+[states.unlit]
+row    = 4
+frames = 1
+
+[meta]
+entity_def_hash = "ac9a629146de"

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import imgui
 
-from core.tiles import tile_def
 from core.zones import list_zones
 
 
@@ -456,22 +455,41 @@ class DialogsMixin:
         zone = self.zone
 
         if imgui.button("Run Validation", 160, 26):
-            self._validate_results = _validate_zone(zone)
+            from core.zones.validation import validate_zone as _vz
+            from core.entity_defs import entity_registry as _er
+            from core.tiles import TILE_REGISTRY as _tr
+            from core.paths import TILE_TEX_DIR as _td
+            self._validate_results = _vz(
+                zone,
+                entity_registry=_er(),
+                tile_registry=_tr,
+                texture_dir=_td,
+            )
 
         imgui.same_line()
         n = len(self._validate_results)
         if n == 0:
             imgui.text_colored("No issues \u2713", 0.4, 0.9, 0.4, 1.0)
         else:
-            imgui.text_colored(f"{n} issue{'s' if n != 1 else ''}", 0.9, 0.5, 0.3, 1.0)
+            n_err = sum(1 for i in self._validate_results if i.severity == "error")
+            n_warn = sum(1 for i in self._validate_results if i.severity == "warning")
+            parts = []
+            if n_err:
+                parts.append(f"{n_err} error{'s' * (n_err > 1)}")
+            if n_warn:
+                parts.append(f"{n_warn} warning{'s' * (n_warn > 1)}")
+            imgui.text_colored(", ".join(parts) if parts else f"{n} issue{'s' if n != 1 else ''}",
+                               0.9, 0.5, 0.3, 1.0)
 
         imgui.separator()
 
         imgui.begin_child("##val_results", 0, 0, border=True)
-        for msg in self._validate_results:
-            if msg.startswith("[ERR]"):
+        for iss in self._validate_results:
+            loc = f" @ {iss.location}" if iss.location else ""
+            msg = f"[{iss.severity.upper()}] {iss.message}{loc}"
+            if iss.severity == "error":
                 imgui.text_colored(msg, 0.95, 0.35, 0.30, 1.0)
-            elif msg.startswith("[WARN]"):
+            elif iss.severity == "warning":
                 imgui.text_colored(msg, 0.95, 0.75, 0.30, 1.0)
             else:
                 imgui.text_colored(msg, 0.55, 0.75, 0.95, 1.0)
@@ -876,167 +894,6 @@ _TEXTURE_3D_FIELDS = (
 _SEGMENT_FIELDS = (
     "wall_segments", "floor_step_segments", "ceil_step_segments",
 )
-
-
-# ── Validation ────────────────────────────────────────────────────
-
-def _validate_zone(zone) -> list[str]:
-    """Run all validation checks on *zone*.  Returns a list of messages."""
-    issues: list[str] = []
-    w, h = zone.width, zone.height
-
-    # ── Grid dimension mismatches ─────────────────────────────
-    _REQUIRED_GRIDS = (
-        "tiles", "floor_heights", "ceil_heights",
-    )
-    for fname in _REQUIRED_GRIDS:
-        grid = getattr(zone, fname, None)
-        if not grid:
-            issues.append(f"[ERR] Missing required grid: {fname}")
-            continue
-        if len(grid) != h:
-            issues.append(f"[ERR] {fname}: row count {len(grid)} != height {h}")
-        for ri, row in enumerate(grid):
-            if len(row) != w:
-                issues.append(f"[ERR] {fname}[{ri}]: col count {len(row)} != width {w}")
-                break
-
-    # ── Height sanity ─────────────────────────────────────────
-    if zone.floor_heights and zone.ceil_heights:
-        for r in range(min(h, len(zone.floor_heights))):
-            for c in range(min(w, len(zone.floor_heights[r]))):
-                fh = zone.floor_heights[r][c]
-                ch = zone.ceil_heights[r][c]
-                if ch < 10.0 - 0.01 and ch - fh < 0.05:
-                    issues.append(
-                        f"[WARN] Cell ({r},{c}): ceiling ({ch:.2f}) nearly at "
-                        f"floor ({fh:.2f}) \u2014 gap {ch - fh:.3f}")
-
-    # ── Layer 2 height sanity ─────────────────────────────────
-    LAYER_NONE = -1000.0
-    f2g = getattr(zone, 'floor2_heights', None)
-    c2g = getattr(zone, 'ceil2_heights', None)
-    if f2g and c2g:
-        for r in range(min(h, len(f2g))):
-            for c in range(min(w, len(f2g[r]))):
-                f2h = f2g[r][c]
-                c2h = c2g[r][c] if r < len(c2g) and c < len(c2g[r]) else LAYER_NONE
-                if f2h <= LAYER_NONE + 1.0 or c2h <= LAYER_NONE + 1.0:
-                    continue
-                if c2h - f2h < 0.05:
-                    issues.append(
-                        f"[WARN] Cell ({r},{c}): L2 ceiling ({c2h:.2f}) nearly at "
-                        f"L2 floor ({f2h:.2f}) \u2014 gap {c2h - f2h:.3f}")
-
-    # ── Missing textures on open cells ────────────────────────
-    from core.tiles import TILE_REGISTRY
-    used_textures: set[str] = set()
-    if zone.tiles:
-        for r in range(h):
-            for c in range(w):
-                t = zone.tiles[r][c]
-                used_textures.add(t)
-                if t and t not in TILE_REGISTRY:
-                    issues.append(f"[WARN] Cell ({r},{c}): unknown tile type '{t}'")
-
-    # Collect all referenced textures
-    for fname in _TEXTURE_2D_FIELDS:
-        grid = getattr(zone, fname, None)
-        if not grid:
-            continue
-        for row in grid:
-            for cell in row:
-                if cell:
-                    used_textures.add(cell)
-    for fname in _TEXTURE_3D_FIELDS:
-        grid = getattr(zone, fname, None)
-        if not grid:
-            continue
-        for row in grid:
-            for cell in row:
-                for face in cell:
-                    if face:
-                        used_textures.add(face)
-
-    # ── Entities out of bounds ────────────────────────────────
-    if zone.entities:
-        for i, ent in enumerate(zone.entities):
-            ex = float(ent.get("x", 0))
-            ey = float(ent.get("y", 0))
-            if ex < 0 or ex >= w or ey < 0 or ey >= h:
-                issues.append(
-                    f"[ERR] Entity #{i} ({ent.get('type','?')}): "
-                    f"position ({ex:.1f},{ey:.1f}) is outside zone bounds")
-
-    # ── Anchor in bounds ──────────────────────────────────────
-    ar, ac = zone.anchor
-    if ar < 0 or ar >= h or ac < 0 or ac >= w:
-        issues.append(f"[WARN] Anchor ({ar:.1f},{ac:.1f}) is outside zone bounds")
-
-    # ── Empty zone (all same tile) ────────────────────────────
-    if zone.tiles:
-        first = zone.tiles[0][0]
-        if all(zone.tiles[r][c] == first
-               for r in range(h) for c in range(w)):
-            issues.append(
-                f"[INFO] All {w*h} cells are '{first}' \u2014 zone may be blank")
-
-    # ── Render portals referencing out-of-bounds cells ────────
-    for i, rp in enumerate(zone.render_portals):
-        cell = rp.get("cell", [0, 0])
-        if cell[0] < 0 or cell[0] >= h or cell[1] < 0 or cell[1] >= w:
-            issues.append(
-                f"[ERR] Render portal #{i}: source cell ({cell[0]},{cell[1]}) "
-                f"is outside zone bounds")
-
-    # ── Overlay walls out of bounds / zero-length ─────────────
-    for i, ow in enumerate(getattr(zone, 'overlay_walls', None) or []):
-        for attr in ('x1', 'x2'):
-            v = getattr(ow, attr)
-            if v < 0 or v > w:
-                issues.append(
-                    f"[ERR] Overlay wall #{i}: {attr}={v:.2f} outside "
-                    f"zone width (0–{w})")
-        for attr in ('y1', 'y2'):
-            v = getattr(ow, attr)
-            if v < 0 or v > h:
-                issues.append(
-                    f"[ERR] Overlay wall #{i}: {attr}={v:.2f} outside "
-                    f"zone height (0–{h})")
-        dx, dy = ow.x2 - ow.x1, ow.y2 - ow.y1
-        if abs(dx) < 0.01 and abs(dy) < 0.01:
-            issues.append(
-                f"[WARN] Overlay wall #{i}: zero-length wall at "
-                f"({ow.x1:.2f},{ow.y1:.2f})")
-
-    # ── Boxes (prisms) out of bounds ──────────────────────────
-    for i, b in enumerate(zone.boxes or []):
-        bx, bz = float(b.get('x', 0)), float(b.get('z', 0))
-        if bx < 0 or bx >= w or bz < 0 or bz >= h:
-            issues.append(
-                f"[ERR] Prism #{i}: position ({bx:.1f},{bz:.1f}) "
-                f"is outside zone bounds")
-
-    # ── Quads out of bounds ───────────────────────────────────
-    for i, q in enumerate(zone.quads or []):
-        qx, qz = float(q.get('x', 0)), float(q.get('z', 0))
-        if qx < 0 or qx >= w or qz < 0 or qz >= h:
-            issues.append(
-                f"[ERR] Quad #{i}: position ({qx:.1f},{qz:.1f}) "
-                f"is outside zone bounds")
-
-    # ── Curves out of bounds ──────────────────────────────────
-    for i, cv in enumerate(zone.curves or []):
-        cx, cy = float(cv.get('cx', 0)), float(cv.get('cy', 0))
-        if cx < 0 or cx >= w or cy < 0 or cy >= h:
-            issues.append(
-                f"[ERR] Curve #{i}: center ({cx:.1f},{cy:.1f}) "
-                f"is outside zone bounds")
-
-    if not issues:
-        issues.append("[INFO] No issues found \u2014 zone looks good!")
-
-    return issues
 
 
 # ── Export top-down ───────────────────────────────────────────────

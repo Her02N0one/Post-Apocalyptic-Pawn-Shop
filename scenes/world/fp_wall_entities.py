@@ -1,8 +1,8 @@
 """scenes/world/fp_wall_entities.py — Wall-entity rendering (3D cubes).
 
-Renders entities tagged with ``WallSprite`` as textured 3D rectangular
-solids in first-person mode.  Each cube has 4 vertical faces that are
-back-face culled and perspective-projected column-by-column.
+Renders entities tagged with ``WallSprite`` or ``PrismShape`` as textured
+3D rectangular solids in first-person mode.  Each solid has 4 vertical
+faces that are back-face culled and perspective-projected column-by-column.
 
 This gives crates, shelves, TVs, vending machines etc. true depth and
 parallax — they look like real walls, not paper billboards.
@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import pygame
 
-from components import Position, Sprite, Player, Facing, WallSprite
+from components import Position, Sprite, Player, Facing, WallSprite, PrismShape
 from core.tiles import PLATFORM_IDS, tile_def
 from core.types import Direction
 from scenes.world.fp_lighting import build_fog_lut
@@ -51,12 +51,12 @@ def draw_wall_entities(
     tiles: list[list[int]],
     map_w: int, map_h: int,
 ) -> None:
-    """Draw all WallSprite entities as perspective-correct 3D cubes.
+    """Draw WallSprite and PrismShape entities as perspective-correct 3D solids.
 
     For each entity we define 4 vertical faces (front/back/left/right)
-    based on the entity's facing direction.  Each face is projected
-    into screen space and drawn column-by-column with z-testing.
-    Back-facing faces are culled.
+    based on the entity's rotation.  Each face is projected into screen
+    space and drawn column-by-column with z-testing.  Back-facing faces
+    are culled.
     """
     half_fov = fov * 0.5
     cos_a = math.cos(angle)
@@ -67,29 +67,30 @@ def draw_wall_entities(
     x_scale = (sw * 0.5) / _tan_half
     horizon = sh * 0.5 + bob_offset
     _BLEND = pygame.BLEND_MULT
+    _get_by_key = self._atlas.get_by_key
 
+    # ── Collect all solid-body entities into a uniform list ─────
+    # Each item: (ex, ey, hw, hd, ent_height, elev, ent_angle,
+    #             face_textures, base_color)
+    # face_textures: (front_surf, right_surf, back_surf, left_surf) or None
+    solid_bodies: list[tuple] = []
+
+    # 1. WallSprite entities (legacy path)
     for eid, epos, ws in app.world.query_zone(zone, Position, WallSprite):
         if app.world.has(eid, Player):
             continue
-
         ex, ey = epos.x, epos.y
         dx = ex - px
         dy = ey - py
-        d2 = dx * dx + dy * dy
-        if d2 > _max_d2:
+        if dx * dx + dy * dy > _max_d2:
             continue
 
-        # Get the entity's rotation angle
         fc = app.world.get(eid, Facing)
         ent_angle = _FACE_ANGLES.get(fc.direction, 0.0) if fc else 0.0
-        cos_e = math.cos(ent_angle)
-        sin_e = math.sin(ent_angle)
 
-        # Half-dimensions in world space
-        hw = ws.width * 0.5    # half-width (lateral)
-        hd = ws.width * 0.5    # half-depth (use width for cube; could be separate)
+        hw = ws.width * 0.5
+        hd = ws.width * 0.5  # cube: depth == width
 
-        # Compute elevation
         elev = ws.elevation
         if elev == 0.0:
             col_i = int(ex)
@@ -99,6 +100,87 @@ def draw_wall_entities(
                 if under_tid in PLATFORM_IDS:
                     td = tile_def(under_tid)
                     elev = td.height_scale
+
+        # Resolve single texture for all faces
+        tex_surf = None
+        if ws.texture_key:
+            tex_surf = self._prop_surfaces.get(ws.texture_key)
+            if tex_surf is None:
+                from core.tiles import TILE_REGISTRY
+                src = None
+                for tid, td_r in TILE_REGISTRY.items():
+                    if td_r.texture_key == ws.texture_key:
+                        src = self._atlas.get(tid)
+                        break
+                if src is None:
+                    src = self._atlas.get("void")
+                self._prop_surfaces[ws.texture_key] = src
+                tex_surf = src
+        face_textures = (tex_surf, tex_surf, tex_surf, tex_surf)
+
+        sprite = app.world.get(eid, Sprite)
+        base_color = sprite.color if sprite else (180, 140, 100)
+
+        solid_bodies.append((
+            ex, ey, hw, hd, ws.height, elev, ent_angle,
+            face_textures, base_color,
+        ))
+
+    # 2. PrismShape entities
+    for eid, epos, prism in app.world.query_zone(zone, Position, PrismShape):
+        if app.world.has(eid, Player):
+            continue
+        ex, ey = epos.x, epos.y
+        dx = ex - px
+        dy = ey - py
+        if dx * dx + dy * dy > _max_d2:
+            continue
+
+        hw = prism.width * 0.5
+        hd = prism.depth * 0.5
+        ent_angle = prism.yaw
+
+        elev = prism.elevation
+        if elev == 0.0:
+            col_i = int(ex)
+            row_i = int(ey)
+            if 0 <= row_i < map_h and 0 <= col_i < map_w:
+                under_tid = tiles[row_i][col_i]
+                if under_tid in PLATFORM_IDS:
+                    td = tile_def(under_tid)
+                    elev = td.height_scale
+
+        # Per-face textures from the prism
+        tex = prism.textures
+        def _surf(face_key: str) -> pygame.Surface | None:
+            k = tex.get(face_key, "")
+            return _get_by_key(k) if k else None
+        # Face order: front(0), right(1), back(2), left(3)
+        # Corner layout:  3---2  back
+        #                 |   |  left=3→0  right=1→2
+        #                 0---1  front
+        # Front = -Y local = south in editor = "north" texture (N↔S swap)
+        # Back  = +Y local = north in editor = "south" texture
+        face_textures = (
+            _surf("north"),   # front face (-Y local)
+            _surf("east"),    # right face (+X local)
+            _surf("south"),   # back face  (+Y local)
+            _surf("west"),    # left face  (-X local)
+        )
+
+        sprite = app.world.get(eid, Sprite)
+        base_color = sprite.color if sprite else (120, 120, 140)
+
+        solid_bodies.append((
+            ex, ey, hw, hd, prism.height, elev, ent_angle,
+            face_textures, base_color,
+        ))
+
+    # ── Render all solid bodies ────────────────────────────────
+    for (ex, ey, hw, hd, ent_height, elev, ent_angle,
+         face_textures, base_color) in solid_bodies:
+        cos_e = math.cos(ent_angle)
+        sin_e = math.sin(ent_angle)
 
         # Define 4 corners of the entity's base rectangle in world space
         # relative to entity center, rotated by ent_angle.
@@ -111,15 +193,12 @@ def draw_wall_entities(
             ( hw,  hd),  # 2: back-right
             (-hw,  hd),  # 3: back-left
         ]
-        # Rotate and translate to world space
         corners_world = []
         for cx, cy in corners_local:
             wx = ex + cx * cos_e - cy * sin_e
             wy = ey + cx * sin_e + cy * cos_e
             corners_world.append((wx, wy))
 
-        # Define the 4 faces (pairs of corner indices)
-        # face_normals point outward from the face
         faces = [
             (0, 1),  # front
             (1, 2),  # right side
@@ -127,36 +206,18 @@ def draw_wall_entities(
             (3, 0),  # left side
         ]
 
-        # Get texture
-        tex_surf = None
-        if ws.texture_key:
-            tex_surf = self._prop_surfaces.get(ws.texture_key)
-            if tex_surf is None:
-                from core.tiles import TILE_REGISTRY
-                src = None
-                for tid, td in TILE_REGISTRY.items():
-                    if td.texture_key == ws.texture_key:
-                        src = self._atlas.get(tid)
-                        break
-                if src is None:
-                    src = self._atlas.get("void")
-                self._prop_surfaces[ws.texture_key] = src
-                tex_surf = src
-
-        sprite = app.world.get(eid, Sprite)
-        base_color = sprite.color if sprite else (180, 140, 100)
-
         for fi, (ci_a, ci_b) in enumerate(faces):
             ax, ay = corners_world[ci_a]
             bx, by = corners_world[ci_b]
+            face_surf = face_textures[fi] if face_textures else None
 
             # Back-face culling: face normal should point toward camera
             # edge vector
             edge_x = bx - ax
             edge_y = by - ay
-            # Normal = perpendicular, pointing outward (+90°)
-            normal_x = -edge_y
-            normal_y = edge_x
+            # Normal = perpendicular, pointing outward (-90°)
+            normal_x = edge_y
+            normal_y = -edge_x
             # Midpoint of edge
             mid_x = (ax + bx) * 0.5
             mid_y = (ay + by) * 0.5
@@ -229,12 +290,13 @@ def draw_wall_entities(
                     continue
 
                 # Wall column height at this depth
+                # proj = half-wall in pixels; full wall = 2*proj
                 proj = sh / (2.0 * col_depth)
-                draw_h = int(proj * ws.height)
+                draw_h = int(2.0 * proj * ent_height)
                 if draw_h < 1:
                     continue
 
-                bottom_y = int(horizon + proj * (0.5 - elev))
+                bottom_y = int(horizon + proj * (1.0 - elev))
                 top_y = bottom_y - draw_h
 
                 _top = max(0, top_y)
@@ -244,11 +306,11 @@ def draw_wall_entities(
                     continue
 
                 # Texture U coordinate
-                u = t_col if not flip_u else (1.0 - t_col)
+                u = t_col if flip_u else (1.0 - t_col)
 
-                if tex_surf is not None:
-                    tw = tex_surf.get_width()
-                    th = tex_surf.get_height()
+                if face_surf is not None:
+                    tw = face_surf.get_width()
+                    th = face_surf.get_height()
                     tx = int(u * tw) % tw
 
                     # V coords (same as wall rendering)
@@ -257,7 +319,7 @@ def draw_wall_entities(
                     v1 = min(th, max(v0 + 1, int(((_bot - top_y) / draw_h) * th)))
 
                     try:
-                        strip = tex_surf.subsurface((tx, v0, 1, v1 - v0))
+                        strip = face_surf.subsurface((tx, v0, 1, v1 - v0))
                         scaled = pygame.transform.scale(strip, (1, _dh))
                         surface.blit(scaled, (c, _top))
                     except (pygame.error, ValueError):
@@ -289,8 +351,8 @@ def draw_wall_entities(
                     fog_col = (fog, fog, fog)
                     # Find the actual drawn extent
                     proj_mid = sh / (2.0 * mid_depth) if mid_depth > 0.05 else 200
-                    draw_h_mid = int(proj_mid * ws.height)
-                    _bot_fog = int(horizon + proj_mid * (0.5 - elev))
+                    draw_h_mid = int(2.0 * proj_mid * ent_height)
+                    _bot_fog = int(horizon + proj_mid * (1.0 - elev))
                     _top_fog = max(0, _bot_fog - draw_h_mid)
                     _bot_fog = min(sh, _bot_fog)
                     _dh_fog = _bot_fog - _top_fog

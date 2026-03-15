@@ -15,6 +15,10 @@ from __future__ import annotations
 import pygame
 from pygame.locals import QUIT, VIDEORESIZE
 
+# SDL2 window state events (pygame 2.5+)
+_WINDOWMAXIMIZED = getattr(pygame, 'WINDOWMAXIMIZED', None)
+_WINDOWRESTORED = getattr(pygame, 'WINDOWRESTORED', None)
+
 from editor.contexts import StampCaptureContext
 
 
@@ -90,6 +94,12 @@ class EventsMixin:
                 if not self._should_keep_running_after_quit():
                     return False
                 continue
+
+            # ── Window maximize / restore tracking ────────────────
+            if _WINDOWMAXIMIZED and event.type == _WINDOWMAXIMIZED:
+                self._window_maximized = True
+            elif _WINDOWRESTORED and event.type == _WINDOWRESTORED:
+                self._window_maximized = False
 
             # ── Window resize ─────────────────────────────────────
             if event.type == VIDEORESIZE:

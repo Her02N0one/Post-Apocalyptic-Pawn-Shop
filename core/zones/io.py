@@ -58,6 +58,8 @@ from core.zones.format import (
     chunk_name,
 )
 from core.zones.zone import Zone
+from core.zones.migration import ZONE_SCHEMA_VERSION, apply_migrations
+from core.zones.objects import serialize_objects as _ser
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -158,7 +160,7 @@ def save_binary_zone(
             # load without needing the GameRegistry.
             enty_payload = {
                 # Game data
-                "entities": zone.entities,
+                "entities": _ser(zone.entities),
                 "portals": _portals_to_dicts(zone),
                 "overlay_walls": _overlay_walls_to_dicts(zone),
                 "name": zone.name,
@@ -178,10 +180,10 @@ def save_binary_zone(
                 "floor_step_segments": zone.floor_step_segments,
                 "ceil_step_segments": zone.ceil_step_segments,
                 "upper_wall_height": zone.upper_wall_height,
-                "boxes": zone.boxes,
-                "quads": zone.quads,
+                "boxes": _ser(zone.boxes),
+                "quads": _ser(zone.quads),
                 "reflect_map": zone.reflect_map,
-                "curves": zone.curves,
+                "curves": _ser(zone.curves),
                 "floor_slope_dx": zone.floor_slope_dx,
                 "floor_slope_dy": zone.floor_slope_dy,
                 "floor_slope_div": zone.floor_slope_div,
@@ -192,10 +194,11 @@ def save_binary_zone(
                 "upper_wall_height2": zone.upper_wall_height2,
                 "fog_density": zone.fog_density,
                 "fog_color": zone.fog_color,
-                "render_portals": zone.render_portals,
+                "render_portals": _ser(zone.render_portals),
                 "skybox": zone.skybox,
                 "sky_color": list(zone.sky_color) if zone.sky_color else [],
                 "next_uid": zone._next_uid,
+                "schema_version": ZONE_SCHEMA_VERSION,
             }
             enty_bytes = msgpack.packb(enty_payload, use_bin_type=True)
             _write_chunk(f, CHUNK_ENTY, enty_bytes)
@@ -344,6 +347,7 @@ def load_binary_zone(
                 elif chunk_id == CHUNK_ENTY:
                     raw = f.read(chunk_len)
                     enty = msgpack.unpackb(raw, raw=False)
+                    enty = apply_migrations(enty)
                     result["entities"] = enty.get("entities", [])
                     result["portals"] = enty.get("portals", [])
                     result["overlay_walls"] = enty.get("overlay_walls", [])
@@ -370,6 +374,7 @@ def load_binary_zone(
                     result["curves"] = enty.get("curves", [])
                     result["floor_slope_dx"] = enty.get("floor_slope_dx", [])
                     result["floor_slope_dy"] = enty.get("floor_slope_dy", [])
+                    result["floor_slope_div"] = enty.get("floor_slope_div", [])
                     result["floor2_heights"] = enty.get("floor2_heights", [])
                     result["ceil2_heights"] = enty.get("ceil2_heights", [])
                     result["floor2_textures"] = enty.get("floor2_textures", [])

@@ -72,6 +72,98 @@ def _rebuild_int_map() -> None:
         _INT_REV[i] = key
 
 
+# Extra texture keys (entity face textures, etc.) appended after tiles.
+_EXTRA_KEYS: list[str] = []
+
+# Stable atlas index mapping — once a key is assigned an index, it keeps
+# that index forever (even if other keys are added or removed).  This
+# prevents adding a new entity type from silently invalidating cached
+# atlas indices in saved data or particle systems.
+_STABLE_MAP: dict[str, int] = {}
+_STABLE_MAP_PATH: "Path | None" = None
+
+
+def _init_stable_map() -> None:
+    """Load the persistent key→index map (or create it)."""
+    global _STABLE_MAP_PATH
+    from pathlib import Path
+    _STABLE_MAP_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "_atlas_index_map.json"
+    if _STABLE_MAP_PATH.exists():
+        import json
+        try:
+            with open(_STABLE_MAP_PATH) as f:
+                raw = json.load(f)
+            _STABLE_MAP.update({k: int(v) for k, v in raw.items()})
+        except Exception:
+            pass  # corrupt or missing — will rebuild
+
+
+def _save_stable_map() -> None:
+    """Persist the stable key→index map to disk."""
+    if _STABLE_MAP_PATH is None:
+        return
+    import json
+    try:
+        _STABLE_MAP_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(_STABLE_MAP_PATH, "w") as f:
+            json.dump(_STABLE_MAP, f, indent=1, sort_keys=True)
+    except OSError:
+        pass  # non-critical — next run will reassign
+
+
+def register_extra_texture_keys(keys: list[str]) -> None:
+    """Register additional texture keys (e.g. entity face textures).
+
+    These are appended after all tile keys so ``tile_str_to_int``
+    returns valid indices for them.  The atlas builder is responsible
+    for loading pixel data at these indices.
+
+    Indices are **stable** — once assigned, a key keeps its index
+    across restarts (persisted in ``data/_atlas_index_map.json``).
+    New keys get the next available index.  This prevents adding a
+    new entity type from silently shifting every subsequent texture.
+
+    Safe to call multiple times — only keys not already registered
+    are added.  Call *after* ``rebuild_derived()`` / ``_rebuild_int_map()``.
+    """
+    if not _STABLE_MAP:
+        _init_stable_map()
+
+    next_id = max(_INT_REV) + 1 if _INT_REV else 0
+    # Also account for stable map indices that might exceed _INT_REV
+    if _STABLE_MAP:
+        next_id = max(next_id, max(_STABLE_MAP.values()) + 1)
+
+    changed = False
+    for k in keys:
+        if not k or k in _INT_MAP:
+            continue
+        # Use stable index if one exists, otherwise assign new
+        if k in _STABLE_MAP:
+            idx = _STABLE_MAP[k]
+        else:
+            idx = next_id
+            next_id += 1
+            _STABLE_MAP[k] = idx
+            changed = True
+        _INT_MAP[k] = idx
+        _INT_REV[idx] = k
+        _EXTRA_KEYS.append(k)
+
+    if changed:
+        _save_stable_map()
+
+
+def extra_texture_keys() -> list[str]:
+    """Return the list of registered extra (non-tile) texture keys."""
+    return list(_EXTRA_KEYS)
+
+
+def total_texture_count() -> int:
+    """Number of entries in the int map (tiles + extra textures)."""
+    return max(len(_INT_REV), 1)
+
+
 def rebuild_derived() -> None:
     """Rebuild all derived lookup tables from TILE_REGISTRY."""
     global SOLID_IDS, WALL_IDS, HALF_WALL_IDS, PLATFORM_IDS, DOOR_IDS

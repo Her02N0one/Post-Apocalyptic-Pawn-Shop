@@ -26,7 +26,7 @@ from core.entity_defs import (
     get_entity_def,
     snap_angle_8dir,
 )
-from editor.view_3d.picking import _ray_vs_aabb
+from editor.view_3d.picking import _ray_vs_aabb, _ray_vs_obb
 
 
 class EntityMixin:
@@ -34,6 +34,8 @@ class EntityMixin:
 
     # Current palette index
     _ent_type_idx: int = 0
+    # Placement yaw for prism entities (radians)
+    _ent_place_yaw: float = 0.0
     # Selected entity: managed by Zone3DEditor bridge property
 
     # ── Palette helpers ───────────────────────────────────────────
@@ -78,19 +80,31 @@ class EntityMixin:
             edef = get_entity_def(ent.get("type", ""))
             def_s = edef.scale if edef else 0.5
             # Use per-entity scale override if present
-            s = float(ent.get("properties", {}).get("scale", def_s))
-            half = max(s * 0.25, 0.15)  # half-width of bounding box
+            s = float(ent.get("overrides", {}).get("scale", def_s))
 
             # Floor height at entity cell
             ci = max(0, min(zone.width - 1, int(ex)))
             ri = max(0, min(zone.height - 1, int(ez)))
             fh = zone.floor_heights[ri][ci] if zone.floor_heights else 0.0
 
-            result = _ray_vs_aabb(
-                ox, oy, oz, fx, fy, fz,
-                ex - half, fh, ez - half,
-                ex + half, fh + s, ez + half,
-            )
+            if edef and edef.render_type == "prism":
+                # Prism entities: oriented bounding box with real dims
+                angle = float(ent.get("angle", 0.0))
+                base_y = fh + edef.elevation
+                result = _ray_vs_obb(
+                    ox, oy, oz, fx, fy, fz,
+                    ex, ez, base_y,
+                    edef.width, edef.height, edef.depth,
+                    angle,
+                )
+            else:
+                # Billboard / 8-way: small axis-aligned bbox
+                half = max(s * 0.25, 0.15)
+                result = _ray_vs_aabb(
+                    ox, oy, oz, fx, fy, fz,
+                    ex - half, fh, ez - half,
+                    ex + half, fh + s, ez + half,
+                )
             if result is not None and result[0] < best_t:
                 best_t = result[0]
                 best_idx = i
@@ -138,15 +152,18 @@ class EntityMixin:
         wz = max(0.1, min(zone.height - 0.1, wz))
 
         self._push_undo()
+        # Use placement yaw for prism entities, 0 for others
+        edef = get_entity_def(etype)
+        place_angle = self._ent_place_yaw if (edef and edef.render_type == "prism") else 0.0
         ent: dict = {
             "id": f"{etype}_{uuid.uuid4().hex[:6]}",
             "uid": zone.next_uid(),
             "type": etype,
             "x": round(wx, 3),
             "y": round(wz, 3),
-            "angle": 0.0,
+            "angle": round(place_angle, 4),
             "state": "default",
-            "properties": {},
+            "overrides": {},
         }
         zone.entities.append(ent)
         # Don't auto-select after placing — keeps us in placement mode

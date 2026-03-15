@@ -129,9 +129,9 @@ class ZoneSim:
     every ``tick_interval`` seconds (default 1.0).
     """
 
-    # Portal-bounce cooldown (seconds) — prevents NPC from immediately
-    # stepping back onto the portal tile it just arrived at.
-    PORTAL_CD: float = 3.0
+    # Maximum coarse ticks per real frame to prevent frame drops at
+    # high time scales.  Excess accumulator time is discarded.
+    MAX_TICKS_PER_FRAME: int = 10
 
     def __init__(self, world: "World", tick_interval: float = 1.0) -> None:
         self.world = world
@@ -141,6 +141,12 @@ class ZoneSim:
 
         # Per-entity cached A* path (eid → list of (r,c))
         self._paths: dict[int, list[tuple[int, int]]] = {}
+
+        # Portal-arrival tracking: eid → (row, col) of the portal tile
+        # the entity just arrived at.  Prevents immediate bounce-back
+        # without needing a timer — cleared when the entity moves off
+        # the arrival tile (mirrors the player's _portal_arrival approach).
+        self._portal_arrivals: dict[int, tuple[int, int]] = {}
 
         # Sight check parameters (tiles)
         self.sight_range: int = 18
@@ -193,17 +199,27 @@ class ZoneSim:
 
         Skips *active_zone* (the player's zone — handled at full res).
         Returns the number of coarse ticks that fired.
+
+        At high time scales, many ticks may be due per real frame.
+        The tick count is capped at ``MAX_TICKS_PER_FRAME`` to prevent
+        frame drops; excess accumulator time is discarded (the sim is
+        approximate anyway).
         """
         self._accumulator += dt
         ticks_fired = 0
 
-        while self._accumulator >= self.tick_interval:
+        while self._accumulator >= self.tick_interval and ticks_fired < self.MAX_TICKS_PER_FRAME:
             self._accumulator -= self.tick_interval
             ticks_fired += 1
             for zone_name, zc in self._zones.items():
                 if zone_name == active_zone:
                     continue
                 self._tick_zone(zc)
+
+        # Discard excess accumulator time that exceeds the per-frame cap
+        # to prevent spiral-of-death lag buildup.
+        if self._accumulator > self.tick_interval * 2:
+            self._accumulator = 0.0
 
         return ticks_fired
 
@@ -346,14 +362,23 @@ class ZoneSim:
                     )
 
     def _check_portal(self, eid: int, cp: CoarsePos, zc: ZoneCache) -> None:
-        """If entity is standing on a portal tile, teleport to target zone."""
-        key = (cp.row, cp.col)
-        if key not in zc.portals:
-            return
+        """If entity is standing on a portal tile, teleport to target zone.
 
-        # Don't traverse while portal cooldown is active (bounce prevention)
-        timers = self.world.get(eid, Timers)
-        if timers and "portal_cd" in timers.active:
+        Bounce prevention uses positional tracking rather than a timer:
+        after teleporting, the arrival tile is recorded.  The portal
+        won't fire again until the entity moves off that tile (analogous
+        to the player's ``_portal_arrival`` mechanism).
+        """
+        key = (cp.row, cp.col)
+
+        # Clear arrival tracking once the entity leaves the arrival tile
+        arrival = self._portal_arrivals.get(eid)
+        if arrival is not None:
+            if key == arrival:
+                return  # still on arrival tile — skip portal
+            del self._portal_arrivals[eid]
+
+        if key not in zc.portals:
             return
 
         target_zone, target_row, target_col = zc.portals[key]
@@ -372,14 +397,17 @@ class ZoneSim:
         cp.row = target_row
         cp.col = target_col
 
+        # Record arrival tile for bounce prevention
+        self._portal_arrivals[eid] = (target_row, target_col)
+
         # Clear stale path from old zone
         self._paths.pop(eid, None)
 
-        # Set portal-bounce cooldown AND movement cooldown
+        # Set movement cooldown (no more timer-based portal_cd)
+        timers = self.world.get(eid, Timers)
         if timers is None:
             timers = Timers(active={})
             self.world.add(eid, timers)
-        timers.active["portal_cd"] = self.PORTAL_CD
         timers.active["move_cd"] = 1.0 / max(0.1, cp.speed)
 
         # Log the travel event

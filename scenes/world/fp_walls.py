@@ -167,7 +167,6 @@ def draw_walls(
     # ── Choose C or Python geometry path ─────────────────────
     _has_dir = _has_directional
     _get_by_key = atlas.get_by_key
-    _face_nm = _face_name
     _face_nm_idx = _face_name_from_idx
     _rots = rotations  # may be None
 

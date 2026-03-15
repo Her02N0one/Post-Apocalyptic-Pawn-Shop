@@ -101,8 +101,28 @@ class World:
         self._zone_index: dict[str, set[int]] = {}
         self.resources = Resources()
 
+        # Tracks whether transient components have been rebuilt after
+        # loading a save.  Set to False by restore_entity(), set to
+        # True by rebuild_transients().  Systems can call
+        # assert_transients_valid() to guard against missing transients.
+        self._transients_valid: bool = True
+
         from core.events import EventBus
         self.events = EventBus()
+
+    def assert_transients_valid(self) -> None:
+        """Raise RuntimeError if transient components haven't been rebuilt.
+
+        Call this in any system that depends on non-persisted components
+        (Sprite, Identity, Collider, etc.) to catch missed
+        ``rebuild_transients()`` calls early.
+        """
+        if not self._transients_valid:
+            raise RuntimeError(
+                "Transient components not yet rebuilt after load.  "
+                "Call spawner.rebuild_transients() before accessing "
+                "non-persisted components."
+            )
 
     # ── Zone index ────────────────────────────────────────────────
 
