@@ -707,6 +707,9 @@ class FirstPerson(Scene):
             dn, fog_rate, fog_lut, rbob,
             zone, tiles, map_w, map_h,
             vp_data=vp_data,
+            floor_heights=self.session.floor_heights,
+            cam_h=self._cam_h,
+            horizon_shift=rhalf - rsh // 2,
         )
         _dt_ent = _perf() - _t0
         self._prof_record('entities', _dt_ent)
@@ -718,6 +721,7 @@ class FirstPerson(Scene):
             rt, app, zbuf_full, rsw, rsh, px, py,
             self.player_angle, current_fov,
             dn, rbob, zone, tiles, map_w, map_h,
+            cam_h=self._cam_h,
         )
         _dt_went = _perf() - _t0
         self._prof_record('wall_ents', _dt_went)

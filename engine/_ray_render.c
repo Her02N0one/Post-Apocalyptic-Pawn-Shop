@@ -3133,6 +3133,93 @@ cleanup:
 
 
 /* ═══════════════════════════════════════════════════════════════════
+ *  Panini projection post-process remap
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/*
+ * py_panini_remap(dict) -> None
+ *
+ * Horizontal column remap of the framebuffer in-place.
+ * For each output column, the remap LUT gives the fractional source
+ * column.  Pixels are linearly interpolated between the two nearest
+ * source columns.
+ *
+ * dict keys:
+ *   fb       — writable RGB framebuffer (uint8[sw*sh*3])
+ *   sw, sh   — framebuffer dimensions
+ *   remap    — float64[sw] LUT: remap[out_col] = source_col (fractional)
+ */
+static PyObject *
+py_panini_remap(PyObject *self, PyObject *dict)
+{
+    Py_buffer fb_buf   = {0};
+    Py_buffer remap_buf = {0};
+    int sw, sh;
+    PyObject *result = NULL;
+
+    if (!PyDict_Check(dict)) {
+        PyErr_SetString(PyExc_TypeError, "expected dict");
+        return NULL;
+    }
+    if (dict_get_int(dict, "sw", &sw))    goto pan_cleanup;
+    if (dict_get_int(dict, "sh", &sh))    goto pan_cleanup;
+    if (dict_get_buf(dict, "fb",    &fb_buf,    1)) goto pan_cleanup;
+    if (dict_get_buf(dict, "remap", &remap_buf, 0)) goto pan_cleanup;
+
+    if (fb_buf.len < (Py_ssize_t)(sw * sh * 3)) {
+        PyErr_SetString(PyExc_ValueError, "fb too small");
+        goto pan_cleanup;
+    }
+    if (remap_buf.len < (Py_ssize_t)(sw * (int)sizeof(double))) {
+        PyErr_SetString(PyExc_ValueError, "remap LUT too small");
+        goto pan_cleanup;
+    }
+
+    {
+        uint8_t       *fb    = (uint8_t *)fb_buf.buf;
+        const double  *remap = (const double *)remap_buf.buf;
+
+        /* Allocate a temporary row buffer for one scanline */
+        uint8_t *row = (uint8_t *)malloc(sw * 3);
+        if (!row) { PyErr_NoMemory(); goto pan_cleanup; }
+
+        for (int y = 0; y < sh; y++) {
+            uint8_t *line = fb + y * sw * 3;
+            /* Copy source scanline */
+            memcpy(row, line, sw * 3);
+            for (int x = 0; x < sw; x++) {
+                double src = remap[x];
+                int x0 = (int)src;
+                int x1 = x0 + 1;
+                double frac = src - x0;
+                if (x0 < 0)       x0 = 0;
+                if (x0 >= sw)     x0 = sw - 1;
+                if (x1 < 0)       x1 = 0;
+                if (x1 >= sw)     x1 = sw - 1;
+
+                int off0 = x0 * 3;
+                int off1 = x1 * 3;
+                int od   = x * 3;
+                double inv = 1.0 - frac;
+                line[od + 0] = (uint8_t)(row[off0 + 0] * inv + row[off1 + 0] * frac);
+                line[od + 1] = (uint8_t)(row[off0 + 1] * inv + row[off1 + 1] * frac);
+                line[od + 2] = (uint8_t)(row[off0 + 2] * inv + row[off1 + 2] * frac);
+            }
+        }
+        free(row);
+    }
+
+    result = Py_None;
+    Py_INCREF(Py_None);
+
+pan_cleanup:
+    if (fb_buf.buf)    PyBuffer_Release(&fb_buf);
+    if (remap_buf.buf) PyBuffer_Release(&remap_buf);
+    return result;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════
  *  Module definition
  * ═══════════════════════════════════════════════════════════════════ */
 
@@ -3168,6 +3255,10 @@ static PyMethodDef methods[] = {
      "Apply screen-space ambient occlusion darkening to the framebuffer.\n\n"
      "ssao_pass(ctx_dict) -> None\n\n"
      "ctx_dict keys: fb, depth_px, sw, sh, strength, radius, bias"},
+    {"panini_remap", py_panini_remap, METH_O,
+     "Apply horizontal Panini projection remap to the framebuffer.\n\n"
+     "panini_remap(ctx_dict) -> None\n\n"
+     "ctx_dict keys: fb, sw, sh, remap (float64[sw] LUT)"},
     {NULL, NULL, 0, NULL}
 };
 

@@ -14,9 +14,10 @@ from typing import TYPE_CHECKING
 import pygame
 
 from core.tiles import PLATFORM_IDS, tile_def
-from core.types import Direction
+from core.types import Direction, RenderMode
 from components import (
     Position, Sprite, Player, Facing, Identity, Health, WallSprite, PrismShape,
+    PrefabRef,
 )
 from engine.raycaster import project_entities
 from scenes.world.fp_lighting import build_fog_lut
@@ -115,20 +116,43 @@ def draw_entities(
     tiles: list[list[int]],
     map_w: int, map_h: int,
     vp_data: tuple | None = None,
+    floor_heights: list[list[float]] | None = None,
+    cam_h: float = 0.5,
+    horizon_shift: int = 0,
 ) -> None:
     """Draw entity billboards interleaved with deferred half-wall
     strips in painter's order (far → near)."""
     ent_data: list[tuple] = []
     _max_d2 = _MAX_ENT_DIST * _MAX_ENT_DIST
+    wall_ents: list[tuple] = []  # wall-anchored entities (separate path)
     for eid, epos, sprite in app.world.query_zone(zone, Position, Sprite):
         if app.world.has(eid, Player):
             continue
         # Skip entities with WallSprite — rendered by wall-entity system
         if app.world.has(eid, WallSprite):
             continue
-        # Skip entities with PrismShape — rendered by wall-entity system
+        # Skip prism entities — rendered by box_data / wall-entity system.
+        # Check render_mode first (fast field read) with PrismShape as
+        # fallback for entities whose Sprite wasn't tagged at spawn.
+        if sprite.render_mode == RenderMode.PRISM:
+            continue
         if app.world.has(eid, PrismShape):
             continue
+
+        # Debug validation: wall_face and render_mode must agree.
+        if __debug__:
+            if sprite.wall_face and sprite.render_mode != RenderMode.WALL_ANCHORED:
+                import warnings
+                warnings.warn(
+                    f"Entity {eid}: wall_face={sprite.wall_face!r} but "
+                    f"render_mode={sprite.render_mode!r} (expected WALL_ANCHORED)"
+                )
+            if sprite.render_mode == RenderMode.WALL_ANCHORED and not sprite.wall_face:
+                import warnings
+                warnings.warn(
+                    f"Entity {eid}: render_mode=WALL_ANCHORED but wall_face is empty"
+                )
+
         # Early distance cull before any other work
         _ddx = epos.x - px
         _ddy = epos.y - py
@@ -146,11 +170,43 @@ def draw_entities(
         elev = 0.0
         col_i = int(epos.x)
         row_i = int(epos.y)
-        if 0 <= row_i < map_h and 0 <= col_i < map_w:
+        if sprite.wall_height >= 0.0:
+            # Wall-mounted billboard: use stored placement height
+            elev = sprite.wall_height
+        elif 0 <= row_i < map_h and 0 <= col_i < map_w:
+            # Use per-cell floor height as the entity's ground level
+            if floor_heights:
+                elev = floor_heights[row_i][col_i]
+            # Platform tiles may override with their own height
             under_tid = tiles[row_i][col_i]
             if under_tid in PLATFORM_IDS:
                 td = tile_def(under_tid)
-                elev = td.height_scale
+                elev = max(elev, td.height_scale)
+
+        # Wall-anchored entities: dispatch on render_mode
+        if sprite.render_mode == RenderMode.WALL_ANCHORED:
+            # Resolve face texture at collection time to avoid per-column lookups
+            face_surf = None
+            if sprite.sprite_key:
+                prefab = app.world.get(eid, PrefabRef)
+                _type_id = prefab.prefab if prefab else ""
+                if _type_id:
+                    from core.entity_defs import get_entity_def as _get_edef
+                    _edef = _get_edef(_type_id)
+                    _state = (_edef.states[0] if _edef and _edef.states
+                              else "default")
+                else:
+                    _state = "default"
+                _tex_key = f"{sprite.sprite_key}:{_state}_0"
+                try:
+                    face_surf = self._atlas.get_by_key(_tex_key)
+                except Exception:
+                    pass
+            wall_ents.append((
+                epos.x, epos.y, sprite.color, h_scale, w_scale,
+                elev, sprite.wall_face, face_surf,
+            ))
+            continue
 
         # 8-way billboard: compute octant index for texture selection
         bb_mode = sprite.billboard_mode
@@ -168,13 +224,22 @@ def draw_entities(
              h_scale, w_scale, elev, bb_mode, bb_key, octant)
         )
 
-    if not ent_data and not deferred_halves:
+    if not ent_data and not deferred_halves and not wall_ents:
         self._last_n_ents = 0
         self._last_n_bbs = 0
         return
 
+    # ── Draw wall-anchored entities first (far behind walls) ──
+    if wall_ents:
+        _draw_wall_billboards(
+            self, surface, wall_ents, zbuf_full,
+            sw, sh, px, py, angle, fov, dn,
+            bob_offset, cam_h, horizon_shift,
+        )
+
     billboards = project_entities(
         px, py, angle, fov, sw, sh, ent_data,
+        cam_h=cam_h, horizon_shift=horizon_shift,
     ) if ent_data else []
     self._last_n_ents = len(ent_data)
     self._last_n_bbs = len(billboards)
@@ -511,3 +576,172 @@ def _get_prop_surface(self: "Renderer", key: str) -> pygame.Surface:
         src = self._atlas.get("void")
     self._prop_surfaces[key] = src
     return src
+
+
+# ── Wall-anchored billboard rendering ────────────────────────────
+
+# Wall face → tangent direction along the wall surface
+_WALL_TAN: dict[str, tuple[float, float]] = {
+    "north": (1.0, 0.0),
+    "south": (1.0, 0.0),
+    "east":  (0.0, 1.0),
+    "west":  (0.0, 1.0),
+}
+
+
+def _draw_wall_billboards(
+    self: "Renderer",
+    surface: pygame.Surface,
+    wall_ents: list[tuple],
+    zbuf: list[float],
+    sw: int, sh: int,
+    px: float, py: float,
+    angle: float, fov: float,
+    dn: float,
+    bob_offset: float,
+    cam_h: float,
+    horizon_shift: int,
+) -> None:
+    """Render wall-anchored entities as perspective-correct flat quads.
+
+    Each item in *wall_ents*:
+        (x, y, color, h_scale, w_scale, elev, wall_face, face_surf)
+    """
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    half_fov = fov * 0.5
+    _tan_half = math.tan(half_fov)
+    x_scale = (sw * 0.5) / _tan_half
+    horizon = sh * 0.5 + bob_offset + horizon_shift
+    fog_lut = build_fog_lut(255, dn)
+    _BLEND = pygame.BLEND_MULT
+
+    for (ex, ey, color, h_scale, w_scale, elev,
+         wall_face, face_surf) in wall_ents:
+        tan_x, tan_y = _WALL_TAN.get(wall_face, (1.0, 0.0))
+        half_w = w_scale * 0.5
+
+        # Quad corners along the wall surface
+        ax = ex - tan_x * half_w
+        ay = ey - tan_y * half_w
+        bx = ex + tan_x * half_w
+        by = ey + tan_y * half_w
+
+        # Camera-relative vectors
+        dax = ax - px
+        day = ay - py
+        dbx = bx - px
+        dby = by - py
+
+        # Depth (along view direction)
+        za = dax * cos_a + day * sin_a
+        zb = dbx * cos_a + dby * sin_a
+
+        if za < 0.05 and zb < 0.05:
+            continue
+
+        # Lateral (perpendicular to view)
+        la = dax * (-sin_a) + day * cos_a
+        lb = dbx * (-sin_a) + dby * cos_a
+
+        # Near-plane clip
+        if za < 0.05:
+            t = (0.05 - za) / (zb - za + 1e-10)
+            za = 0.05
+            la = la + t * (lb - la)
+        elif zb < 0.05:
+            t = (0.05 - zb) / (za - zb + 1e-10)
+            zb = 0.05
+            lb = lb + t * (la - lb)
+
+        # Project to screen X
+        scx = sw * 0.5
+        sxa = int(scx + la * x_scale / za)
+        sxb = int(scx + lb * x_scale / zb)
+
+        flip_u = False
+        if sxa > sxb:
+            sxa, sxb = sxb, sxa
+            za, zb = zb, za
+            flip_u = True
+
+        if sxb <= 0 or sxa >= sw:
+            continue
+
+        col_count = sxb - sxa
+        if col_count < 1:
+            continue
+
+        inv_za = 1.0 / za
+        inv_zb = 1.0 / zb
+
+        for c in range(max(0, sxa), min(sw, sxb)):
+            t_col = (c - sxa) / col_count
+
+            # Perspective-correct depth interpolation
+            inv_z = inv_za + t_col * (inv_zb - inv_za)
+            col_depth = 1.0 / inv_z if inv_z > 1e-10 else 1e10
+
+            # Depth bias to prevent z-fighting with the wall behind
+            if col_depth * 0.995 >= zbuf[c]:
+                continue
+
+            # Wall-height projection (matches wall renderer math)
+            proj = sh / (2.0 * col_depth)
+            draw_h = int(2.0 * proj * h_scale)
+            if draw_h < 1:
+                continue
+
+            bottom_y = int(horizon + 2.0 * proj * (cam_h - elev))
+            top_y = bottom_y - draw_h
+
+            _top = max(0, top_y)
+            _bot = min(sh, bottom_y)
+            _dh = _bot - _top
+            if _dh < 1:
+                continue
+
+            u = t_col if not flip_u else (1.0 - t_col)
+
+            if face_surf is not None:
+                tw = face_surf.get_width()
+                th = face_surf.get_height()
+                tx = int(u * tw) % tw
+                v0 = max(0, int(((_top - top_y) / draw_h) * th))
+                v1 = min(th, max(v0 + 1,
+                         int(((_bot - top_y) / draw_h) * th)))
+                try:
+                    strip = face_surf.subsurface((tx, v0, 1, v1 - v0))
+                    scaled = pygame.transform.scale(strip, (1, _dh))
+                    surface.blit(scaled, (c, _top))
+                except (pygame.error, ValueError):
+                    pygame.draw.line(surface, color,
+                                     (c, _top), (c, _bot - 1))
+            else:
+                pygame.draw.line(surface, color,
+                                 (c, _top), (c, _bot - 1))
+
+            zbuf[c] = col_depth
+
+        # Fog pass for the full entity span
+        sxa_c = max(0, sxa)
+        sxb_c = min(sw, sxb)
+        if sxa_c < sxb_c:
+            mid_depth = (za + zb) * 0.5
+            fog_idx = min(255, int(mid_depth * 8.0))
+            fog = fog_lut[fog_idx]
+            if fog < 250:
+                fog_col = (fog, fog, fog)
+                proj_mid = (sh / (2.0 * mid_depth)
+                            if mid_depth > 0.05 else 200)
+                draw_h_mid = int(2.0 * proj_mid * h_scale)
+                _bot_fog = int(horizon + 2.0 * proj_mid * (cam_h - elev))
+                _top_fog = max(0, _bot_fog - draw_h_mid)
+                _bot_fog = min(sh, _bot_fog)
+                _dh_fog = _bot_fog - _top_fog
+                if _dh_fog > 0:
+                    surface.fill(
+                        fog_col,
+                        (sxa_c, _top_fog, sxb_c - sxa_c, _dh_fog),
+                        special_flags=_BLEND,
+                    )

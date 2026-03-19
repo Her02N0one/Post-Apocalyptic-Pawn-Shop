@@ -321,6 +321,7 @@ class ZoneEditorApp(
                 fov=RAY_FOV, dn=self.dn,
                 pitch_max=self._PITCH_MAX,
             )
+            self.renderer.set_panini(d=1.0)
 
         pygame.display.set_caption(f"{WINDOW_TITLE} \u2014 {name}")
         self._vp_dirty = True

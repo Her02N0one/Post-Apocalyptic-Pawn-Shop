@@ -259,7 +259,9 @@ class TestCollectEntityPrisms(unittest.TestCase):
         self.assertAlmostEqual(data[3], edef.width)  # w
         self.assertAlmostEqual(data[4], edef.height)  # h
         self.assertAlmostEqual(data[5], edef.depth)   # d
-        self.assertAlmostEqual(data[6], 0.5)  # yaw
+        # yaw = π/2 - angle  (front face aligns with arrow direction)
+        import math
+        self.assertAlmostEqual(data[6], math.pi * 0.5 - 0.5)  # yaw
 
     def test_floor_height_offset(self):
         """Prism elevation includes floor height at entity cell."""

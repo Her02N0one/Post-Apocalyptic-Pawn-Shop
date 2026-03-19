@@ -235,6 +235,16 @@ SSAO_REQUIRED: list[tuple[str, str, str | None]] = [
 ]
 
 
+# ── panini_remap schema ───────────────────────────────────────────
+
+PANINI_REQUIRED: list[tuple[str, str, str | None]] = [
+    ("fb",     BUF_W, "sw * sh * 3"),
+    ("sw",     INT, None),
+    ("sh",     INT, None),
+    ("remap",  BUF_R, "sw * 8"),
+]
+
+
 # ── Validation engine ────────────────────────────────────────────
 
 def _eval_size(expr: str, ctx: dict[str, Any]) -> int:
@@ -365,6 +375,7 @@ _ENTRY_POINTS: dict[str, tuple[list, list]] = {
     "render_entities": (RENDER_ENTITIES_REQUIRED, RENDER_ENTITIES_OPTIONAL),
     "render_particles": (RENDER_PARTICLES_REQUIRED, RENDER_PARTICLES_OPTIONAL),
     "ssao_pass": (SSAO_REQUIRED, []),
+    "panini_remap": (PANINI_REQUIRED, []),
 }
 
 
@@ -411,11 +422,14 @@ _RE_KEYS = frozenset(k for k, _, _ in RENDER_ENTITIES_REQUIRED)
 _RP_KEYS = frozenset(k for k, _, _ in RENDER_PARTICLES_REQUIRED)
 _SSAO_KEYS = frozenset(k for k, _, _ in SSAO_REQUIRED)
 
+_PAN_KEYS = frozenset(k for k, _, _ in PANINI_REQUIRED)
+
 _FAST_CHECK: dict[str, frozenset[str]] = {
     "render_frame": _RF_KEYS,
     "render_entities": _RE_KEYS,
     "render_particles": _RP_KEYS,
     "ssao_pass": _SSAO_KEYS,
+    "panini_remap": _PAN_KEYS,
 }
 
 

@@ -23,7 +23,7 @@ STATUS_BAR_H  = 28
 # ── Raycaster preview ────────────────────────────────────────────
 RAY_RES_W     = 640
 RAY_RES_H     = 360
-RAY_FOV       = math.pi / 3
+RAY_FOV       = math.radians(100)  # wide FOV — Panini projection corrects edges
 
 # ── Player movement (raycaster preview) ──────────────────────────
 MOVE_SPEED     = 3.0

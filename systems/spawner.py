@@ -30,7 +30,7 @@ from typing import Any, TYPE_CHECKING
 
 from core.ecs import Component
 from core.entity_defs import get_entity_def
-from core.types import Direction, EntityKind
+from core.types import Direction, EntityKind, RenderMode
 from components import (
     Position, Velocity, Sprite, Identity, Health, Inventory,
     Facing, Collider, PrefabRef, Player, TileEntity, WallSprite,
@@ -326,11 +326,66 @@ def spawn_from_descriptor(world: "World", desc: dict[str, Any],
     # Velocity (always — so physics system can move it)
     world.add(eid, Velocity())
 
+    # Propagate wall_height from zone descriptor into WallSprite.elevation
+    # so wall-mounted entities render at their placement height in FP mode.
+    # Only inject when the entity already has wall_sprite defaults (props/furniture)
+    # to avoid changing billboard entities (NPCs) into wall-column rendering.
+    wall_h = desc.get("wall_height")
+    if wall_h is not None and "wall_sprite" in defaults:
+        ws_over = overrides.setdefault("wall_sprite", {})
+        ws_over.setdefault("elevation", float(wall_h))
+
     # Attach all other components
     _attach_components(world, eid, defaults, overrides, skip_existing=False)
 
-    # PrismShape — derived from entity def geometry, not a TOML component
+    # Billboard entities defined without an explicit [*.sprite] TOML
+    # section won't have a Sprite component yet.  Synthesize one from
+    # the EntityDef top-level fields so fp_entities.py can find them.
     edef = get_entity_def(type_id)
+    if edef and edef.render_type == "billboard" and not world.has(eid, Sprite):
+        bb_mode = 1 if edef.directional else 0
+        rm = RenderMode.BILLBOARD_8WAY if edef.directional else RenderMode.BILLBOARD
+        world.add(eid, Sprite(
+            char="?",
+            color=edef.color,
+            layer=5,
+            render_mode=rm,
+            billboard_mode=bb_mode,
+            sprite_key=edef.sprite_key,
+        ))
+    elif edef and edef.render_type == "billboard" and world.has(eid, Sprite):
+        # Sprite already attached from TOML — ensure render_mode matches
+        # the entity def (TOML doesn't carry render_mode).
+        spr = world.get(eid, Sprite)
+        if spr is not None and spr.render_mode == RenderMode.BILLBOARD:
+            spr.render_mode = (RenderMode.BILLBOARD_8WAY
+                               if edef.directional else RenderMode.BILLBOARD)
+
+    # For billboard entities placed on walls, store wall_height and
+    # wall_face on the Sprite component so fp_entities.py can project
+    # them as wall-aligned quads instead of camera-facing billboards.
+    if wall_h is not None and "wall_sprite" not in defaults:
+        spr = world.get(eid, Sprite)
+        if spr is not None:
+            spr.wall_height = float(wall_h)
+            wf = desc.get("wall_face", "")
+            if wf:
+                spr.wall_face = wf
+                spr.render_mode = RenderMode.WALL_ANCHORED
+
+    # Debug: after all spawning logic, verify consistency
+    if __debug__:
+        spr = world.get(eid, Sprite)
+        if spr is not None:
+            if spr.wall_face and spr.render_mode != RenderMode.WALL_ANCHORED:
+                import warnings
+                warnings.warn(
+                    f"Spawner: entity {desc.get('id','?')} type={type_id}: "
+                    f"wall_face={spr.wall_face!r} but render_mode="
+                    f"{spr.render_mode!r} (expected WALL_ANCHORED)"
+                )
+
+    # PrismShape — derived from entity def geometry, not a TOML component
     if edef and edef.render_type == "prism":
         world.add(eid, PrismShape(
             width=edef.width,
@@ -341,6 +396,11 @@ def spawn_from_descriptor(world: "World", desc: dict[str, Any],
             textures=edef.texture_map(),
             movable=bool(desc.get("movable", edef.movable)),
         ))
+        # If a Sprite exists (TOML-defined), mark it as PRISM so
+        # renderers can skip via render_mode without component lookup.
+        spr = world.get(eid, Sprite)
+        if spr is not None:
+            spr.render_mode = RenderMode.PRISM
 
     return eid
 

@@ -30,6 +30,29 @@ class EntityKind(Enum):
     PROP = auto()
 
 
+class RenderMode(Enum):
+    """How an entity should be projected by every rendering pipeline.
+
+    Each renderer (C raycaster, Python FP, 3D editor) has its own
+    dispatch table keyed on RenderMode.  Adding a new mode requires
+    an entry in each table — a missing key is an explicit error,
+    never a silent fallback to BILLBOARD.
+
+    **ABI stability:** These integer values are serialized directly
+    into the C packed entity buffer (field 9) and mirrored as
+    ``RMODE_*`` defines in ``engine/_ray_render.h``.  Do not
+    renumber or reorder without updating the C header to match.
+
+    Packed value: ``mode.value`` is stored in the C entity buffer's
+    ``render_mode`` slot (field index 9).  Values ≤ 0 distinguish
+    modes from the legacy positive-integer facing count.
+    """
+    BILLBOARD = 1           # camera-facing sprite (default)
+    BILLBOARD_8WAY = 8      # 8-way directional billboard
+    WALL_ANCHORED = -1      # flat quad fixed to a wall surface
+    PRISM = -2              # 3D box (rendered by box_data pipeline)
+
+
 # ── Wall face constants (used by raycaster + renderer) ───────────
 
 FACE_NORTH = 0

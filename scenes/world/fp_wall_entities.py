@@ -50,6 +50,7 @@ def draw_wall_entities(
     zone: str,
     tiles: list[list[int]],
     map_w: int, map_h: int,
+    cam_h: float = 0.5,
 ) -> None:
     """Draw WallSprite and PrismShape entities as perspective-correct 3D solids.
 
@@ -296,7 +297,7 @@ def draw_wall_entities(
                 if draw_h < 1:
                     continue
 
-                bottom_y = int(horizon + proj * (1.0 - elev))
+                bottom_y = int(horizon + 2.0 * proj * (cam_h - elev))
                 top_y = bottom_y - draw_h
 
                 _top = max(0, top_y)
@@ -352,7 +353,7 @@ def draw_wall_entities(
                     # Find the actual drawn extent
                     proj_mid = sh / (2.0 * mid_depth) if mid_depth > 0.05 else 200
                     draw_h_mid = int(2.0 * proj_mid * ent_height)
-                    _bot_fog = int(horizon + proj_mid * (1.0 - elev))
+                    _bot_fog = int(horizon + 2.0 * proj_mid * (cam_h - elev))
                     _top_fog = max(0, _bot_fog - draw_h_mid)
                     _bot_fog = min(sh, _bot_fog)
                     _dh_fog = _bot_fog - _top_fog

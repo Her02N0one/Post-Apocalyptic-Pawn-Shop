@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING
 
 import pygame
 
+from core.types import RenderMode
+
 # Always-on fast required-key check (prevents C crashes from missing keys).
 from engine.render_schema import assert_required_keys as _assert_keys
 
@@ -93,6 +95,10 @@ try:
         from engine._ray_render import ssao_pass as _c_ssao_pass
     except ImportError:
         _c_ssao_pass = None
+    try:
+        from engine._ray_render import panini_remap as _c_panini_remap
+    except ImportError:
+        _c_panini_remap = None
     _HAS_C = True
 except ImportError:
     _HAS_C = False
@@ -584,6 +590,9 @@ class RayRenderer:
 
         # ── Cache zone entities for billboard rendering ──
         self._zone_entities = zone.entities
+        self._zone_floor_heights = zone.floor_heights
+        self._zone_w = zone.width
+        self._zone_h = zone.height
 
         # ── Wall-segment buffers (stacked textures per face) ──
         self._build_segment_buffers(zone)
@@ -679,6 +688,104 @@ class RayRenderer:
             for i in range(sw):
                 self._lens_arr[i] = lut[i]
         self._lens_buf = self._lens_arr.tobytes()
+
+    # ──────────────────────────────────────────────────────────────
+    #  Panini projection
+    # ──────────────────────────────────────────────────────────────
+
+    # Panini remap state — None means disabled
+    _panini_remap_buf: bytes | None = None
+
+    def set_panini(self, d: float = 1.0, enabled: bool = True) -> None:
+        """Enable or disable Panini projection post-process.
+
+        *d* controls the Panini compression strength:
+
+        * **0.0** — rectilinear (no change).
+        * **1.0** — stereographic cylindrical (full Panini, default).
+        * Values between 0 and 1 blend between rectilinear and Panini.
+
+        Pass ``enabled=False`` or ``d=0`` to disable.
+
+        The remap LUT is precomputed once and reused every frame.
+        """
+        if not enabled or d <= 0.0:
+            self._panini_remap_buf = None
+            return
+
+        sw = self.sw
+        fov = self.fov
+        half_fov = fov * 0.5
+        tan_half = math.tan(half_fov)
+
+        # Panini forward: world angle theta → normalised Panini x.
+        #   x_panini = (d+1)*sin(theta) / (d + cos(theta))
+        # Normalise so the edge angle (half_fov) maps to ±1:
+        #   edge_panini = (d+1)*sin(half_fov) / (d + cos(half_fov))
+        d1 = d + 1.0
+        edge_panini = d1 * math.sin(half_fov) / (d + math.cos(half_fov))
+
+        # Build the source-column LUT.
+        # For each output column, invert the Panini mapping to find
+        # the world angle, then compute the rectilinear source column.
+        remap = array.array("d", [0.0] * sw)
+        for x in range(sw):
+            # Output Panini NDC: -1 (left) .. +1 (right)
+            p_ndc = 2.0 * x / sw - 1.0
+
+            # Panini screen value (un-normalise)
+            p = p_ndc * edge_panini
+
+            # Invert Panini: solve  p = (d+1)*sin(theta) / (d + cos(theta))
+            # for theta.  Use atan2 formulation:
+            #   p*(d + cos) = (d+1)*sin
+            #   p*d + p*cos = (d+1)*sin
+            #   (d+1)*sin - p*cos = p*d
+            # Let sin = s, cos = c, s^2+c^2=1.
+            # R*sin(theta - phi) = p*d  where R = sqrt((d+1)^2 + p^2),
+            #   phi = atan2(p, d+1)
+            # Simpler: theta = atan2(p*d, d+1 - p... ) — but that's
+            # tricky.  Use iterative or closed-form:
+            #   We can rewrite as:
+            #     tan(theta) = p*(d + cos(theta)) / ((d+1)*cos(theta))
+            #   Not separable.  Instead, note:
+            #     p = (d+1)*tan(theta) / (d*sec(theta) + 1)
+            #       = (d+1)*sin(theta) / (d + cos(theta))
+            #   Rearranging: p*d + p*cos = (d+1)*sin
+            #     sin - (p/(d+1))*cos = p*d/(d+1)
+            #   This is A*sin(theta) + B*cos(theta) = C:
+            #     A=1, B=-p/(d+1), C=p*d/(d+1)
+            #     theta = asin(C / sqrt(A^2+B^2)) - atan2(B, A)
+            A = 1.0
+            B = -p / d1
+            C = p * d / d1
+            R = math.sqrt(A * A + B * B)
+            if R < 1e-12:
+                theta = 0.0
+            else:
+                cr = C / R
+                cr = max(-1.0, min(1.0, cr))
+                theta = math.asin(cr) - math.atan2(B, A)
+
+            # Rectilinear source NDC for this world angle
+            src_ndc = math.tan(theta) / tan_half
+            src_col = (src_ndc + 1.0) * 0.5 * sw
+            remap[x] = src_col
+
+        self._panini_remap_buf = remap.tobytes()
+
+    def _apply_panini(self) -> None:
+        """Apply the Panini remap to the current framebuffer (if enabled)."""
+        if self._panini_remap_buf is None:
+            return
+        if _c_panini_remap is None:
+            return
+        _c_panini_remap({
+            "fb":    self._fb,
+            "sw":    self.sw,
+            "sh":    self.sh,
+            "remap": self._panini_remap_buf,
+        })
 
     # ──────────────────────────────────────────────────────────────
     #  Point lights
@@ -970,7 +1077,11 @@ class RayRenderer:
 
             # Prism geometry from entity def
             bx_z = floor_z + edef.elevation
-            yaw = float(ent.get("angle", 0.0))
+            # The C renderer's local -Y face is the "front" (TOML "north").
+            # The arrow direction at angle a is (cos a, -sin a) in map space,
+            # but the local -Y face at yaw w points (sin w, -cos w).
+            # Setting yaw = π/2 - angle aligns the front face with the arrow.
+            yaw = math.pi * 0.5 - float(ent.get("angle", 0.0))
 
             # Per-face texture IDs.
             # EntityDef.textures is ((face, key), ...).
@@ -1457,6 +1568,34 @@ class RayRenderer:
         self._anim_tick += 1
         return self._surf
 
+    # Wall face → tangent angle for wall-anchored billboard projection.
+    # North/south walls run E-W (tangent 0), east/west run N-S (tangent π/2).
+    _WALL_TAN_ANGLE: dict[str, float] = {
+        "north": 0.0,
+        "south": 0.0,
+        "east":  math.pi / 2,
+        "west":  math.pi / 2,
+    }
+
+    def _entity_elev(self, e: dict, fh, zw: int, zh: int) -> float:
+        """Return the world-space elevation for a packed entity."""
+        wh = e.get("wall_height")
+        if wh is not None:
+            return float(wh)
+        if "x" in e:
+            ex, ey = float(e["x"]), float(e["y"])
+        else:
+            pos = e.get("position", {})
+            ex, ey = float(pos.get("x", 0)), float(pos.get("y", 0))
+        if fh:
+            ci = max(0, min(zw - 1, int(ex)))
+            ri = max(0, min(zh - 1, int(ey)))
+            try:
+                return float(fh[ri][ci])
+            except (IndexError, TypeError):
+                pass
+        return 0.0
+
     def render_entities(
         self, px: float, py: float, angle: float
     ) -> None:
@@ -1472,8 +1611,18 @@ class RayRenderer:
 
         # Build packed entity data (12 doubles per entity):
         # [x, y, r, g, b, h_scale, w_scale, base_tex,
-        #  facing_angle, n_facings, anim_offset, flags]
+        #  facing_angle, render_mode, anim_offset, elevation]
+        #
+        # Field 9 (render_mode) carries the RenderMode.value:
+        #   1  = BILLBOARD           (camera-facing sprite)
+        #   8  = BILLBOARD_8WAY      (field 8 = facing_angle, 8 directional textures)
+        #  -1  = WALL_ANCHORED       (field 8 = wall tangent angle)
+        #  -2  = PRISM               (skipped here — rendered by box_data pipeline)
+        # Positive values > 1 are legacy n_facings counts for multi-facing sprites.
         ent_list: list[float] = []
+        _fh = self._zone_floor_heights
+        _zw = self._zone_w
+        _zh = self._zone_h
         for e in entities:
             # ── New format: type / x / y / angle ──────────────
             if "type" in e and "x" in e:
@@ -1511,6 +1660,26 @@ class RayRenderer:
                     except Exception:
                         tex_id = -1.0
 
+                # Wall-anchored: set render_mode to WALL_ANCHORED and
+                # encode the wall tangent angle in facing_angle so
+                # the C renderer projects as a flat quad on the wall.
+                wf = e.get("wall_face")
+                if wf and wf in self._WALL_TAN_ANGLE:
+                    facing_angle = self._WALL_TAN_ANGLE[wf]
+                    render_mode = float(RenderMode.WALL_ANCHORED.value)
+                else:
+                    facing_angle = float(e.get("angle", 0.0))
+                    render_mode = n_facings  # BILLBOARD (1.0) or BILLBOARD_8WAY (8.0)
+
+                # Debug: wall_face present but render_mode is not WALL_ANCHORED
+                if __debug__ and wf and render_mode != float(RenderMode.WALL_ANCHORED.value):
+                    import warnings
+                    warnings.warn(
+                        f"Entity {e.get('type','?')} at ({e['x']},{e['y']}): "
+                        f"wall_face={wf!r} but render_mode={render_mode} "
+                        f"(expected {RenderMode.WALL_ANCHORED.value})"
+                    )
+
                 ent_list.extend([
                     float(e["x"]),
                     float(e["y"]),
@@ -1520,10 +1689,10 @@ class RayRenderer:
                     h_scale,
                     w_scale,
                     tex_id,                            # base_tex
-                    float(e.get("angle", 0.0)),    # facing
-                    n_facings,                      # n_facings
+                    facing_angle,                      # facing / wall tangent
+                    render_mode,                       # RenderMode.value
                     0.0,                            # anim_offset
-                    0.0,                            # flags
+                    self._entity_elev(e, _fh, _zw, _zh),  # elevation
                 ])
                 continue
 
@@ -1557,7 +1726,6 @@ class RayRenderer:
             facing_angle = 0.0
             n_facings = 1.0
             anim_offset = 0.0
-            flags = 0.0
             bb_mode = spr.get("billboard_mode", 0)
             if bb_mode == 1:
                 # 8-way directional billboard
@@ -1585,7 +1753,7 @@ class RayRenderer:
                 facing_angle,   # entity facing direction (radians)
                 n_facings,      # number of facing textures (1=static)
                 anim_offset,    # animation frame offset
-                flags,          # reserved
+                self._entity_elev(e, _fh, _zw, _zh),  # elevation
             ])
 
         n_ents = len(ent_list) // 12

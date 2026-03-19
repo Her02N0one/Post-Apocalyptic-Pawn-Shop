@@ -484,6 +484,8 @@ def project_entities(
     fov: float,
     screen_w: int, screen_h: int,
     entities: list[tuple[int, float, float, str, tuple[int, int, int], float, float]],
+    cam_h: float = 0.5,
+    horizon_shift: int = 0,
 ) -> list[BillboardSprite]:
     """Project world entities into screen-space billboards.
 
@@ -492,6 +494,11 @@ def project_entities(
     entities : list of (eid, ex, ey, char, color, height_scale,
                width_scale[, elevation[, bb_mode, bb_key, octant]])
         Elements 8-10 are optional 8-way billboard fields.
+        ``elevation`` is the world-space floor height under the entity.
+    cam_h : float
+        Camera height in world units (default 0.5 = eye-level at ground).
+    horizon_shift : int
+        Pixel offset for the horizon line (from pitch/look).
 
     Returns a list sorted by distance (far → near) for painter's-algo
     draw order.
@@ -505,6 +512,7 @@ def project_entities(
     inv_det = 1.0 / (plane_x * dir_y - dir_x * plane_y + 1e-10)
 
     half_sw = screen_w * 0.5
+    half_sh = screen_h * 0.5 + horizon_shift
     _int = int
     _max = max
     _BB = BillboardSprite
@@ -534,10 +542,9 @@ def project_entities(
         sprite_h = _max(1, _int(wall_h * h_scale))
         sprite_w = _max(1, _int(wall_h * w_scale))
 
-        floor_y = (screen_h + wall_h) * 0.5
-        # Lift sprite by elevation (fraction of wall height)
-        lift = wall_h * elev
-        sprite_sy = floor_y - sprite_h - lift
+        # Floor-line at the entity's elevation, matching the wall renderer
+        floor_y = half_sh + wall_h * (cam_h - elev)
+        sprite_sy = floor_y - sprite_h
 
         _append(_BB(eid, sprite_sx, sprite_sy, sprite_h, ty,
                      char, color, sprite_w,

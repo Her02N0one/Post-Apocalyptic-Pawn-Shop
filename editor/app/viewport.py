@@ -89,6 +89,7 @@ class ViewportMixin:
             frame = self.renderer.render(self.px, self.py, self.angle,
                                           self.cam_h, self.pitch)
             self.renderer.render_entities(self.px, self.py, self.angle)
+            self.renderer._apply_panini()
             scaled = pygame.transform.scale(frame, (vw, vh))
             surf.blit(scaled, (0, 0))
 

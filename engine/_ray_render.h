@@ -43,6 +43,13 @@
 #define PRT_D_ANGY 3          /* portal data: sin(angle_offset)      */
 #define PRT_STRIDE 4          /* doubles per portal entry            */
 
+/* ── Entity buffer constants (matches core.types.RenderMode) ────── */
+#define ENT_STRIDE            12  /* doubles per packed entity          */
+#define RMODE_BILLBOARD        1  /* camera-facing sprite               */
+#define RMODE_BILLBOARD_8WAY   8  /* 8-way directional sprite           */
+#define RMODE_WALL_ANCHORED   -1  /* flat quad fixed to wall surface    */
+#define RMODE_PRISM           -2  /* 3D box (box_data pipeline)         */
+
 /* Sky gradient colours (exterior zones) */
 #define SKY_TOP_R 50
 #define SKY_TOP_G 70

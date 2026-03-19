@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import ClassVar
 
 from core.ecs import Component
-from core.types import Direction, EntityKind
+from core.types import Direction, EntityKind, RenderMode
 
 
 # ── Spatial ──────────────────────────────────────────────────────────
@@ -68,8 +68,11 @@ class Sprite(Component):
     char: str = "?"
     color: tuple[int, int, int] = (255, 255, 255)
     layer: int = 0
-    billboard_mode: int = 0     # 0=static, 1=8-way
+    render_mode: RenderMode = RenderMode.BILLBOARD
+    billboard_mode: int = 0     # 0=static, 1=8-way  (legacy — prefer render_mode)
     sprite_key: str = ""        # base texture key for 8-way billboards
+    wall_height: float = -1.0   # ≥0 = wall-mounted at this Y; -1 = floor
+    wall_face: str = ""         # "north"/"south"/"east"/"west"; "" = billboard
 
 
 @dataclass

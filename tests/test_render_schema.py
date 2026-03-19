@@ -25,6 +25,7 @@ from engine.render_schema import (
     RENDER_PARTICLES_REQUIRED,
     RENDER_PARTICLES_OPTIONAL,
     SSAO_REQUIRED,
+    PANINI_REQUIRED,
     RenderSchemaError,
     validate_render_frame,
     validate_render_entities,
@@ -80,6 +81,10 @@ class TestRenderFrameDrift:
         self.s_req, self.s_opt = _schema_keys(
             RENDER_FRAME_REQUIRED, RENDER_FRAME_OPTIONAL
         )
+        # panini_remap is a separate entry point in _ray_render.c;
+        # exclude its keys from the render_frame comparison.
+        panini_only = {k for k, _, _ in PANINI_REQUIRED} - self.s_req - self.s_opt
+        self.c_req -= panini_only
 
     def test_no_c_required_missing_from_schema(self):
         missing = self.c_req - self.s_req

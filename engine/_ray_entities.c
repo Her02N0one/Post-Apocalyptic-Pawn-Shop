@@ -1,7 +1,16 @@
-/*  engine/_ray_entities.c  —  Entity billboard renderer.
+/*  engine/_ray_entities.c  —  Entity rendering with RenderMode dispatch.
  *
- *  Renders entity sprites/billboards with z-buffer clipping,
- *  fog, and per-pixel depth testing.
+ *  Renders entity sprites with z-buffer clipping, fog, and per-pixel
+ *  depth testing.  Dispatches on render_mode (field 9) to select the
+ *  correct projection method:
+ *
+ *    RMODE_BILLBOARD      (1)  — camera-facing sprite
+ *    RMODE_BILLBOARD_8WAY (8)  — 8-way directional Doom-style sprite
+ *    RMODE_WALL_ANCHORED (-1)  — flat quad fixed to a wall surface
+ *    RMODE_PRISM         (-2)  — 3D box (skipped here, uses box_data)
+ *
+ *  Unknown render_mode values are skipped with a continue — never
+ *  silently treated as billboards.
  *
  *  Separated from _ray_render.c for maintainability.
  *  Shares all types and inline helpers via _ray_render.h.
@@ -9,8 +18,10 @@
 
 #include "_ray_render.h"
 
+/* RenderMode constants and ENT_STRIDE are defined in _ray_render.h */
+
 /* ═══════════════════════════════════════════════════════════════════
- *  Entity billboard rendering
+ *  Entity rendering
  * ═══════════════════════════════════════════════════════════════════
  *
  * Dict keys:
@@ -24,10 +35,14 @@
  *   atlas       : buffer uint8[num_tiles * ts * ts * 4] — tile atlas
  *   tex_size    : int — texture side length (e.g. 64)
  *   num_tiles   : int — number of tiles in atlas
- *   ent_data    : buffer double[n * 12] — packed entity data:
+ *   ent_data    : buffer double[n * ENT_STRIDE] — packed entity data:
  *                   [x, y, r, g, b, h_scale, w_scale, base_tex,
- *                    facing_angle, n_facings, anim_offset, flags]
+ *                    facing_angle, render_mode, anim_offset, elevation]
  *                   per entity
+ *                   Field 9 (render_mode) carries RMODE_* value.
+ *                   Field 8 (facing_angle) is mode-specific:
+ *                     BILLBOARD/8WAY: entity facing direction (radians)
+ *                     WALL_ANCHORED:  wall tangent angle
  *   n_ents      : int — number of entities
  *   cam_h       : double — camera height in world units (0=floor, 1=ceil)
  *
@@ -109,8 +124,8 @@ py_render_entities(PyObject *self, PyObject *dict)
     }
 
     for (int i = 0; i < n_ents; i++) {
-        double ex = ent[i * 12 + 0];
-        double ey = ent[i * 12 + 1];
+        double ex = ent[i * ENT_STRIDE + 0];
+        double ey = ent[i * ENT_STRIDE + 1];
         double dx = ex - cam_x;
         double dy = ey - cam_y;
         sorted[i].idx  = i;
@@ -128,40 +143,165 @@ py_render_entities(PyObject *self, PyObject *dict)
         }
     }
 
-    /* Render each entity */
+    /* Render each entity — dispatch on render_mode */
     for (int si = 0; si < n_ents; si++) {
         int ei = sorted[si].idx;
-        double ex = ent[ei * 12 + 0];
-        double ey = ent[ei * 12 + 1];
-        int    er = clampi((int)ent[ei * 12 + 2], 0, 255);
-        int    eg = clampi((int)ent[ei * 12 + 3], 0, 255);
-        int    eb = clampi((int)ent[ei * 12 + 4], 0, 255);
-        double e_hscale = ent[ei * 12 + 5];
-        double e_wscale = ent[ei * 12 + 6];
-        int    base_tex = (int)ent[ei * 12 + 7];
-        double facing_angle = ent[ei * 12 + 8];
-        int    n_facings    = (int)ent[ei * 12 + 9];
-        int    anim_offset  = (int)ent[ei * 12 + 10];
-        /* int flags = (int)ent[ei * 12 + 11];  reserved */
+        double ex = ent[ei * ENT_STRIDE + 0];
+        double ey = ent[ei * ENT_STRIDE + 1];
+        int    er = clampi((int)ent[ei * ENT_STRIDE + 2], 0, 255);
+        int    eg = clampi((int)ent[ei * ENT_STRIDE + 3], 0, 255);
+        int    eb = clampi((int)ent[ei * ENT_STRIDE + 4], 0, 255);
+        double e_hscale = ent[ei * ENT_STRIDE + 5];
+        double e_wscale = ent[ei * ENT_STRIDE + 6];
+        int    base_tex = (int)ent[ei * ENT_STRIDE + 7];
+        double facing_angle = ent[ei * ENT_STRIDE + 8];
+        int    render_mode  = (int)ent[ei * ENT_STRIDE + 9];
+        int    anim_offset  = (int)ent[ei * ENT_STRIDE + 10];
+        double elevation    = ent[ei * ENT_STRIDE + 11];
 
-        /* ── Multi-facing sprite selection ─────────────────────── */
+        /* ── Texture selection (shared across billboard modes) ──── */
         int e_tex_id;
-        if (n_facings > 1 && base_tex >= 0) {
-            /* Relative angle: direction from camera to entity minus
-             * the entity's own facing angle.  Normalise to [0, 2π). */
+        if (render_mode == RMODE_BILLBOARD_8WAY && base_tex >= 0) {
             double rel = atan2(ey - cam_y, ex - cam_x) - facing_angle;
             rel = fmod(rel, 2.0 * M_PI);
             if (rel < 0.0) rel += 2.0 * M_PI;
-            int frame = (int)(rel / (2.0 * M_PI) * n_facings);
-            if (frame >= n_facings) frame = n_facings - 1;
+            int frame = (int)(rel / (2.0 * M_PI) * 8);
+            if (frame >= 8) frame = 7;
             e_tex_id = base_tex + anim_offset + frame;
-            /* Clamp to atlas bounds */
             if (e_tex_id < 0 || e_tex_id >= num_tiles)
                 e_tex_id = base_tex;
         } else {
             e_tex_id = base_tex;
         }
         int has_tex = (e_tex_id >= 0 && e_tex_id < num_tiles);
+
+        /* ============================================================
+         * WALL-ANCHORED entities (render_mode == RMODE_WALL_ANCHORED):
+         *   Render as a perspective-correct flat quad aligned to the
+         *   wall surface instead of a camera-facing billboard.
+         *   facing_angle encodes the wall tangent direction.
+         * ============================================================ */
+        if (render_mode == RMODE_WALL_ANCHORED) {
+            double tan_x = cos(facing_angle);
+            double tan_y = sin(facing_angle);
+            double half_w = e_wscale * 0.5;
+
+            /* Two corners of the quad along the wall surface */
+            double ax = ex - tan_x * half_w;
+            double ay = ey - tan_y * half_w;
+            double bx = ex + tan_x * half_w;
+            double by = ey + tan_y * half_w;
+
+            /* Transform both corners to camera space */
+            double dax = ax - cam_x, day = ay - cam_y;
+            double dbx = bx - cam_x, dby = by - cam_y;
+            double txa = inv_det * (dir_y * dax - dir_x * day);
+            double tya = inv_det * (-plane_y * dax + plane_x * day);
+            double txb = inv_det * (dir_y * dbx - dir_x * dby);
+            double tyb = inv_det * (-plane_y * dbx + plane_x * dby);
+
+            /* Both behind camera */
+            if (tya <= 0.05 && tyb <= 0.05) continue;
+
+            /* Clip to near plane */
+            if (tya < 0.05) {
+                double t = (0.05 - tya) / (tyb - tya);
+                tya = 0.05;
+                txa = txa + t * (txb - txa);
+            } else if (tyb < 0.05) {
+                double t = (0.05 - tyb) / (tya - tyb);
+                tyb = 0.05;
+                txb = txb + t * (txa - txb);
+            }
+
+            /* Project corners to screen X */
+            int sxa = (int)((sw / 2.0) * (1.0 + txa / tya));
+            int sxb = (int)((sw / 2.0) * (1.0 + txb / tyb));
+
+            int flip_u = 0;
+            if (sxa > sxb) {
+                int tmp_i = sxa; sxa = sxb; sxb = tmp_i;
+                double tmp_d;
+                tmp_d = tya; tya = tyb; tyb = tmp_d;
+                flip_u = 1;
+            }
+
+            if (sxb <= 0 || sxa >= sw) continue;
+
+            int col_count = sxb - sxa;
+            if (col_count < 1) col_count = 1;
+            double inv_tya = 1.0 / tya;
+            double inv_tyb = 1.0 / tyb;
+            int cx0 = clampi(sxa, 0, sw - 1);
+            int cx1 = clampi(sxb - 1, 0, sw - 1);
+
+            for (int cx = cx0; cx <= cx1; cx++) {
+                double t_col = (double)(cx - sxa) / (double)col_count;
+
+                /* Perspective-correct depth interpolation */
+                double inv_z = inv_tya + t_col * (inv_tyb - inv_tya);
+                double col_depth = 1.0 / inv_z;
+                double col_depth_biased = col_depth * 0.995;
+
+                double wall_h = (double)sh / col_depth;
+                int spr_h = (int)(wall_h * e_hscale);
+                if (spr_h < 1) continue;
+
+                int floor_y = half_h + (int)((cam_h - elevation) * wall_h);
+                int spr_y0 = floor_y - spr_h;
+                int y0 = clampi(spr_y0, 0, sh - 1);
+                int y1 = clampi(floor_y - 1, 0, sh - 1);
+
+                /* Texture U from wall-space interpolation */
+                double u_frac = flip_u ? (1.0 - t_col) : t_col;
+                int tex_u = clampi((int)(u_frac * ts), 0, ts_mask);
+
+                int fog = fog_val(fog_lt, col_depth);
+
+                for (int cy = y0; cy <= y1; cy++) {
+                    if (col_depth_biased >= (double)depth_px[cy * sw + cx])
+                        continue;
+                    if (has_tex) {
+                        double v_frac = (double)(cy - spr_y0) / (double)spr_h;
+                        int tex_v = clampi((int)(v_frac * ts), 0, ts_mask);
+
+                        int sr, sg, sb, sa;
+                        sample_tex(atlas, ts, e_tex_id, tex_u, tex_v,
+                                   &sr, &sg, &sb, &sa);
+                        if (sa <= 0 || (sr + sg + sb < 15 && sa < 128))
+                            continue;
+
+                        sr = (sr * (128 + er / 2)) >> 8;
+                        sg = (sg * (128 + eg / 2)) >> 8;
+                        sb = (sb * (128 + eb / 2)) >> 8;
+                        sr = clampi(sr, 0, 255);
+                        sg = clampi(sg, 0, 255);
+                        sb = clampi(sb, 0, 255);
+                        sr = (sr * fog) >> 8;
+                        sg = (sg * fog) >> 8;
+                        sb = (sb * fog) >> 8;
+
+                        put_px(fb, sw, cx, cy, sr, sg, sb);
+                        put_depth(depth_px, sw, cx, cy, (float)col_depth);
+                    } else {
+                        int fr = (er * fog) >> 8;
+                        int fg = (eg * fog) >> 8;
+                        int fb_c = (eb * fog) >> 8;
+                        put_px(fb, sw, cx, cy, fr, fg, fb_c);
+                        put_depth(depth_px, sw, cx, cy, (float)col_depth);
+                    }
+                }
+            }
+            continue;  /* skip the billboard path below */
+        }
+
+        /* ============================================================
+         * BILLBOARD entities (render_mode == RMODE_BILLBOARD or
+         *                     render_mode == RMODE_BILLBOARD_8WAY)
+         *
+         * Unknown render_mode values fall through here for now as a
+         * safety net.  Future modes should get explicit branches above.
+         * ============================================================ */
 
         /* Camera-relative transform */
         double dx = ex - cam_x;
@@ -179,10 +319,10 @@ py_render_entities(PyObject *self, PyObject *dict)
         int spr_w = (int)(wall_h * e_wscale);
         if (spr_h < 1 || spr_w < 1) continue;
 
-        /* Vertical positioning: entity base sits at floor level (z=0),
+        /* Vertical positioning: entity base sits at its elevation,
          * offset by cam_h so entities move down when camera goes up.
          * half_h already includes horizon_shift.  */
-        int floor_y = half_h + (int)(cam_h * wall_h);
+        int floor_y = half_h + (int)((cam_h - elevation) * wall_h);
         int spr_y0 = floor_y - spr_h;
         int spr_x0 = scr_x - spr_w / 2;
 
@@ -199,7 +339,10 @@ py_render_entities(PyObject *self, PyObject *dict)
         int fg = (eg * fog) >> 8;
         int fb_c = (eb * fog) >> 8;
 
-        /* Draw with per-pixel depth clipping */
+        /* Draw with per-pixel depth clipping.
+         * A small depth bias (0.5%) prevents wall-mounted entities
+         * from z-fighting with the wall face they sit on.          */
+        double ty_biased = ty * 0.995;
         for (int cx = x0; cx <= x1; cx++) {
             /* Compute texture U for this column (0..ts-1) */
             double u_frac = (double)(cx - spr_x0) / (double)spr_w;
@@ -207,7 +350,7 @@ py_render_entities(PyObject *self, PyObject *dict)
 
             for (int cy = y0; cy <= y1; cy++) {
                 /* Per-pixel depth test: skip if something closer */
-                if (ty >= (double)depth_px[cy * sw + cx]) continue;
+                if (ty_biased >= (double)depth_px[cy * sw + cx]) continue;
                 if (has_tex) {
                     /* Textured billboard: sample from atlas */
                     double v_frac = (double)(cy - spr_y0) / (double)spr_h;

@@ -251,16 +251,24 @@ class RenderingMixin:
         if not edef:
             return
 
-        fx, _fy, fz = self._forward()
-        ox, _, oz = self.cam_x, self.cam_y, self.cam_z
-        wx = ox + fx * hit.t
-        wz = oz + fz * hit.t
-        wx = max(0.1, min(zone.width - 0.1, wx))
-        wz = max(0.1, min(zone.height - 0.1, wz))
+        # Check for wall-face snap — use the actual rendered height
+        # (prism: def height, billboard: scale * 0.6 matching C renderer)
+        ent_h = edef.height if edef.render_type == "prism" else edef.scale * 0.6
+        wall = self._ent_compute_wall_snap(hit, entity_height=ent_h)
+
+        if wall:
+            wx, wz = wall["x"], wall["y"]
+        else:
+            fx, _fy, fz = self._forward()
+            ox, _, oz = self.cam_x, self.cam_y, self.cam_z
+            wx = ox + fx * hit.t
+            wz = oz + fz * hit.t
+            wx = max(0.1, min(zone.width - 0.1, wx))
+            wz = max(0.1, min(zone.height - 0.1, wz))
 
         # Build a temporary entity dict for the ghost
         # For prism entities, use the current placement yaw
-        ghost_angle = getattr(self, '_ent_place_yaw', 0.0) if (edef and edef.render_type == 'prism') else 0.0
+        ghost_angle = getattr(self, '_ent_place_yaw', 0.0) if (edef and edef.directional) else 0.0
         ghost_ent = {
             "type": etype,
             "x": wx,
@@ -268,6 +276,11 @@ class RenderingMixin:
             "angle": ghost_angle,
             "state": "default",
         }
+        if wall:
+            ghost_ent["wall_face"] = wall["wall_face"]
+            ghost_ent["wall_height"] = wall["wall_height"]
+        if hit is not None and hit.part in ("floor2", "ceiling2"):
+            ghost_ent["layer"] = 2
         self._draw_one_entity(
             surface, vp, hw, hh, zone, ghost_ent, -1,
             is_selected=False, ghost=True,
@@ -311,15 +324,20 @@ class RenderingMixin:
         # Per-entity scale override (from overrides)
         scale = float(ent.get("overrides", {}).get("scale", def_scale))
 
-        # Prism entities use real geometry from their def
-        if edef and edef.render_type == "prism":
+        # Compute world-space dimensions matching the C renderer.
+        # Prism entities use real geometry from their def.
+        # Billboard entities use h_scale=scale*0.6, w_scale=scale*0.4.
+        wall_face = ent.get("wall_face")
+        is_prism = edef and edef.render_type == "prism"
+        if is_prism:
             half_w = edef.width * 0.5
             half_d = edef.depth * 0.5
             height = edef.height
         else:
-            half_w = max(scale * 0.22, 0.08)
-            half_d = half_w
-            height = scale
+            # Match C renderer: h_scale = scale*0.6, w_scale = scale*0.4
+            height = scale * 0.6
+            half_w = scale * 0.2
+            half_d = 0.02  # billboards are flat
 
         # Override visuals for selection / ghost
         if ghost:
@@ -333,8 +351,8 @@ class RenderingMixin:
         edge_col = self._COL_ENT_SELECTED if is_selected else None
 
         # Elevation offset (prism entities can float above the floor)
-        elev = edef.elevation if edef else 0.0
-        base_y = fh + elev
+        # Wall-mounted entities use stored wall_height instead.
+        base_y = self._ent_base_y(ent, zone, fh, edef)
         angle = float(ent.get("angle", 0.0))
 
         # Draw the filled box body
@@ -343,18 +361,40 @@ class RenderingMixin:
             min(255, col[1] + 40),
             min(255, col[2] + 40),
         )
-        if edef and edef.render_type == "prism":
+        if is_prism:
+            # Use π/2 - angle so the local -Z face ("front") aligns
+            # with the arrow direction (cos a, 0, -sin a).
+            prism_yaw = math.pi * 0.5 - angle
             self._filled_rotated_box(
                 surface, vp, hw, hh,
                 ex, ez,
                 edef.width, height, edef.depth,
-                base_y, angle,
+                base_y, prism_yaw,
+                base_color=col,
+                edge_color=bright_edge,
+                edge_width=3 if is_selected else 1,
+                alpha=alpha,
+            )
+        elif wall_face:
+            # Wall-mounted billboard: thin oriented quad on the wall.
+            # Width runs along the wall tangent, depth is near-zero.
+            _WALL_FACE_YAW = {
+                "north": 0.0, "south": 0.0,
+                "east": math.pi / 2, "west": math.pi / 2,
+            }
+            wall_yaw = _WALL_FACE_YAW.get(wall_face, 0.0)
+            self._filled_rotated_box(
+                surface, vp, hw, hh,
+                ex, ez,
+                scale * 0.4, height, 0.04,
+                base_y, wall_yaw,
                 base_color=col,
                 edge_color=bright_edge,
                 edge_width=3 if is_selected else 1,
                 alpha=alpha,
             )
         else:
+            # Floor billboard: thin standing rectangle.
             self._filled_box(
                 surface, vp, hw, hh,
                 ex - half_w, base_y, ez - half_d,
@@ -367,8 +407,9 @@ class RenderingMixin:
 
         # Direction indicator line for directional entities
         if edef and edef.directional:
-            dx = math.cos(angle) * half_w * 3.0
-            dz = -math.sin(angle) * half_w * 3.0
+            arrow_len = scale * 0.3
+            dx = math.cos(angle) * arrow_len
+            dz = -math.sin(angle) * arrow_len
             mid_y = base_y + height * 0.5
             dir_col = self._COL_ENT_SELECTED if is_selected else (
                 min(255, col[0] + 80),

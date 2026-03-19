@@ -1,12 +1,16 @@
 {
-  "last_zone": "",
-  "recent_zones": [],
-  "left_panel_w": 279,
-  "right_panel_w": 249,
-  "window_w": 1600,
-  "window_h": 900,
+  "last_zone": "test",
+  "recent_zones": [
+    "test"
+  ],
+  "left_panel_w": 251,
+  "right_panel_w": 224,
+  "window_w": 1461,
+  "window_h": 830,
   "view_mode": "2d",
   "show_texture_browser": false,
   "camera_bookmarks": [],
-  "window_maximized": false
+  "window_maximized": false,
+  "editor2_geometry": "AdnQywADAAAAAAEEAAAAJwAABnsAAAPJAAABBAAAAEYAAAZ7AAADyQAAAAAAAAAAB4AAAAEEAAAARgAABnsAAAPJ",
+  "editor2_state": "AAAA/wAAAAD9AAAAAgAAAAAAAAB8AAADP/wCAAAAAfsAAAAYAEMAZQBsAGwASQBuAGYAbwBEAG8AYwBrAQAAADAAAAM/AAABpAD///8AAAABAAABqwAAAz/8AgAAAAH7AAAAGgBJAG4AcwBwAGUAYwB0AG8AcgBEAG8AYwBrAQAAADAAAAM/AAABngD///8AAANJAAADPwAAAAQAAAAEAAAACAAAAAj8AAAAAQAAAAIAAAABAAAAGABUAG8AbwBsAHMAVABvAG8AbABCAGEAcgEAAAAA/////wAAAAAAAAAA"
 }

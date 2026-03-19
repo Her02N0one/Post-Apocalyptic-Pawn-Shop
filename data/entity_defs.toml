@@ -181,6 +181,11 @@ states        = ["on", "off"]
 frame_width   = 32
 frame_height  = 32
 
+[wall_lamp.sprite]
+char  = "*"
+color = [220, 190, 80]
+layer = 5
+
 [wall_lamp.identity]
 name = "Wall Lamp"
 kind = "prop"
