@@ -11,7 +11,8 @@ import numpy as np
 from OpenGL import GL as gl
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QPainter
+from PySide6.QtGui import QColor, QFont
+from PySide6.QtWidgets import QLabel
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from core.zones import Zone
@@ -114,12 +115,24 @@ class ZoneViewport(QOpenGLWidget):
         self._tool: Tool | None = None
         self.on_hover: Callable[[], None] | None = None
         self._on_scroll: Callable[[int], bool] | None = None
+        self.extra_overlays: Callable[[], list] | None = None
+        self.on_eyedrop: Callable[[int, int, int], None] | None = None
 
         # Display options
         self._show_grid = True
         self._wireframe = False
-        self._hud_lines: list[tuple[str, tuple[int, int, int]]] = []
         self._show_walls = True
+
+        # HUD overlay label (QLabel sitting on top of the GL surface)
+        self._hud_label = QLabel(self)
+        self._hud_label.setStyleSheet(
+            "background: rgba(0,0,0,140); color: #ccc;"
+            " font: 10pt 'Consolas'; padding: 6px;"
+            " border: none;"
+        )
+        self._hud_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._hud_label.move(6, 6)
+        self._hud_label.hide()
         self._show_floors = True
         self._show_ceilings = True
 
@@ -369,7 +382,7 @@ class ZoneViewport(QOpenGLWidget):
 
         t0 = time.perf_counter()
 
-        # Re-establish GL state (QPainter corrupts it between frames)
+        # Re-establish GL state
         gl.glEnable(gl.GL_DEPTH_TEST)
         gl.glDepthMask(gl.GL_TRUE)
         gl.glEnable(gl.GL_CULL_FACE)
@@ -415,11 +428,6 @@ class ZoneViewport(QOpenGLWidget):
         # ── Crosshair (FPS mode) ──
         if self._mouse_captured:
             self._draw_crosshair()
-
-        # ── HUD overlay (QPainter text) ──
-        # Must be LAST — QPainter modifies GL state.
-        if self._hud_lines:
-            self._draw_hud()
 
         # ── Perf tracking ──
         frame_ms = (time.perf_counter() - t0) * 1000
@@ -467,6 +475,8 @@ class ZoneViewport(QOpenGLWidget):
     def _draw_overlays(self, vp: np.ndarray) -> None:
         """Draw tool overlay primitives with alpha blending."""
         items: list[Overlay] = self._tool.overlays() if self._tool else []
+        if self.extra_overlays:
+            items = items + self.extra_overlays()
         if not items:
             return
 
@@ -558,44 +568,23 @@ class ZoneViewport(QOpenGLWidget):
         gl.glDisable(gl.GL_BLEND)
         gl.glBindVertexArray(0)
 
-    def _draw_hud(self) -> None:
-        """Draw text HUD overlay using QPainter on top of GL content."""
-        # Filter empty lines from the end so background fits content
-        lines = [(t, c) for t, c in self._hud_lines if t]
-        if not lines:
-            return
-
-        painter = QPainter(self)
-
-        font = QFont("Consolas", 10)
-        font.setStyleHint(QFont.StyleHint.Monospace)
-        painter.setFont(font)
-
-        fm = painter.fontMetrics()
-        line_h = fm.height() + 2
-        pad = 6
-
-        # Size background to fit widest line
-        max_w = max((fm.horizontalAdvance(t) for t, _ in lines), default=100)
-        bg_w = max_w + pad * 3
-        bg_h = len(lines) * line_h + pad * 2
-        painter.fillRect(6, 6, bg_w, bg_h, QColor(0, 0, 0, 140))
-
-        y = 6 + pad + fm.ascent()
-        for text, color in lines:
-            painter.setPen(QColor(*color))
-            painter.drawText(12, y, text)
-            y += line_h
-
-        painter.end()
-
     @property
     def hud_lines(self) -> list[tuple[str, tuple[int, int, int]]]:
-        return self._hud_lines
+        return []
 
     @hud_lines.setter
     def hud_lines(self, v: list[tuple[str, tuple[int, int, int]]]) -> None:
-        self._hud_lines = v
+        lines = [(t, c) for t, c in v if t]
+        if not lines:
+            self._hud_label.hide()
+            return
+        parts: list[str] = []
+        for text, color in lines:
+            r, g, b = color
+            parts.append(f'<span style="color:rgb({r},{g},{b})">{text}</span>')
+        self._hud_label.setText("<br>".join(parts))
+        self._hud_label.adjustSize()
+        self._hud_label.show()
 
     # ── Input ─────────────────────────────────────────────────────
 
@@ -664,6 +653,12 @@ class ZoneViewport(QOpenGLWidget):
 
     def mousePressEvent(self, ev) -> None:
         if not self._mouse_captured:
+            # Middle-click eyedropper (global, before tool)
+            if ev.button() == Qt.MouseButton.MiddleButton and self.on_eyedrop:
+                pos = ev.position()
+                self.on_eyedrop(pos.x(), pos.y(), self.width(), self.height())
+                ev.accept()
+                return
             # Right-click captures mouse for FPS camera
             if ev.button() == Qt.MouseButton.RightButton:
                 self._capture_mouse()

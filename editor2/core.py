@@ -97,6 +97,114 @@ class BatchCmd:
             cmd.undo(zone)
 
 
+# ── Entity commands ──────────────────────────────────────────────
+
+
+@dataclass(slots=True)
+class EntityPlaceCmd:
+    """Place a new entity into the zone."""
+    entity: object  # EntityDescriptor
+    _index: int = -1
+
+    @property
+    def description(self) -> str:
+        return f"Place entity {getattr(self.entity, 'type', '?')}"
+
+    def execute(self, zone: Zone) -> None:
+        zone.entities.append(self.entity)
+        self._index = len(zone.entities) - 1
+
+    def undo(self, zone: Zone) -> None:
+        # Remove by uid to be safe
+        uid = self.entity.uid
+        zone.entities[:] = [e for e in zone.entities if e.uid != uid]
+
+
+@dataclass(slots=True)
+class EntityDeleteCmd:
+    """Delete an entity from the zone by uid."""
+    uid: int
+    _entity: object = None  # saved for undo
+    _index: int = -1
+
+    def __init__(self, uid: int, entity: object = None):
+        self.uid = uid
+        self._entity = entity
+        self._index = -1
+
+    @property
+    def description(self) -> str:
+        return f"Delete entity uid={self.uid}"
+
+    def execute(self, zone: Zone) -> None:
+        for i, e in enumerate(zone.entities):
+            if e.uid == self.uid:
+                self._entity = e
+                self._index = i
+                zone.entities.pop(i)
+                return
+
+    def undo(self, zone: Zone) -> None:
+        if self._entity is not None:
+            idx = min(self._index, len(zone.entities))
+            zone.entities.insert(idx, self._entity)
+
+
+@dataclass(slots=True)
+class EntityRotateCmd:
+    """Rotate an entity's angle by delta radians."""
+    uid: int
+    delta: float
+    _old_angle: float = 0.0
+
+    @property
+    def description(self) -> str:
+        return f"Rotate entity uid={self.uid}"
+
+    def execute(self, zone: Zone) -> None:
+        for e in zone.entities:
+            if e.uid == self.uid:
+                self._old_angle = e.angle
+                e.angle = (e.angle + self.delta) % (2.0 * 3.141592653589793)
+                return
+
+    def undo(self, zone: Zone) -> None:
+        for e in zone.entities:
+            if e.uid == self.uid:
+                e.angle = self._old_angle
+                return
+
+
+@dataclass(slots=True)
+class EntityMoveCmd:
+    """Move an entity to a new position."""
+    uid: int
+    new_x: float
+    new_y: float
+    _old_x: float = 0.0
+    _old_y: float = 0.0
+
+    @property
+    def description(self) -> str:
+        return f"Move entity uid={self.uid}"
+
+    def execute(self, zone: Zone) -> None:
+        for e in zone.entities:
+            if e.uid == self.uid:
+                self._old_x = e.x
+                self._old_y = e.y
+                e.x = self.new_x
+                e.y = self.new_y
+                return
+
+    def undo(self, zone: Zone) -> None:
+        for e in zone.entities:
+            if e.uid == self.uid:
+                e.x = self._old_x
+                e.y = self._old_y
+                return
+
+
 # ── Command Bus ──────────────────────────────────────────────────
 
 

@@ -1300,10 +1300,14 @@ class RayRenderer:
 
         # Default unset step faces of non-wall tiles to "dirt" so
         # floor height transitions don't show grass on vertical faces.
+        # If the cell has a face_textures override, use that instead of
+        # dirt so that painted wall textures show on step walls too.
         # Slope cells are skipped — their risers use the cell's face
         # texture (via resolve_face_tex fallback) instead.
         _tdef = tile_def
         dirt_id = _s2i("dirt")
+        _ft = zone.face_textures
+        _wt = zone.wall_textures
         _sdx = getattr(zone, "floor_slope_dx", [])
         _sdy = getattr(zone, "floor_slope_dy", [])
         for r in range(H):
@@ -1321,7 +1325,16 @@ class RayRenderer:
                 base = (r * W + c) * 4
                 for fi in range(4):
                     if fst_vals[base + fi] < 0:
-                        fst_vals[base + fi] = dirt_id
+                        # Check per-face override
+                        ft = ""
+                        if _ft and r < len(_ft) and c < len(_ft[r]):
+                            faces = _ft[r][c]
+                            if fi < len(faces):
+                                ft = faces[fi]
+                        # Check per-cell wall override
+                        if not ft and _wt and r < len(_wt) and c < len(_wt[r]):
+                            ft = _wt[r][c]
+                        fst_vals[base + fi] = _s2i(ft) if ft else dirt_id
 
         self._fstep_tex_buf = array.array("i", fst_vals).tobytes()
 
@@ -1341,6 +1354,7 @@ class RayRenderer:
         # Default unset ceiling step faces of non-wall tiles to
         # "concrete" so ceiling height transitions don't show the
         # tile's base texture (often grass) on vertical faces.
+        # Honour face_textures / wall_textures overrides here too.
         concrete_id = _s2i("concrete")
         for r in range(H):
             for c in range(W):
@@ -1352,7 +1366,14 @@ class RayRenderer:
                 base = (r * W + c) * 4
                 for fi in range(4):
                     if cst_vals[base + fi] < 0:
-                        cst_vals[base + fi] = concrete_id
+                        ft = ""
+                        if _ft and r < len(_ft) and c < len(_ft[r]):
+                            faces = _ft[r][c]
+                            if fi < len(faces):
+                                ft = faces[fi]
+                        if not ft and _wt and r < len(_wt) and c < len(_wt[r]):
+                            ft = _wt[r][c]
+                        cst_vals[base + fi] = _s2i(ft) if ft else concrete_id
 
         self._cstep_tex_buf = array.array("i", cst_vals).tobytes()
 

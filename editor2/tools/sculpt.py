@@ -228,11 +228,55 @@ class SculptTool:
         self._bus.execute(SetCellFieldCmd(r, c, "floor_textures", ""))
         self._bus.execute(SetCellFieldCmd(r, c, "ceil_textures", ""))
         self._bus.execute(SetCellFieldCmd(r, c, "wall_textures", ""))
+        if self._zone.upper_wall_height:
+            self._bus.execute(SetCellFieldCmd(r, c, "upper_wall_height", 0.0))
         for fi in range(4):
             from editor2.core import SetFaceFieldCmd
             self._bus.execute(SetFaceFieldCmd(r, c, fi, "face_textures", ""))
         self._bus.commit_batch()
         self._bus.zone_changed.emit()
+
+    # ── Upper wall height ─────────────────────────────────────────
+
+    _SLAB = 0.08
+    _CEIL_MAX = 10.0
+
+    def adjust_upper_wall_height(self, mode: str = "raise") -> None:
+        """U: raise upper-wall.  Shift+U: lower.  Ctrl+U: reset.
+
+        *mode* is one of 'raise', 'lower', 'reset'.
+        """
+        hit = self.hover_hit
+        if hit is None:
+            return
+        r, c = hit.row, hit.col
+        zone = self._zone
+        td = tile_def(zone.tiles[r][c])
+        if td and td.wall:
+            return
+        if not zone.upper_wall_height:
+            return
+        ch = zone.ceil_heights[r][c]
+        uwh = zone.upper_wall_height[r][c]
+        snap = self.step
+
+        if mode == "reset":
+            self._bus.execute(SetCellFieldCmd(r, c, "upper_wall_height", 0.0))
+            return
+
+        if mode == "lower":
+            if uwh <= ch:
+                return
+            new = uwh - snap
+            new_val = round(new, 4) if new > ch + 0.01 else 0.0
+        else:
+            # raise
+            if uwh <= ch:
+                uwh = ch + self._SLAB
+            new = uwh + snap
+            new_val = round(min(self._CEIL_MAX, new), 4)
+
+        self._bus.execute(SetCellFieldCmd(r, c, "upper_wall_height", new_val))
 
     @staticmethod
     def _field_for_hit(hit: CellHit) -> str | None:

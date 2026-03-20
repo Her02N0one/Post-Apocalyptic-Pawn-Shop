@@ -8,6 +8,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import math
 import sys
 from pathlib import Path
 
@@ -15,9 +16,9 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QFont, QKeySequence, QSurfaceFormat
 from PySide6.QtWidgets import (
     QApplication, QDialog, QDialogButtonBox, QDockWidget,
-    QFormLayout, QLabel, QLineEdit,
+    QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
-    QSpinBox, QToolBar, QVBoxLayout,
+    QSpinBox, QStackedWidget, QToolBar, QVBoxLayout, QWidget,
 )
 
 log = logging.getLogger(__name__)
@@ -37,11 +38,21 @@ from editor2.panels.inspector import PaintInspector
 from editor2.panels.sculpt_inspector import SculptInspector
 from editor2.panels.cell_inspector import CellInspector
 from editor2.panels.select_inspector import SelectInspector
+from editor2.panels.tile_inspector import TileTypeInspector
+from editor2.panels.erase_inspector import EraseInspector
+from editor2.panels.entity_inspector import EntityInspector
+from editor2.panels.light_inspector import LightInspector
+from editor2.panels.minimap import MinimapPanel
+from editor2.panels.raycaster_mini import RaycasterMiniView
+from editor2.raycaster_preview import RaycasterPreview
 from editor2.selection import SelectionState
 from editor2.tools.erase import EraseTool
+from editor2.tools.entity import EntityTool
+from editor2.tools.light import LightTool
 from editor2.tools.paint import PaintTool
 from editor2.tools.sculpt import SculptTool, SNAP_LABELS, SNAP_PRESETS
 from editor2.tools.select import SelectTool
+from editor2.tools.tile_type import TileTypeTool
 from editor2.viewport import ZoneViewport
 
 
@@ -82,11 +93,23 @@ class EditorWindow(QMainWindow):
         self._atlas = TileAtlas()
         self._bus = CommandBus(zone, self)
 
-        # ── Viewport ──
+        # ── Viewport + Raycaster (stacked central widget) ──
         self.viewport = ZoneViewport(zone, self._atlas, self)
-        self.setCentralWidget(self.viewport)
+        self._raycaster = RaycasterPreview(zone, self)
+
+        self._central_stack = QStackedWidget(self)
+        self._central_stack.addWidget(self.viewport)    # index 0 = 3D
+        self._central_stack.addWidget(self._raycaster)   # index 1 = 2.5D
+        self._central_stack.setCurrentIndex(0)
+        self.setCentralWidget(self._central_stack)
+
+        self._view_mode = "3d"  # "3d" | "2d"
+        self._show_entities = True
+
         self.viewport.on_hover = self._update_status_bar
         self.viewport._on_scroll = self._on_viewport_scroll
+        self.viewport.extra_overlays = self._get_selection_overlays
+        self.viewport.on_eyedrop = self._on_eyedrop
 
         # ── Default camera: elevated isometric-ish view ──
         cam = self.viewport.camera
@@ -104,6 +127,9 @@ class EditorWindow(QMainWindow):
         self._sculpt_tool = SculptTool(zone, self._bus, cam)
         self._select_tool = SelectTool(zone, self._bus, cam, self._selection)
         self._erase_tool = EraseTool(zone, self._bus, cam)
+        self._tile_type_tool = TileTypeTool(zone, self._bus, cam)
+        self._entity_tool = EntityTool(zone, self._bus, cam)
+        self._light_tool = LightTool(zone, self._bus, cam)
         self._active_tool_name = "paint"
 
         self.viewport.tool = self._paint_tool
@@ -119,6 +145,10 @@ class EditorWindow(QMainWindow):
         self._paint_inspector = PaintInspector(self._paint_tool, self._atlas)
         self._sculpt_inspector = SculptInspector(self._sculpt_tool)
         self._select_inspector = SelectInspector()
+        self._erase_inspector = EraseInspector()
+        self._tile_type_inspector = TileTypeInspector(self._tile_type_tool)
+        self._entity_inspector = EntityInspector(self._entity_tool)
+        self._light_inspector = LightInspector(self._light_tool)
 
         self._inspector_dock = QDockWidget("Paint", self)
         self._inspector_dock.setObjectName("InspectorDock")
@@ -142,14 +172,42 @@ class EditorWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea,
                            self._cell_dock)
 
+        # ── Minimap / Preview dock ──
+        self._minimap = MinimapPanel(zone)
+        self._mini_preview = RaycasterMiniView(zone)
+
+        self._minimap_stack = QStackedWidget(self)
+        self._minimap_stack.addWidget(self._mini_preview)  # index 0 = 2.5D preview
+        self._minimap_stack.addWidget(self._minimap)        # index 1 = minimap
+        self._minimap_stack.setCurrentIndex(0)  # start with preview (3D editing mode)
+
+        self._minimap_dock = QDockWidget("Preview", self)
+        self._minimap_dock.setObjectName("MinimapDock")
+        self._minimap_dock.setWidget(self._minimap_stack)
+        self._minimap_dock.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea
+            | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea,
+                           self._minimap_dock)
+
+        # Timer drives both minimap + mini-preview camera sync (~8 Hz)
+        self._minimap_timer = QTimer(self)
+        self._minimap_timer.timeout.connect(self._update_minimap)
+        self._minimap_timer.start(120)
+
         # ── Signals ──
         self._bus.zone_changed.connect(self._on_zone_changed)
         self._paint_tool.on_changed = self._on_tool_changed
         self._sculpt_tool.on_changed = self._on_tool_changed
         self._select_tool.on_changed = self._on_tool_changed
         self._erase_tool.on_changed = self._on_tool_changed
+        self._tile_type_tool.on_changed = self._on_tool_changed
+        self._entity_tool.on_changed = self._on_tool_changed
+        self._light_tool.on_changed = self._on_tool_changed
 
         # Select inspector button wiring
+        self._select_inspector.set_texture_list(self._atlas.keys)
         self._select_inspector.btn_fill.clicked.connect(self._sel_fill)
         self._select_inspector.btn_clear_tex.clicked.connect(self._sel_clear_tex)
         self._select_inspector.btn_reset.clicked.connect(self._sel_reset)
@@ -158,6 +216,8 @@ class EditorWindow(QMainWindow):
             lambda: self._select_tool.make_wall())
         self._select_inspector.btn_open.clicked.connect(
             lambda: self._select_tool.make_open())
+        self._select_inspector.btn_toggle_ceil.clicked.connect(
+            self._sel_toggle_ceiling)
 
         # ── Menu bar ──
         self._build_menus()
@@ -241,6 +301,16 @@ class EditorWindow(QMainWindow):
         find_replace_act.setShortcut(QKeySequence("Ctrl+F"))
         find_replace_act.triggered.connect(self._on_find_replace)
 
+        edit_menu.addSeparator()
+
+        copy_act = edit_menu.addAction("&Copy Selection")
+        copy_act.setShortcut(QKeySequence("Ctrl+C"))
+        copy_act.triggered.connect(self._copy_selection)
+
+        paste_act = edit_menu.addAction("&Paste")
+        paste_act.setShortcut(QKeySequence("Ctrl+V"))
+        paste_act.triggered.connect(self._paste_clipboard)
+
         # ── Tools menu ──
         tools_menu = mb.addMenu("&Tools")
 
@@ -255,6 +325,17 @@ class EditorWindow(QMainWindow):
 
         erase_act = tools_menu.addAction("&Erase")
         erase_act.triggered.connect(lambda: self._switch_tool("erase"))
+
+        tile_type_act = tools_menu.addAction("&Tile Type")
+        tile_type_act.triggered.connect(lambda: self._switch_tool("tile_type"))
+
+        tools_menu.addSeparator()
+
+        entity_act = tools_menu.addAction("E&ntity")
+        entity_act.triggered.connect(lambda: self._switch_tool("entity"))
+
+        light_act = tools_menu.addAction("&Light")
+        light_act.triggered.connect(lambda: self._switch_tool("light"))
 
         # ── View menu ──
         view_menu = mb.addMenu("&View")
@@ -293,11 +374,23 @@ class EditorWindow(QMainWindow):
         self._show_ceilings_act.toggled.connect(
             lambda on: self._toggle_layer_vis("ceilings", on))
 
+        self._show_entities_act = view_menu.addAction("Show &Entities")
+        self._show_entities_act.setCheckable(True)
+        self._show_entities_act.setChecked(True)
+        self._show_entities_act.setShortcut(QKeySequence("Ctrl+4"))
+        self._show_entities_act.toggled.connect(self._toggle_entity_vis)
+
         view_menu.addSeparator()
 
         reset_cam_act = view_menu.addAction("&Reset Camera")
         reset_cam_act.setShortcut(QKeySequence("Home"))
         reset_cam_act.triggered.connect(self._reset_camera)
+
+        view_menu.addSeparator()
+
+        self._preview_act = view_menu.addAction("Toggle 2.5D &Preview")
+        self._preview_act.setShortcut(QKeySequence("Tab"))
+        self._preview_act.triggered.connect(self._toggle_view_mode)
 
         # ── Zone menu ──
         zone_menu = mb.addMenu("&Zone")
@@ -309,6 +402,17 @@ class EditorWindow(QMainWindow):
 
         zone_info_act = zone_menu.addAction("Zone &Info")
         zone_info_act.triggered.connect(self._on_zone_info)
+
+        zone_menu.addSeparator()
+
+        dup_act = zone_menu.addAction("&Duplicate Zone...")
+        dup_act.triggered.connect(self._on_duplicate_zone)
+
+        validate_act = zone_menu.addAction("&Validate Zone")
+        validate_act.triggered.connect(self._on_validate_zone)
+
+        export_act = zone_menu.addAction("&Export Top-Down Image...")
+        export_act.triggered.connect(self._on_export_topdown)
 
         zone_menu.addSeparator()
 
@@ -393,6 +497,27 @@ class EditorWindow(QMainWindow):
         self._tool_group.addAction(self._erase_act)
         tb.addAction(self._erase_act)
 
+        self._tile_type_act = QAction("Tile Type", self)
+        self._tile_type_act.setCheckable(True)
+        self._tile_type_act.setShortcut(QKeySequence("5"))
+        self._tile_type_act.setToolTip("Set tile type (5)")
+        self._tool_group.addAction(self._tile_type_act)
+        tb.addAction(self._tile_type_act)
+
+        self._entity_act_tb = QAction("Entity", self)
+        self._entity_act_tb.setCheckable(True)
+        self._entity_act_tb.setShortcut(QKeySequence("6"))
+        self._entity_act_tb.setToolTip("Place / edit entities (6)")
+        self._tool_group.addAction(self._entity_act_tb)
+        tb.addAction(self._entity_act_tb)
+
+        self._light_act_tb = QAction("Light", self)
+        self._light_act_tb.setCheckable(True)
+        self._light_act_tb.setShortcut(QKeySequence("7"))
+        self._light_act_tb.setToolTip("Paint light levels (7)")
+        self._tool_group.addAction(self._light_act_tb)
+        tb.addAction(self._light_act_tb)
+
         self._tool_group.triggered.connect(self._on_toolbar_tool)
 
         tb.addSeparator()
@@ -437,6 +562,12 @@ class EditorWindow(QMainWindow):
             self._switch_tool("select")
         elif action == self._erase_act:
             self._switch_tool("erase")
+        elif action == self._tile_type_act:
+            self._switch_tool("tile_type")
+        elif action == self._entity_act_tb:
+            self._switch_tool("entity")
+        elif action == self._light_act_tb:
+            self._switch_tool("light")
 
     # ── Title bar ─────────────────────────────────────────────────
 
@@ -472,15 +603,29 @@ class EditorWindow(QMainWindow):
         self._selection.clear()
         self._select_tool = SelectTool(zone, self._bus, cam, self._selection)
         self._erase_tool = EraseTool(zone, self._bus, cam)
+        self._tile_type_tool = TileTypeTool(zone, self._bus, cam)
+        self._entity_tool = EntityTool(zone, self._bus, cam)
+        self._light_tool = LightTool(zone, self._bus, cam)
         self._paint_tool.on_changed = self._on_tool_changed
         self._sculpt_tool.on_changed = self._on_tool_changed
         self._select_tool.on_changed = self._on_tool_changed
         self._erase_tool.on_changed = self._on_tool_changed
+        self._tile_type_tool.on_changed = self._on_tool_changed
+        self._entity_tool.on_changed = self._on_tool_changed
+        self._light_tool.on_changed = self._on_tool_changed
 
         # Update inspector panels with new tool refs
         self._paint_inspector.set_tool(self._paint_tool)
         self._sculpt_inspector._tool = self._sculpt_tool
+        self._tile_type_inspector.set_tool(self._tile_type_tool)
+        self._entity_inspector.set_tool(self._entity_tool)
+        self._light_inspector.set_tool(self._light_tool)
         self._cell_inspector.set_zone(zone)
+        self._minimap.set_zone(zone)
+
+        # Update raycasters
+        self._raycaster.update_zone(zone)
+        self._mini_preview.update_zone(zone)
 
         # Re-activate current tool
         self._switch_tool(self._active_tool_name)
@@ -571,9 +716,14 @@ class EditorWindow(QMainWindow):
             return True
         result = QMessageBox.question(
             self, "Unsaved Changes",
-            f"'{self._zone_name}' has unsaved changes.\n\nDiscard them?",
-            QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            f"'{self._zone_name}' has unsaved changes.\n\nDo you want to save?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
         )
+        if result == QMessageBox.StandardButton.Save:
+            self._on_save()
+            return True
         return result == QMessageBox.StandardButton.Discard
 
     def closeEvent(self, ev) -> None:
@@ -610,6 +760,10 @@ class EditorWindow(QMainWindow):
         self._update_title()
         self.viewport.mark_mesh_dirty()
         self._refresh_inspector()
+        # Push changes to raycaster(s)
+        if self._view_mode == "2d":
+            self._raycaster.update_zone(self._bus.zone)
+        self._mini_preview.update_zone(self._bus.zone)
 
     def _on_tool_changed(self) -> None:
         self._refresh_inspector()
@@ -660,7 +814,7 @@ class EditorWindow(QMainWindow):
         lines: list[tuple[str, tuple[int, int, int]]] = []
 
         # Tool line
-        tool_name = self._active_tool_name.title()
+        tool_name = self._active_tool_name.replace("_", " ").title()
         lines.append((f"Tool: {tool_name}", self._HUD_TITLE))
 
         # Snap (sculpt only)
@@ -672,6 +826,19 @@ class EditorWindow(QMainWindow):
         if self._active_tool_name == "paint":
             tex = self._paint_tool.current_texture or '—'
             lines.append((f"Texture: {tex}", self._HUD_VALUE))
+
+        # Entity type (entity tool only)
+        if self._active_tool_name == "entity":
+            etype = self._entity_tool.current_type or '—'
+            lines.append((f"Entity: {etype}", self._HUD_VALUE))
+            if self._entity_tool.selected_uid is not None:
+                lines.append((f"Selected UID: {self._entity_tool.selected_uid}",
+                              self._HUD_VALUE))
+
+        # Light step (light tool only)
+        if self._active_tool_name == "light":
+            lines.append((f"Light step: {self._light_tool.step}",
+                          self._HUD_VALUE))
 
         # Selection count
         if self._selection.has_cells():
@@ -685,10 +852,12 @@ class EditorWindow(QMainWindow):
             r, c = hit.row, hit.col
             fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
             ch = zone.ceil_heights[r][c] if zone.ceil_heights else 10.0
+            ll = zone.light_levels[r][c] if zone.light_levels else 1.0
             tile = zone.tiles[r][c]
             lines.append(("", (0, 0, 0)))  # blank separator
             lines.append((f"Cell: ({c}, {r})  {tile}", self._HUD_TEXT))
-            lines.append((f"Floor: {fh:.2f}  Ceil: {ch:.2f}", self._HUD_TEXT))
+            lines.append((f"Floor: {fh:.2f}  Ceil: {ch:.2f}  Light: {ll:.2f}",
+                          self._HUD_TEXT))
             lines.append((f"Face: {hit.part}.{hit.face.name}", self._HUD_TEXT))
 
         self.viewport.hud_lines = lines
@@ -698,18 +867,21 @@ class EditorWindow(QMainWindow):
     def _switch_tool(self, name: str) -> None:
         self._active_tool_name = name
         tool_map = {
-            "paint":  (self._paint_tool, self._paint_inspector, self._paint_act),
-            "sculpt": (self._sculpt_tool, self._sculpt_inspector, self._sculpt_act),
-            "select": (self._select_tool, self._select_inspector, self._select_act),
-            "erase":  (self._erase_tool, None, self._erase_act),
+            "paint":     (self._paint_tool, self._paint_inspector, self._paint_act),
+            "sculpt":    (self._sculpt_tool, self._sculpt_inspector, self._sculpt_act),
+            "select":    (self._select_tool, self._select_inspector, self._select_act),
+            "erase":     (self._erase_tool, self._erase_inspector, self._erase_act),
+            "tile_type": (self._tile_type_tool, self._tile_type_inspector, self._tile_type_act),
+            "entity":    (self._entity_tool, self._entity_inspector, self._entity_act_tb),
+            "light":     (self._light_tool, self._light_inspector, self._light_act_tb),
         }
         tool, panel, act = tool_map.get(name, tool_map["paint"])
         self.viewport.tool = tool
         if panel is not None:
             self._inspector_dock.setWidget(panel)
-        self._inspector_dock.setWindowTitle(name.title())
+        self._inspector_dock.setWindowTitle(name.replace("_", " ").title())
         act.setChecked(True)
-        self.statusBar().showMessage(f"Tool: {name.title()}", 2000)
+        self.statusBar().showMessage(f"Tool: {name.replace('_', ' ').title()}", 2000)
         self.viewport.update()
 
     # ── View actions ──────────────────────────────────────────────
@@ -748,6 +920,52 @@ class EditorWindow(QMainWindow):
     def _toggle_layer_vis(self, layer: str, on: bool) -> None:
         """Toggle visibility of walls/floors/ceilings."""
         self.viewport.set_layer_vis(layer, on)
+
+    def _toggle_entity_vis(self, on: bool) -> None:
+        """Toggle entity marker visibility."""
+        self._show_entities = on
+        self.viewport.update()
+
+    def _toggle_view_mode(self) -> None:
+        """Toggle between 3D editor and 2.5D raycaster (fullscreen swap)."""
+        if self._view_mode == "3d":
+            # Switch to 2.5D raycaster
+            self._raycaster.set_enabled(True)      # creates renderer if needed
+            self._raycaster.update_zone(self._bus.zone)  # push latest zone
+            self._raycaster.sync_from_editor_camera(self.viewport.camera)
+            self._central_stack.setCurrentIndex(1)
+            self._raycaster.setFocus()
+            self._view_mode = "2d"
+            # Dock: show minimap while in fullscreen 2.5D
+            self._minimap_stack.setCurrentIndex(1)
+            self._minimap_dock.setWindowTitle("Minimap")
+            self.statusBar().showMessage("2.5D Preview — Tab to return", 2000)
+        else:
+            # Switch back to 3D editor
+            self._raycaster.sync_to_editor_camera(self.viewport.camera)
+            self._raycaster.set_enabled(False)
+            self._central_stack.setCurrentIndex(0)
+            self.viewport.setFocus()
+            self._view_mode = "3d"
+            # Dock: show live 2.5D preview while in 3D editor
+            self._minimap_stack.setCurrentIndex(0)
+            self._minimap_dock.setWindowTitle("Preview")
+            self.statusBar().showMessage("3D Editor", 1500)
+
+    def _update_minimap(self) -> None:
+        """Periodic refresh — minimap camera + live 2.5D mini-preview."""
+        if self._view_mode == "2d":
+            # In fullscreen 2.5D mode: track raycaster position on minimap
+            rc = self._raycaster
+            self._minimap.set_camera(rc.px, rc.py, rc.angle - math.pi * 0.5)
+        else:
+            cam = self.viewport.camera
+            self._minimap.set_camera(cam.x, cam.z, cam.yaw)
+            # Sync mini-preview if visible
+            if self._minimap_stack.currentIndex() == 0:
+                self._mini_preview.ensure_ready()
+                self._mini_preview.sync_camera(cam)
+        self._minimap.set_selection(self._selection.cells)
 
     # ── Zone menu actions ─────────────────────────────────────────
 
@@ -841,6 +1059,113 @@ class EditorWindow(QMainWindow):
             self._update_title()
             self.statusBar().showMessage("Zone settings updated", 2000)
 
+    def _on_duplicate_zone(self) -> None:
+        """Deep-copy the current zone, prompt for a name, and save it."""
+        import copy
+        from PySide6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(
+            self, "Duplicate Zone", "New zone name:",
+            text=f"{self._zone_name}_copy")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        zone = self._bus.zone
+        dup = copy.deepcopy(zone)
+        dup.name = name
+
+        from core.zones import GameRegistry
+        registry = GameRegistry()
+        path = ZONES_DIR / f"{name}.zone"
+        try:
+            dup.save_to_file(path, registry)
+        except Exception as exc:
+            QMessageBox.warning(self, "Duplicate Error",
+                                f"Failed to save duplicate:\n{exc}")
+            return
+        self.statusBar().showMessage(f"Duplicated → {name} ✓", 3000)
+
+    def _on_validate_zone(self) -> None:
+        """Run zone validation and show results in a dialog."""
+        from core.zones.validation import validate_zone
+        from core.entity_defs import entity_registry
+        zone = self._bus.zone
+        issues = validate_zone(zone, entity_registry=entity_registry())
+        if not issues:
+            QMessageBox.information(self, "Validate Zone",
+                                    "No issues found ✓")
+            return
+        errors = [i for i in issues if i.severity == "error"]
+        warnings = [i for i in issues if i.severity == "warning"]
+        lines = []
+        if errors:
+            lines.append(f"=== {len(errors)} Error(s) ===")
+            for i in errors:
+                loc = f" [{i.location}]" if i.location else ""
+                lines.append(f"  ✗ {i.message}{loc}")
+        if warnings:
+            lines.append(f"\n=== {len(warnings)} Warning(s) ===")
+            for i in warnings:
+                loc = f" [{i.location}]" if i.location else ""
+                lines.append(f"  ⚠ {i.message}{loc}")
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Validate Zone — {len(issues)} issue(s)")
+        dlg.resize(520, 400)
+        layout = QVBoxLayout(dlg)
+        text = QPlainTextEdit()
+        text.setPlainText("\n".join(lines))
+        text.setReadOnly(True)
+        text.setFont(QFont("Consolas", 10))
+        layout.addWidget(text)
+        from PySide6.QtWidgets import QDialogButtonBox
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+        dlg.exec()
+
+    def _on_export_topdown(self) -> None:
+        """Export a top-down tile-colour image of the zone."""
+        from PIL import Image
+        zone = self._bus.zone
+        w, h = zone.width, zone.height
+        scale = 8  # pixels per cell
+        img = Image.new("RGB", (w * scale, h * scale), (30, 30, 30))
+
+        for r in range(h):
+            for c in range(w):
+                td = tile_def(zone.tiles[r][c])
+                if td:
+                    color = td.color if hasattr(td, 'color') and td.color else (80, 80, 80)
+                else:
+                    color = (80, 80, 80)
+                ll = zone.light_levels[r][c] if zone.light_levels else 1.0
+                rc = tuple(max(0, min(255, int(ch * ll))) for ch in color)
+                for py in range(scale):
+                    for px in range(scale):
+                        img.putpixel((c * scale + px, r * scale + py), rc)
+
+        # Mark entities with red crosses
+        for ent in zone.entities:
+            ex, ey = int(ent.x * scale), int(ent.y * scale)
+            for d in range(-2, 3):
+                for xy in [(ex + d, ey), (ex, ey + d)]:
+                    if 0 <= xy[0] < w * scale and 0 <= xy[1] < h * scale:
+                        img.putpixel(xy, (255, 50, 50))
+
+        # Mark anchor with green circle
+        if zone.anchor:
+            ar, ac = zone.anchor
+            ax, ay = int(ac * scale), int(ar * scale)
+            for d in range(-3, 4):
+                for xy in [(ax + d, ay), (ax, ay + d)]:
+                    if 0 <= xy[0] < w * scale and 0 <= xy[1] < h * scale:
+                        img.putpixel(xy, (50, 255, 50))
+
+        out_dir = Path("debug_renders")
+        out_dir.mkdir(exist_ok=True)
+        out_path = out_dir / f"{self._zone_name}_topdown.png"
+        img.save(str(out_path))
+        self.statusBar().showMessage(f"Exported → {out_path}", 4000)
+
     # ── Find / Replace Texture ────────────────────────────────────
 
     def _on_find_replace(self) -> None:
@@ -858,31 +1183,25 @@ class EditorWindow(QMainWindow):
     def _do_find_replace(self, find: str, replace: str) -> int:
         """Replace all occurrences of a texture name across all zone grids."""
         zone = self._bus.zone
-        count = 0
+        from editor2.core import BatchCmd, SetCellFieldCmd, SetFaceFieldCmd
+        cmds: list = []
         for r in range(zone.height):
             for c in range(zone.width):
                 if zone.tiles[r][c] == find:
-                    zone.tiles[r][c] = replace
-                    count += 1
+                    cmds.append(SetCellFieldCmd(r, c, "tiles", replace))
                 if zone.floor_textures and zone.floor_textures[r][c] == find:
-                    zone.floor_textures[r][c] = replace
-                    count += 1
+                    cmds.append(SetCellFieldCmd(r, c, "floor_textures", replace))
                 if zone.ceil_textures and zone.ceil_textures[r][c] == find:
-                    zone.ceil_textures[r][c] = replace
-                    count += 1
+                    cmds.append(SetCellFieldCmd(r, c, "ceil_textures", replace))
                 if zone.wall_textures and zone.wall_textures[r][c] == find:
-                    zone.wall_textures[r][c] = replace
-                    count += 1
+                    cmds.append(SetCellFieldCmd(r, c, "wall_textures", replace))
                 if zone.face_textures and zone.face_textures[r][c]:
                     for i in range(4):
                         if zone.face_textures[r][c][i] == find:
-                            zone.face_textures[r][c][i] = replace
-                            count += 1
-        if count > 0:
-            self._dirty = True
-            self._update_title()
-            self.viewport.rebuild_mesh()
-        return count
+                            cmds.append(SetFaceFieldCmd(r, c, i, "face_textures", replace))
+        if cmds:
+            self._bus.execute(BatchCmd(cmds, f"Replace '{find}' → '{replace}'"))
+        return len(cmds)
 
     # ── Help window ───────────────────────────────────────────────
 
@@ -939,6 +1258,8 @@ class EditorWindow(QMainWindow):
         mods = ev.modifiers()
         is_sculpt = self._active_tool_name == "sculpt"
         is_select = self._active_tool_name == "select"
+        is_entity = self._active_tool_name == "entity"
+        is_light = self._active_tool_name == "light"
 
         # ── Global shortcuts ──
         if key == Qt.Key.Key_Escape:
@@ -986,15 +1307,15 @@ class EditorWindow(QMainWindow):
             self._recall_bookmark(key - Qt.Key.Key_1)
             return
 
-        # ── G key ──
+        # ── G key: always cycle snap grid ──
         if key == Qt.Key.Key_G:
-            if is_sculpt:
+            if mods & Qt.KeyboardModifier.ShiftModifier:
+                # Shift+G toggles visual grid
+                self._toggle_grid(not self.viewport.show_grid)
+            else:
                 self._sculpt_tool.cycle_snap()
                 snap_label = SNAP_LABELS[self._sculpt_tool.snap_idx]
-                self.statusBar().showMessage(
-                    f"Snap: {snap_label}", 1500)
-            else:
-                self._toggle_grid(not self.viewport.show_grid)
+                self.statusBar().showMessage(f"Snap: {snap_label}", 1500)
             return
 
         # ── Select tool shortcuts ──
@@ -1035,9 +1356,48 @@ class EditorWindow(QMainWindow):
                 self._sculpt_tool.reset_height()
                 self.statusBar().showMessage("Height reset", 1500)
                 return
+            if key == Qt.Key.Key_U:
+                if mods & Qt.KeyboardModifier.ControlModifier:
+                    self._sculpt_tool.adjust_upper_wall_height("reset")
+                    self.statusBar().showMessage("Upper wall reset", 1500)
+                elif mods & Qt.KeyboardModifier.ShiftModifier:
+                    self._sculpt_tool.adjust_upper_wall_height("lower")
+                    self.statusBar().showMessage("Upper wall lowered", 1500)
+                else:
+                    self._sculpt_tool.adjust_upper_wall_height("raise")
+                    self.statusBar().showMessage("Upper wall raised", 1500)
+                return
             if key == Qt.Key.Key_Delete:
                 self._sculpt_tool.clear_cell()
                 self.statusBar().showMessage("Cell cleared", 1500)
+                return
+
+        # ── Entity tool shortcuts ──
+        if is_entity:
+            if key == Qt.Key.Key_R:
+                self._entity_tool.rotate_selected()
+                self.statusBar().showMessage("Entity rotated 90°", 1500)
+                return
+            if key == Qt.Key.Key_M:
+                self._entity_tool.move_selected_to_hover()
+                self.statusBar().showMessage("Entity moved", 1500)
+                return
+            if key == Qt.Key.Key_Delete:
+                self._entity_tool.delete_selected()
+                self.statusBar().showMessage("Entity deleted", 1500)
+                return
+
+        # ── Light tool shortcuts ──
+        if is_light:
+            if key == Qt.Key.Key_BracketLeft:
+                self._light_tool.cycle_step(-1)
+                self.statusBar().showMessage(
+                    f"Light step: {self._light_tool.step}", 1500)
+                return
+            if key == Qt.Key.Key_BracketRight:
+                self._light_tool.cycle_step(1)
+                self.statusBar().showMessage(
+                    f"Light step: {self._light_tool.step}", 1500)
                 return
 
         self.viewport.keyPressEvent(ev)
@@ -1045,7 +1405,9 @@ class EditorWindow(QMainWindow):
     # ── Selection batch helpers (button wiring) ───────────────────
 
     def _sel_fill(self) -> None:
-        tex = self._paint_tool.current_texture
+        tex = self._select_inspector.selected_texture
+        if not tex:
+            tex = self._paint_tool.current_texture
         n = self._select_tool.fill_texture(tex)
         self.statusBar().showMessage(
             f"Filled {len(self._selection.cells)} cell(s) with '{tex}'", 2000)
@@ -1063,9 +1425,82 @@ class EditorWindow(QMainWindow):
         mode = "ceiling" if self._selection.ceiling_mode else "floor"
         self.statusBar().showMessage(f"Flattened {mode} heights", 1500)
 
+    def _sel_toggle_ceiling(self) -> None:
+        """Toggle ceiling on/off for all selected cells."""
+        sel = self._selection
+        if not sel.has_cells():
+            return
+        zone = self._bus.zone
+        from editor2.core import BatchCmd, SetCellFieldCmd
+        cmds: list = []
+        for r, c in sel.iter_cells():
+            ch = zone.ceil_heights[r][c] if zone.ceil_heights else 10.0
+            fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
+            if ch >= 10.0:
+                # Sky → close at fh + 1.0
+                cmds.append(SetCellFieldCmd(r, c, "ceil_heights", fh + 1.0))
+            else:
+                # Closed → sky
+                cmds.append(SetCellFieldCmd(r, c, "ceil_heights", 10.0))
+        if cmds:
+            self._bus.execute(BatchCmd(cmds, "Toggle ceiling"))
+        self.statusBar().showMessage(
+            f"Toggled ceiling on {len(cmds)} cell(s)", 1500)
+
     def _update_select_inspector(self) -> None:
         self._select_inspector.update_info(
             len(self._selection.cells), self._selection.ceiling_mode)
+
+    def _get_selection_overlays(self) -> list:
+        """Return selection + entity overlays when not drawn by the active tool."""
+        ovls: list = []
+        # Selection overlays (select tool draws its own)
+        if self._active_tool_name != "select" and self._selection.has_cells():
+            ovls.extend(self._select_tool.overlays())
+        # Entity overlays (entity tool draws its own)
+        if self._show_entities and self._active_tool_name != "entity":
+            ovls.extend(self._build_entity_overlays())
+        return ovls
+
+    def _build_entity_overlays(self) -> list:
+        """Build diamond-marker overlays for all entities (passive view)."""
+        from editor2.tools import Overlay, OverlayMode
+        from core.entity_defs import get_entity_def
+        zone = self._bus.zone
+        ovls: list = []
+        for ent in zone.entities:
+            edef = get_entity_def(ent.type)
+            if edef:
+                r, g, b = edef.color
+                cr, cg, cb = r / 255, g / 255, b / 255
+            else:
+                cr, cg, cb = 0.8, 0.8, 0.8
+            ex, ey = ent.x, ent.y
+            row, col = int(ey), int(ex)
+            fh = 0.0
+            if 0 <= row < zone.height and 0 <= col < zone.width:
+                fh = zone.floor_heights[row][col] if zone.floor_heights else 0.0
+            y = fh + 0.02
+            s = 0.3
+            verts = [
+                (ex, y, ey - s), (ex + s, y, ey),
+                (ex, y, ey + s), (ex - s, y, ey),
+            ]
+            ovls.append(Overlay(
+                mode=OverlayMode.TRIS,
+                verts=[verts[0], verts[1], verts[2],
+                       verts[0], verts[2], verts[3]],
+                color=(cr, cg, cb, 0.35),
+            ))
+            # Direction line
+            dx = math.cos(ent.angle) * 0.5
+            dy = math.sin(ent.angle) * 0.5
+            ovls.append(Overlay(
+                mode=OverlayMode.LINES,
+                verts=[(ex, y + 0.01, ey), (ex + dx, y + 0.01, ey + dy)],
+                color=(1.0, 1.0, 0.0, 0.4),
+            ))
+        return ovls
 
     # ── Clipboard (copy / paste) ──────────────────────────────────
 
@@ -1150,11 +1585,36 @@ class EditorWindow(QMainWindow):
 
     def _on_viewport_scroll(self, direction: int) -> bool:
         """Called by viewport wheelEvent. Return True to consume scroll."""
-        if self._active_tool_name == "select" and self._selection.has_cells():
+        if self._selection.has_cells():
             snap = SNAP_PRESETS[self._sculpt_tool.snap_idx]
             self._select_tool.raise_lower(direction, snap)
             return True
         return False
+
+    def _on_eyedrop(self, sx: float, sy: float,
+                    vp_w: int, vp_h: int) -> None:
+        """Global middle-click eyedropper — pick texture from any face."""
+        from editor2.picking import pick_cell, Face
+        hit = pick_cell(sx, sy, vp_w, vp_h,
+                        self.viewport.camera, self._bus.zone)
+        if hit is None:
+            return
+        zone = self._bus.zone
+        r, c = hit.row, hit.col
+        tex = ""
+        if hit.face == Face.TOP:
+            tex = (zone.floor_textures[r][c] if zone.floor_textures else "")
+        elif hit.face == Face.BOTTOM:
+            tex = (zone.ceil_textures[r][c] if zone.ceil_textures else "")
+        elif hit.face in (Face.NORTH, Face.SOUTH, Face.EAST, Face.WEST):
+            fi = {Face.NORTH: 0, Face.SOUTH: 1, Face.WEST: 2, Face.EAST: 3}[hit.face]
+            if zone.face_textures and zone.face_textures[r][c][fi]:
+                tex = zone.face_textures[r][c][fi]
+            elif zone.wall_textures:
+                tex = zone.wall_textures[r][c]
+        if tex:
+            self._paint_tool.current_texture = tex
+            self.statusBar().showMessage(f"Picked: {tex}", 1500)
 
 
 # ── Dialogs ──────────────────────────────────────────────────────
@@ -1369,6 +1829,9 @@ class HelpDialog(QDialog):
 2              Sculpt tool
 3              Select tool
 4              Erase tool
+5              Tile Type tool
+6              Entity tool
+7              Light tool
 Ctrl+Z         Undo
 Ctrl+Y / Ctrl+Shift+Z   Redo
 Ctrl+S         Save
@@ -1381,6 +1844,7 @@ Ctrl+C         Copy selection
 Ctrl+V         Paste at hovered cell
 Escape         Clear selection
 Home           Reset Camera
+Tab            Toggle 2.5D raycaster preview
 
 ─── Camera ────────────────────────────
 Right-click + drag   Orbit / Look
@@ -1404,6 +1868,9 @@ H              Make cell a wall
 Shift+H        Make cell open (grass)
 T              Toggle ceiling (sky / closed)
 R              Reset floor or ceiling height
+U              Raise upper wall height
+Shift+U        Lower upper wall height
+Ctrl+U         Reset upper wall height
 Delete         Clear cell (all defaults)
 
 ─── Select Tool ───────────────────────
@@ -1416,6 +1883,20 @@ Delete         Reset selected cells
 H              Make selected cells walls
 Shift+H        Make selected cells open
 
+─── Entity Tool ───────────────────────
+Click          Place / select entity
+Shift+Click    Always place (ignore existing)
+Right-click    Delete entity under cursor
+R              Rotate selected 90°
+M              Move selected to hovered cell
+Delete         Delete selected entity
+
+─── Light Tool ─────────────────────────
+Click + drag   Increase light level
+Shift+Click    Decrease light level
+[ / ]          Decrease / increase step size
+Middle-click   Sample light level
+
 ─── Erase Tool ────────────────────────
 Click          Full cell reset
 Shift+Click    Clear textures only
@@ -1425,10 +1906,18 @@ Right-click    Reset height only
 Ctrl+1         Toggle walls visibility
 Ctrl+2         Toggle floors visibility
 Ctrl+3         Toggle ceilings visibility
+Ctrl+4         Toggle entities visibility
 Ctrl+5         Toggle wireframe
 G              Toggle grid (non-sculpt)
 F3             Toggle performance overlay
 F4             Dump stats
+
+─── Raycaster Preview ─────────────────
+Tab            Return to 3D editor
+Click          Enter FPS mode
+W / A / S / D  Move
+Shift          Sprint
+Escape         Release mouse
 """
 
     def __init__(self, parent=None) -> None:

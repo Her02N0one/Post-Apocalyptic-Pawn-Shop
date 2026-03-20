@@ -59,6 +59,21 @@ class SelectionState:
     def begin_rect(self, r: int, c: int) -> None:
         self._rect_origin = (r, c)
         self.anchor = (r, c)
+        # Immediately preview the single origin cell
+        self.cells.clear()
+        self.cells.add((r, c))
+
+    def preview_rect(self, r: int, c: int) -> None:
+        """Update cells to preview rectangle from origin to (r, c)."""
+        if self._rect_origin is None:
+            return
+        r1, c1 = self._rect_origin
+        rmin, rmax = min(r1, r), max(r1, r)
+        cmin, cmax = min(c1, c), max(c1, c)
+        self.cells.clear()
+        for rr in range(rmin, rmax + 1):
+            for cc in range(cmin, cmax + 1):
+                self.cells.add((rr, cc))
 
     def finish_rect(self, r: int, c: int) -> None:
         if self._rect_origin is None:

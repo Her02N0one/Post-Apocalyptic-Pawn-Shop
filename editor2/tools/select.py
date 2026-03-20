@@ -50,6 +50,7 @@ class SelectTool:
         # Cached overlays — rebuilt only when selection changes
         self._ovl_cache: list[Overlay] | None = None
         self._ovl_sel_snapshot: frozenset[tuple[int, int]] = frozenset()
+        self._last_preview_cell: tuple[int, int] | None = None
 
     @property
     def name(self) -> str:
@@ -61,6 +62,13 @@ class SelectTool:
                       vp_w: int, vp_h: int) -> None:
         self.hover_hit = pick_cell(sx, sy, vp_w, vp_h,
                                    self._camera, self._zone)
+        # Live-preview rectangle while dragging from anchor
+        if self.selection.rect_in_progress and self.hover_hit:
+            cell = (self.hover_hit.row, self.hover_hit.col)
+            if cell != self._last_preview_cell:
+                self._last_preview_cell = cell
+                self.selection.preview_rect(*cell)
+                self._notify()
 
     def on_mouse_press(self, sx: float, sy: float,
                        vp_w: int, vp_h: int, button: int) -> None:
@@ -92,18 +100,21 @@ class SelectTool:
         # No pending rect → start one
         if not sel.rect_in_progress and not sel.has_cells():
             sel.begin_rect(r, c)
+            self._last_preview_cell = (r, c)
             self._notify()
             return
 
         # Pending rect → finish it
         if sel.rect_in_progress:
             sel.finish_rect(r, c)
+            self._last_preview_cell = None
             self._notify()
             return
 
         # Already have a selection → start fresh
         sel.clear()
         sel.begin_rect(r, c)
+        self._last_preview_cell = (r, c)
         self._notify()
 
     def on_mouse_release(self, sx: float, sy: float,
@@ -293,9 +304,9 @@ class SelectTool:
         if sel.has_cells():
             verts: list[tuple[float, float, float]] = []
             for r, c in sel.iter_cells():
-                y = 0.02
+                y = 0.06
                 if self._zone.floor_heights:
-                    y = self._zone.floor_heights[r][c] + 0.02
+                    y = self._zone.floor_heights[r][c] + 0.06
                 verts.extend([
                     (c, y, r), (c + 1, y, r), (c + 1, y, r + 1),
                     (c, y, r), (c + 1, y, r + 1), (c, y, r + 1),
@@ -306,9 +317,9 @@ class SelectTool:
             border_verts: list[tuple[float, float, float]] = []
             cells_set = sel.cells
             for r, c in sel.iter_cells():
-                y = 0.03
+                y = 0.07
                 if self._zone.floor_heights:
-                    y = self._zone.floor_heights[r][c] + 0.03
+                    y = self._zone.floor_heights[r][c] + 0.07
                 for dr, dc, p0, p1 in [
                     (-1, 0, (c, y, r), (c + 1, y, r)),
                     (1, 0, (c, y, r + 1), (c + 1, y, r + 1)),
@@ -326,9 +337,9 @@ class SelectTool:
 
     def _anchor_overlay(self, anchor: tuple[int, int]) -> Overlay:
         r, c = anchor
-        y = 0.02
+        y = 0.06
         if self._zone.floor_heights:
-            y = self._zone.floor_heights[r][c] + 0.02
+            y = self._zone.floor_heights[r][c] + 0.06
         v = [
             (c, y, r), (c + 1, y, r), (c + 1, y, r + 1),
             (c, y, r), (c + 1, y, r + 1), (c, y, r + 1),
