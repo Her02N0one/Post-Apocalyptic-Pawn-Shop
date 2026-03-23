@@ -43,7 +43,7 @@ class Face(enum.Enum):
 # ── Hit result ───────────────────────────────────────────────────
 
 
-@dataclass(slots=True)
+@dataclass()
 class CellHit:
     """A ray hit on a cell box or the ground plane."""
     t: float        # ray parameter (distance along ray)
@@ -52,6 +52,8 @@ class CellHit:
     part: str       # "wall", "floor", "ceiling"
     face: Face      # which face was hit
     hit_y: float    # world-space Y at the hit point
+    hit_x: float = 0.0   # world-space X at the hit point
+    hit_z: float = 0.0   # world-space Z at the hit point
 
 
 # ── Ray-AABB intersection ────────────────────────────────────────
@@ -185,6 +187,46 @@ def screen_to_ray(
     return (camera.x, camera.y, camera.z), (dx, dy, dz)
 
 
+# ── Floor-point pick (continuous world coords) ──────────────────
+
+
+def pick_floor_point(
+    sx: float, sy: float,
+    vp_w: int, vp_h: int,
+    camera: Camera,
+    zone: Zone,
+) -> tuple[float, float, float] | None:
+    """Return *(world_x, world_z, floor_height)* where the cursor ray hits
+    the floor plane.
+
+    Unlike `pick_cell`, this returns **continuous** coordinates rather
+    than integer cell indices, making it suitable for smooth entity
+    placement.  Returns ``None`` when the ray misses the zone area.
+    """
+    (ox, oy, oz), (dx, dy, dz) = screen_to_ray(sx, sy, vp_w, vp_h, camera)
+    if abs(dy) < 1e-10:
+        return None
+    # Intersect with Y = 0 to find approximate cell
+    t0 = -oy / dy
+    if t0 < 0.01:
+        return None
+    hx = ox + dx * t0
+    hz = oz + dz * t0
+    c = int(math.floor(hx))
+    r = int(math.floor(hz))
+    W, H = zone.width, zone.height
+    if not (0 <= c < W and 0 <= r < H):
+        return None
+    fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
+    # Re-intersect with Y = fh for accuracy on non-zero floors
+    if abs(fh) > 0.001 and abs(dy) > 1e-10:
+        t1 = (fh - oy) / dy
+        if t1 > 0.01:
+            hx = ox + dx * t1
+            hz = oz + dz * t1
+    return (hx, hz, fh)
+
+
 # ── Main pick function ───────────────────────────────────────────
 
 _SEARCH_RADIUS = 16
@@ -223,9 +265,12 @@ def pick_cell(
                         blocked = True
                         if best is None or tb[0] < best.t:
                             best = CellHit(tb[0], c, r, part, tb[1],
-                                           oy + tb[0] * dy)
+                                           oy + tb[0] * dy,
+                                           ox + tb[0] * dx,
+                                           oz + tb[0] * dz)
                 if not blocked and (best is None or t < best.t):
-                    best = CellHit(t, c, r, "floor", Face.GROUND, 0.0)
+                    best = CellHit(t, c, r, "floor", Face.GROUND, 0.0,
+                                   hx, hz)
 
     # Scan cells near camera
     cam_c = int(math.floor(ox))
@@ -248,6 +293,8 @@ def pick_cell(
                 t_hit, face = result
                 if best is None or t_hit < best.t:
                     best = CellHit(t_hit, c, r, part, face,
-                                   oy + t_hit * dy)
+                                   oy + t_hit * dy,
+                                   ox + t_hit * dx,
+                                   oz + t_hit * dz)
 
     return best

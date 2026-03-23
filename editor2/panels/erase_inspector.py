@@ -19,13 +19,13 @@ class EraseInspector(QWidget):
 
         help_label = QLabel(
             "<table cellpadding='4'>"
-            "<tr><td><b>Left-click</b></td>"
+            "<tr><td><b>Click</b></td>"
             "<td>Full cell reset<br>"
             "<small>(grass, flat floor, sky ceiling, clear textures)</small></td></tr>"
             "<tr><td><b>Shift+Click</b></td>"
             "<td>Clear textures only<br>"
             "<small>(keep tile type and geometry)</small></td></tr>"
-            "<tr><td><b>Right-click</b></td>"
+            "<tr><td><b>Ctrl+Click</b></td>"
             "<td>Reset height only<br>"
             "<small>(keep tile and textures)</small></td></tr>"
             "</table>"

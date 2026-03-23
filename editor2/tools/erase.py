@@ -27,6 +27,9 @@ _HIGHLIGHT = (1.0, 0.3, 0.3, 0.25)  # reddish to indicate erasing
 class EraseTool:
     """Eraser — quick cell/height/texture resets."""
 
+    name = "erase"
+    wants_right_click = False
+
     def __init__(self, zone: Zone, bus: CommandBus, camera: Camera) -> None:
         self._zone = zone
         self._bus = bus
@@ -55,12 +58,12 @@ class EraseTool:
         mods = app.keyboardModifiers() if app else Qt.KeyboardModifier.NoModifier
 
         if button == 1:
-            if mods & Qt.KeyboardModifier.ShiftModifier:
+            if mods & Qt.KeyboardModifier.ControlModifier:
+                self._erase_height(hit)
+            elif mods & Qt.KeyboardModifier.ShiftModifier:
                 self._erase_textures(hit)
             else:
                 self._erase_cell(hit)
-        elif button == 2:
-            self._erase_height(hit)
 
     def on_mouse_release(self, sx: float, sy: float,
                          vp_w: int, vp_h: int, button: int) -> None:

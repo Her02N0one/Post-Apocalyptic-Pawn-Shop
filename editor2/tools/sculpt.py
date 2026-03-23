@@ -11,9 +11,10 @@ from core.zones import Zone
 from core.tiles import tile_def
 from editor2.camera import Camera
 from editor2.core import CommandBus, SetCellFieldCmd
-from editor2.mesh import compute_cell_boxes, SKY_HEIGHT
+from editor2.mesh import SKY_HEIGHT
 from editor2.picking import CellHit, Face, pick_cell
 from editor2.tools import Overlay, OverlayMode, quad_to_tris
+from editor2.tools._surface import compute_face_quad as _compute_face_quad
 
 # Height limits (matching original)
 FLOOR_MIN = -5.0
@@ -234,7 +235,7 @@ class SculptTool:
             from editor2.core import SetFaceFieldCmd
             self._bus.execute(SetFaceFieldCmd(r, c, fi, "face_textures", ""))
         self._bus.commit_batch()
-        self._bus.zone_changed.emit()
+        # Note: commit_batch with defer_signal=True already emits zone_changed
 
     # ── Upper wall height ─────────────────────────────────────────
 
@@ -326,44 +327,9 @@ class SculptTool:
                      & Qt.KeyboardModifier.ShiftModifier)
         color = _LOWER_COLOR if shift else _RAISE_COLOR
 
-        quad = self._compute_face_quad(hit)
+        quad = _compute_face_quad(hit, self._zone)
         if quad is None:
             return []
         return [quad_to_tris(quad, color)]
 
-    def _compute_face_quad(self, hit: CellHit
-                           ) -> list[tuple[float, float, float]] | None:
-        """Compute the 4 corners of the highlighted face."""
-        c, r = hit.col, hit.row
-        x0, z0 = float(c), float(r)
-        x1, z1 = x0 + 1.0, z0 + 1.0
-
-        boxes = compute_cell_boxes(self._zone, r, c)
-        y0, y1 = 0.0, 1.0
-        for part, yb, yt in boxes:
-            if part == hit.part:
-                y0, y1 = yb, yt
-                break
-
-        f = hit.face
-        E = 0.002
-
-        if f == Face.TOP or f == Face.GROUND:
-            y = y1 + E
-            return [(x0, y, z0), (x1, y, z0), (x1, y, z1), (x0, y, z1)]
-        elif f == Face.BOT:
-            y = y0 - E
-            return [(x0, y, z0), (x0, y, z1), (x1, y, z1), (x1, y, z0)]
-        elif f == Face.NORTH:
-            z = z0 - E
-            return [(x0, y0, z), (x1, y0, z), (x1, y1, z), (x0, y1, z)]
-        elif f == Face.SOUTH:
-            z = z1 + E
-            return [(x1, y0, z), (x0, y0, z), (x0, y1, z), (x1, y1, z)]
-        elif f == Face.WEST:
-            x = x0 - E
-            return [(x, y0, z1), (x, y0, z0), (x, y1, z0), (x, y1, z1)]
-        elif f == Face.EAST:
-            x = x1 + E
-            return [(x, y0, z0), (x, y0, z1), (x, y1, z1), (x, y1, z0)]
-        return None
+    # _compute_face_quad extracted to editor2.tools._surface

@@ -466,6 +466,34 @@ def rebuild_transients(world: "World",
         # Attach transient components (skip those already persisted)
         _attach_components(world, eid, defaults, overrides, skip_existing=True)
 
+        # Billboard render_mode fixup — same as spawn_from_descriptor
+        if edef and edef.render_type == "billboard":
+            spr = world.get(eid, Sprite)
+            if spr is not None and spr.render_mode == RenderMode.BILLBOARD:
+                spr.render_mode = (
+                    RenderMode.BILLBOARD_8WAY
+                    if edef.directional else RenderMode.BILLBOARD
+                )
+
+        # Wall-anchored entity fixup — restore wall_face / wall_height
+        # from the per-entity descriptor (these round-trip through save
+        # in EntityDescriptor.extra but are NOT part of component_defaults).
+        wall_h = desc.get("wall_height")
+        if wall_h is None:
+            # Also check nested extra dict (editor2 saves them there)
+            extra = desc.get("extra", {})
+            wall_h = extra.get("wall_height")
+            wall_face_key = extra.get("wall_face", desc.get("wall_face", ""))
+        else:
+            wall_face_key = desc.get("wall_face", "")
+        if wall_h is not None and "wall_sprite" not in defaults:
+            spr = world.get(eid, Sprite)
+            if spr is not None:
+                spr.wall_height = float(wall_h)
+                if wall_face_key:
+                    spr.wall_face = wall_face_key
+                    spr.render_mode = RenderMode.WALL_ANCHORED
+
         # PrismShape — derived from entity def geometry
         if edef and edef.render_type == "prism" and not world.has(eid, PrismShape):
             world.add(eid, PrismShape(

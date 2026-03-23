@@ -14,7 +14,7 @@ class OverlayMode(enum.Enum):
     LINE_STRIP = "line_strip"
 
 
-@dataclass(slots=True)
+@dataclass()
 class Overlay:
     """A batch of overlay geometry the viewport should draw.
 

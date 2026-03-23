@@ -21,6 +21,7 @@ class LightTool:
     """
 
     name = "light"
+    wants_middle_click = True
 
     STEPS = [0.05, 0.1, 0.25, 0.5, 1.0]
 
@@ -33,6 +34,7 @@ class LightTool:
         self.step_idx: int = 2  # default 0.25
         self.hover_hit = None
         self._dragging = False
+        self.sampled_value: float | None = None
 
     @property
     def step(self) -> float:
@@ -82,8 +84,12 @@ class LightTool:
             self._bus.execute(SetCellFieldCmd(row, col, "light_levels", new))
 
     def _sample(self, row: int, col: int) -> None:
-        """Eyedropper: no-op for light (just shows value on hover)."""
-        pass
+        """Eyedropper: store sampled light level for status display."""
+        zone = self._zone
+        ll = zone.light_levels[row][col] if zone.light_levels else 1.0
+        self.sampled_value = ll
+        if self.on_changed:
+            self.on_changed()
 
     def cycle_step(self, direction: int = 1) -> None:
         self.step_idx = (self.step_idx + direction) % len(self.STEPS)
@@ -92,11 +98,35 @@ class LightTool:
 
     def overlays(self) -> list[Overlay]:
         ovls: list[Overlay] = []
+        zone = self._zone
+
+        # Zone-wide light level overlay — show all non-default cells
+        if zone.light_levels:
+            for r in range(zone.height):
+                for c in range(zone.width):
+                    ll = zone.light_levels[r][c]
+                    if abs(ll - 1.0) < 0.01:
+                        continue  # skip default (fully lit) cells
+                    fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
+                    y = fh + 0.015
+                    # Dark cells → blue tint, bright cells → yellow tint
+                    if ll < 1.0:
+                        # Darkness overlay: darker blue the lower the light
+                        darkness = 1.0 - ll
+                        ovls.append(Overlay(
+                            mode=OverlayMode.TRIS,
+                            verts=[
+                                (c, y, r), (c + 1, y, r), (c + 1, y, r + 1),
+                                (c, y, r), (c + 1, y, r + 1), (c, y, r + 1),
+                            ],
+                            color=(0.0, 0.0, 0.3, darkness * 0.5),
+                        ))
+
+        # Hover cell highlight
         hit = self.hover_hit
         if hit is None:
             return ovls
 
-        zone = self._zone
         r, c = hit.row, hit.col
         fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
         y = fh + 0.01

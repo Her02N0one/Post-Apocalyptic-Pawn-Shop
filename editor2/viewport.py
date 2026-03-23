@@ -90,6 +90,31 @@ void main() {
 class ZoneViewport(QOpenGLWidget):
     """QOpenGLWidget that renders zone geometry with face shading."""
 
+    # ── Cached constants (avoid per-frame recreation) ─────────────
+    _IDENTITY_4x4 = np.eye(4, dtype=np.float32).flatten()
+
+    _CROSSHAIR_L = 0.015   # half-length
+    _CROSSHAIR_T = 0.002   # half-thickness
+    _CROSSHAIR_VERTS = np.array([
+        # horizontal bar
+        -_CROSSHAIR_L, -_CROSSHAIR_T, 0,
+         _CROSSHAIR_L, -_CROSSHAIR_T, 0,
+         _CROSSHAIR_L,  _CROSSHAIR_T, 0,
+        -_CROSSHAIR_L, -_CROSSHAIR_T, 0,
+         _CROSSHAIR_L,  _CROSSHAIR_T, 0,
+        -_CROSSHAIR_L,  _CROSSHAIR_T, 0,
+        # vertical bar
+        -_CROSSHAIR_T, -_CROSSHAIR_L, 0,
+         _CROSSHAIR_T, -_CROSSHAIR_L, 0,
+         _CROSSHAIR_T,  _CROSSHAIR_L, 0,
+        -_CROSSHAIR_T, -_CROSSHAIR_L, 0,
+         _CROSSHAIR_T,  _CROSSHAIR_L, 0,
+        -_CROSSHAIR_T,  _CROSSHAIR_L, 0,
+    ], dtype=np.float32)
+
+    # Overlay mode → GL enum (populated in initializeGL when gl is available)
+    _OVL_MODE_MAP: dict = {}
+
     def __init__(self, zone: Zone, atlas: TileAtlas,
                  parent=None) -> None:
         super().__init__(parent)
@@ -114,7 +139,7 @@ class ZoneViewport(QOpenGLWidget):
         # Active tool (set externally)
         self._tool: Tool | None = None
         self.on_hover: Callable[[], None] | None = None
-        self._on_scroll: Callable[[int], bool] | None = None
+        self._on_scroll: Callable[[int, int], bool] | None = None
         self.extra_overlays: Callable[[], list] | None = None
         self.on_eyedrop: Callable[[int, int, int], None] | None = None
 
@@ -139,6 +164,7 @@ class ZoneViewport(QOpenGLWidget):
         # Input state
         self._keys: set[int] = set()
         self._mouse_captured = False
+        self._persistent_camera = False
         self._last_time = time.monotonic()
 
         # Perf counters
@@ -227,6 +253,14 @@ class ZoneViewport(QOpenGLWidget):
         gl.glCullFace(gl.GL_BACK)
         gl.glFrontFace(gl.GL_CW)
 
+        # Populate overlay mode map (needs GL context for enum values)
+        from editor2.tools import OverlayMode
+        self._OVL_MODE_MAP = {
+            OverlayMode.TRIS: gl.GL_TRIANGLES,
+            OverlayMode.LINES: gl.GL_LINES,
+            OverlayMode.LINE_STRIP: gl.GL_LINE_STRIP,
+        }
+
         self._build_shader()
         self._build_overlay_shader()
         self._atlas.upload()
@@ -237,23 +271,23 @@ class ZoneViewport(QOpenGLWidget):
         gl.glShaderSource(vs, VERT_SRC)
         gl.glCompileShader(vs)
         if not gl.glGetShaderiv(vs, gl.GL_COMPILE_STATUS):
-            log = gl.glGetShaderInfoLog(vs).decode()
-            raise RuntimeError(f"Vertex shader error:\n{log}")
+            err_msg = gl.glGetShaderInfoLog(vs).decode()
+            raise RuntimeError(f"Vertex shader error:\n{err_msg}")
 
         fs = gl.glCreateShader(gl.GL_FRAGMENT_SHADER)
         gl.glShaderSource(fs, FRAG_SRC)
         gl.glCompileShader(fs)
         if not gl.glGetShaderiv(fs, gl.GL_COMPILE_STATUS):
-            log = gl.glGetShaderInfoLog(fs).decode()
-            raise RuntimeError(f"Fragment shader error:\n{log}")
+            err_msg = gl.glGetShaderInfoLog(fs).decode()
+            raise RuntimeError(f"Fragment shader error:\n{err_msg}")
 
         prog = gl.glCreateProgram()
         gl.glAttachShader(prog, vs)
         gl.glAttachShader(prog, fs)
         gl.glLinkProgram(prog)
         if not gl.glGetProgramiv(prog, gl.GL_LINK_STATUS):
-            log = gl.glGetProgramInfoLog(prog).decode()
-            raise RuntimeError(f"Shader link error:\n{log}")
+            err_msg = gl.glGetProgramInfoLog(prog).decode()
+            raise RuntimeError(f"Shader link error:\n{err_msg}")
 
         gl.glDeleteShader(vs)
         gl.glDeleteShader(fs)
@@ -480,8 +514,6 @@ class ZoneViewport(QOpenGLWidget):
         if not items:
             return
 
-        from editor2.tools import OverlayMode
-
         gl.glEnable(gl.GL_BLEND)
         gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
         gl.glDepthMask(gl.GL_FALSE)
@@ -493,12 +525,6 @@ class ZoneViewport(QOpenGLWidget):
         gl.glUseProgram(self._ovl_program)
         gl.glUniformMatrix4fv(self._ovl_vp_loc, 1, gl.GL_FALSE, vp)
         gl.glBindVertexArray(self._ovl_vao)
-
-        _MODE_MAP = {
-            OverlayMode.TRIS: gl.GL_TRIANGLES,
-            OverlayMode.LINES: gl.GL_LINES,
-            OverlayMode.LINE_STRIP: gl.GL_LINE_STRIP,
-        }
 
         for ovl in items:
             n = len(ovl.verts)
@@ -518,7 +544,7 @@ class ZoneViewport(QOpenGLWidget):
             else:
                 gl.glBufferSubData(gl.GL_ARRAY_BUFFER, 0, needed, buf)
             gl.glUniform4f(self._ovl_color_loc, *ovl.color)
-            gl_mode = _MODE_MAP.get(ovl.mode, gl.GL_TRIANGLES)
+            gl_mode = self._OVL_MODE_MAP.get(ovl.mode, gl.GL_TRIANGLES)
             gl.glDrawArrays(gl_mode, 0, n)
 
         gl.glBindVertexArray(0)
@@ -531,32 +557,20 @@ class ZoneViewport(QOpenGLWidget):
         """Draw a small crosshair at screen centre using thin quads."""
         gl.glUseProgram(self._ovl_program)
         # Identity VP → draw in NDC directly
-        identity = np.eye(4, dtype=np.float32).flatten()
-        gl.glUniformMatrix4fv(self._ovl_vp_loc, 1, gl.GL_FALSE, identity)
+        gl.glUniformMatrix4fv(self._ovl_vp_loc, 1, gl.GL_FALSE,
+                              self._IDENTITY_4x4)
         gl.glUniform4f(self._ovl_color_loc, 1.0, 1.0, 1.0, 0.7)
-
-        # Crosshair arms in NDC (~12px at 1280 wide, ~2px thick)
-        L = 0.015   # half-length
-        T = 0.002   # half-thickness
-        # Two quads (horizontal + vertical), each as 2 triangles = 12 verts
-        verts = np.array([
-            # horizontal bar
-            -L, -T, 0,   L, -T, 0,   L,  T, 0,
-            -L, -T, 0,   L,  T, 0,  -L,  T, 0,
-            # vertical bar
-            -T, -L, 0,   T, -L, 0,   T,  L, 0,
-            -T, -L, 0,   T,  L, 0,  -T,  L, 0,
-        ], dtype=np.float32)
 
         gl.glBindVertexArray(self._ovl_vao)
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._ovl_vbo)
-        needed = verts.nbytes
+        needed = self._CROSSHAIR_VERTS.nbytes
         if needed > self._ovl_vbo_size:
-            gl.glBufferData(gl.GL_ARRAY_BUFFER, needed, verts,
-                            gl.GL_DYNAMIC_DRAW)
+            gl.glBufferData(gl.GL_ARRAY_BUFFER, needed,
+                            self._CROSSHAIR_VERTS, gl.GL_DYNAMIC_DRAW)
             self._ovl_vbo_size = needed
         else:
-            gl.glBufferSubData(gl.GL_ARRAY_BUFFER, 0, needed, verts)
+            gl.glBufferSubData(gl.GL_ARRAY_BUFFER, 0, needed,
+                               self._CROSSHAIR_VERTS)
 
         gl.glDisable(gl.GL_DEPTH_TEST)
         gl.glDisable(gl.GL_CULL_FACE)
@@ -634,17 +648,24 @@ class ZoneViewport(QOpenGLWidget):
 
         self.update()
 
+    @property
+    def mouse_captured(self) -> bool:
+        """True while the viewport owns the mouse for camera control."""
+        return self._mouse_captured
+
     def keyPressEvent(self, ev) -> None:
         key = ev.key()
         self._keys.add(key)
         if key == Qt.Key.Key_Escape:
             if self._mouse_captured:
                 self._release_mouse()
-            else:
-                self.window().close()
+            # Escape never closes the window — just releases camera
         elif key == Qt.Key.Key_Return or key == Qt.Key.Key_Enter:
-            if not self._mouse_captured:
-                self._capture_mouse()
+            # Toggle persistent camera (free-fly) mode
+            if self._mouse_captured:
+                self._release_mouse()
+            else:
+                self._capture_mouse(persistent=True)
         ev.accept()
 
     def keyReleaseEvent(self, ev) -> None:
@@ -653,26 +674,33 @@ class ZoneViewport(QOpenGLWidget):
 
     def mousePressEvent(self, ev) -> None:
         if not self._mouse_captured:
-            # Middle-click eyedropper (global, before tool)
-            if ev.button() == Qt.MouseButton.MiddleButton and self.on_eyedrop:
-                pos = ev.position()
-                self.on_eyedrop(pos.x(), pos.y(), self.width(), self.height())
+            # Middle-click: let tool handle it if it wants middle-click,
+            # otherwise use global eyedropper
+            if ev.button() == Qt.MouseButton.MiddleButton:
+                tool_wants_it = getattr(self._tool, 'wants_middle_click', False)
+                if not tool_wants_it and self.on_eyedrop:
+                    pos = ev.position()
+                    self.on_eyedrop(pos.x(), pos.y(), self.width(), self.height())
+                    ev.accept()
+                    return
+                elif tool_wants_it and self._tool:
+                    pos = ev.position()
+                    self._tool.on_mouse_press(
+                        pos.x(), pos.y(), self.width(), self.height(), 3)
+                    ev.accept()
+                    return
+            # Right-click always enters hold-to-orbit camera mode
+            if ev.button() == Qt.MouseButton.RightButton:
+                self._capture_mouse(persistent=False)
                 ev.accept()
                 return
-            # Right-click captures mouse for FPS camera
-            if ev.button() == Qt.MouseButton.RightButton:
-                self._capture_mouse()
-            elif self._tool:
-                if ev.button() == Qt.MouseButton.LeftButton:
-                    btn = 1
-                elif ev.button() == Qt.MouseButton.MiddleButton:
-                    btn = 3
-                else:
-                    btn = 2
+            # Left-click → forward to tool
+            if self._tool and ev.button() == Qt.MouseButton.LeftButton:
                 pos = ev.position()
                 self._tool.on_mouse_press(
-                    pos.x(), pos.y(), self.width(), self.height(), btn)
+                    pos.x(), pos.y(), self.width(), self.height(), 1)
         else:
+            # While captured, left-click goes to tool at screen centre
             cx = self.width() * 0.5
             cy = self.height() * 0.5
             if self._tool:
@@ -707,6 +735,13 @@ class ZoneViewport(QOpenGLWidget):
         ev.accept()
 
     def mouseReleaseEvent(self, ev) -> None:
+        # Right-click release: exit hold-to-orbit camera (not persistent)
+        if (ev.button() == Qt.MouseButton.RightButton
+                and self._mouse_captured
+                and not self._persistent_camera):
+            self._release_mouse()
+            ev.accept()
+            return
         if self._tool:
             btn = 1 if ev.button() == Qt.MouseButton.LeftButton else 2
             if self._mouse_captured:
@@ -721,28 +756,26 @@ class ZoneViewport(QOpenGLWidget):
         ev.accept()
 
     def wheelEvent(self, ev) -> None:
-        """Scroll wheel: zoom camera forward/back when not in FPS mode.
-        
-        If an on_scroll callback is set and returns True, the scroll is consumed.
+        """Scroll wheel — dispatched to tool callbacks only.
+
+        Plain scroll does NOT zoom the camera.  Tool callbacks (e.g.
+        select/sculpt raise-lower, entity rotate) can consume the event.
+        The callback receives (direction, modifiers_int).
         """
         delta = ev.angleDelta().y()
         if delta == 0:
             ev.ignore()
             return
-        # Let the main window intercept scroll (e.g. for selection raise/lower)
+        # Let the main window intercept scroll with modifier info
         if self._on_scroll is not None:
             direction = 1 if delta > 0 else -1
-            if self._on_scroll(direction):
+            raw = ev.modifiers()
+            mods = raw.value if hasattr(raw, 'value') else int(raw)
+            if self._on_scroll(direction, mods):
                 ev.accept()
                 return
-        cam = self.camera
-        fx, fy, fz = cam.forward()
-        step = 0.5 if delta > 0 else -0.5
-        cam.x += fx * step
-        cam.y += fy * step
-        cam.z += fz * step
-        self.update()
-        ev.accept()
+        # No default zoom — scroll alone is intentionally unbound.
+        ev.ignore()
 
     def focusOutEvent(self, ev) -> None:
         if self._mouse_captured:
@@ -750,13 +783,15 @@ class ZoneViewport(QOpenGLWidget):
         self._keys.clear()
         super().focusOutEvent(ev)
 
-    def _capture_mouse(self) -> None:
+    def _capture_mouse(self, persistent: bool = False) -> None:
         self._mouse_captured = True
+        self._persistent_camera = persistent
         self.setCursor(Qt.CursorShape.BlankCursor)
         self.grabMouse()
         self.setFocus()
 
     def _release_mouse(self) -> None:
         self._mouse_captured = False
+        self._persistent_camera = False
         self.releaseMouse()
         self.setCursor(Qt.CursorShape.ArrowCursor)

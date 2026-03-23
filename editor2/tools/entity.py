@@ -1,17 +1,51 @@
-"""editor2/tools/entity.py — Entity placement and manipulation tool."""
+"""editor2/tools/entity.py — Entity placement and manipulation tool.
+
+Wall-placement helpers live in ``entity_wall.py``; 3D marker geometry
+lives in ``entity_shapes.py``.  This module contains only the
+``EntityTool`` class and snap presets.
+"""
 
 from __future__ import annotations
 
 import math
 from typing import Callable
 
-from core.entity_defs import entity_registry, get_entity_def
+from core.entity_defs import entity_palette
 from core.zones import Zone
 from core.zones.objects import EntityDescriptor
 from editor2.camera import Camera
 from editor2.core import CommandBus
-from editor2.picking import pick_cell
+from editor2.picking import CellHit, pick_cell, pick_floor_point
 from editor2.tools import Overlay, OverlayMode
+from editor2.tools.entity_wall import (
+    _is_wall_entity_type,
+    _wall_position,
+    _wall_hit_for_placement,
+)
+from editor2.tools.entity_shapes import (
+    _entity_marker,
+    _placement_ghost,
+)
+
+# ── Snap presets ──────────────────────────────────────────────────
+
+ENTITY_SNAP_PRESETS: tuple[float, ...] = (0.0, 0.25, 0.5, 1.0)
+ENTITY_SNAP_LABELS: tuple[str, ...] = ("Free", "¼ Cell", "½ Cell", "Cell")
+_DEFAULT_SNAP_IDX = 0  # Free by default
+
+
+def _snap_coord(val: float, resolution: float) -> float:
+    """Snap *val* to the nearest multiple of *resolution*.
+
+    *resolution* ≤ 0 → no snap (free placement).
+    *resolution* ≥ 1 → cell-centre snap (0.5, 1.5, …).
+    """
+    if resolution <= 0.0:
+        return val
+    if resolution >= 1.0:
+        return math.floor(val) + 0.5
+    return round(val / resolution) * resolution
+
 
 
 class EntityTool:
@@ -26,6 +60,7 @@ class EntityTool:
     """
 
     name = "entity"
+    wants_right_click = False
 
     def __init__(self, zone: Zone, bus: CommandBus, cam: Camera) -> None:
         self._zone = zone
@@ -40,6 +75,12 @@ class EntityTool:
         # Hover info
         self.hover_hit = None
         self._hover_entity_uid: int | None = None
+        # Continuous hover position (world coords, snapped)
+        self._hover_wx: float | None = None
+        self._hover_wz: float | None = None
+        self._hover_fh: float = 0.0
+        # Snap
+        self._snap_idx: int = _DEFAULT_SNAP_IDX
 
     # ── Entity queries ────────────────────────────────────────────
 
@@ -60,10 +101,59 @@ class EntityTool:
 
     # ── Tool protocol ─────────────────────────────────────────────
 
+    # ── Snap accessors ─────────────────────────────────────────
+
+    @property
+    def snap_idx(self) -> int:
+        return self._snap_idx
+
+    @property
+    def snap_resolution(self) -> float:
+        return ENTITY_SNAP_PRESETS[self._snap_idx]
+
+    def cycle_snap(self) -> None:
+        """Advance to the next snap preset (wraps around)."""
+        self._snap_idx = (self._snap_idx + 1) % len(ENTITY_SNAP_PRESETS)
+
+    def cycle_type(self, direction: int = 1) -> str:
+        """Cycle to the next (+1) or previous (-1) entity type in the palette.
+
+        Returns the new entity type id.
+        """
+        pal = entity_palette()
+        if not pal:
+            return self.current_type
+        try:
+            idx = pal.index(self.current_type)
+        except ValueError:
+            idx = -1 if direction > 0 else 0
+        idx = (idx + direction) % len(pal)
+        self.current_type = pal[idx]
+        return self.current_type
+
+    def set_type(self, etype: str) -> None:
+        """Set the current entity type directly."""
+        self.current_type = etype
+
+    # ── Tool protocol ─────────────────────────────────────────────
+
     def on_mouse_move(self, sx: float, sy: float,
                       vp_w: int, vp_h: int) -> None:
         hit = pick_cell(sx, sy, vp_w, vp_h, self._cam, self._zone)
         self.hover_hit = hit
+
+        # Compute continuous floor position
+        pt = pick_floor_point(sx, sy, vp_w, vp_h, self._cam, self._zone)
+        if pt is not None:
+            wx, wz, fh = pt
+            res = self.snap_resolution
+            self._hover_wx = _snap_coord(wx, res)
+            self._hover_wz = _snap_coord(wz, res)
+            self._hover_fh = fh
+        else:
+            self._hover_wx = None
+            self._hover_wz = None
+
         if hit:
             ent = self._find_entity_at(hit.row, hit.col)
             self._hover_entity_uid = ent.uid if ent else None
@@ -84,12 +174,8 @@ class EntityTool:
                 # Select existing entity
                 self.selected_uid = existing.uid
             else:
-                # Place new entity
-                self._place_entity(hit.row, hit.col)
-        elif button == 2:  # Right click
-            existing = self._find_entity_at(hit.row, hit.col)
-            if existing:
-                self._delete_entity(existing.uid)
+                # Place new entity at smooth/snapped position
+                self._place_entity_at_hover()
 
         if self.on_changed:
             self.on_changed()
@@ -106,20 +192,54 @@ class EntityTool:
 
     # ── Entity operations ─────────────────────────────────────────
 
-    def _place_entity(self, row: int, col: int) -> None:
+    def _place_entity_at_hover(self) -> None:
+        """Place a new entity at the current hover position (smooth or snapped).
+
+        If the cursor is on a wall face and the entity type is wall-mountable,
+        automatically sets ``wall_face`` and ``wall_height`` in the entity's
+        extra dict so the runtime renderer treats it as wall-anchored.
+        """
         if not self.current_type:
             return
-        ent = EntityDescriptor(
-            uid=self._zone.next_uid(),
-            type=self.current_type,
-            x=col + 0.5,
-            y=row + 0.5,
-            angle=0.0,
-            state="default",
-        )
+
+        zone = self._zone
+        hit = self.hover_hit
+        is_wall_type = _is_wall_entity_type(self.current_type)
+
+        # Wall placement when clicking a wall face (or the top of a
+        # wall cell — inferred to the nearest cardinal face).
+        wall_hit = _wall_hit_for_placement(hit) if hit is not None else None
+        if is_wall_type and wall_hit is not None:
+            from core.entity_defs import get_entity_def
+            edef = get_entity_def(self.current_type)
+            ent_h = edef.scale * 0.6 if edef else 0.3
+            wx, wz, wh, wface = _wall_position(wall_hit, zone,
+                                                  snap=self.snap_resolution,
+                                                  entity_height=ent_h)
+            ent = EntityDescriptor(
+                uid=zone.next_uid(),
+                type=self.current_type,
+                x=wx, y=wz,
+                angle=0.0,
+                state="default",
+                extra={"wall_face": wface, "wall_height": wh},
+            )
+        else:
+            # Normal floor placement
+            if self._hover_wx is None or self._hover_wz is None:
+                return
+            ex = max(0.01, min(self._hover_wx, zone.width - 0.01))
+            ez = max(0.01, min(self._hover_wz, zone.height - 0.01))
+            ent = EntityDescriptor(
+                uid=zone.next_uid(),
+                type=self.current_type,
+                x=ex, y=ez,
+                angle=0.0,
+                state="default",
+            )
+
         from editor2.core import EntityPlaceCmd
-        cmd = EntityPlaceCmd(ent)
-        self._bus.execute(cmd)
+        self._bus.execute(EntityPlaceCmd(ent))
         self.selected_uid = ent.uid
 
     def _delete_entity(self, uid: int) -> None:
@@ -142,12 +262,16 @@ class EntityTool:
         self._bus.execute(EntityRotateCmd(self.selected_uid, delta))
 
     def move_selected_to_hover(self) -> None:
-        """Move the selected entity to the currently hovered cell."""
-        if self.selected_uid is None or self.hover_hit is None:
+        """Move the selected entity to the current hover position."""
+        if self.selected_uid is None:
             return
-        r, c = self.hover_hit.row, self.hover_hit.col
+        if self._hover_wx is None or self._hover_wz is None:
+            return
+        zone = self._zone
+        ex = max(0.01, min(self._hover_wx, zone.width - 0.01))
+        ez = max(0.01, min(self._hover_wz, zone.height - 0.01))
         from editor2.core import EntityMoveCmd
-        self._bus.execute(EntityMoveCmd(self.selected_uid, c + 0.5, r + 0.5))
+        self._bus.execute(EntityMoveCmd(self.selected_uid, ex, ez))
 
     def delete_selected(self) -> None:
         """Delete the currently selected entity."""
@@ -160,60 +284,31 @@ class EntityTool:
         ovls: list[Overlay] = []
         zone = self._zone
 
-        # Draw all entities as colored cell markers
         for ent in zone.entities:
-            edef = get_entity_def(ent.type)
-            if edef:
-                r, g, b = edef.color
-                cr, cg, cb = r / 255, g / 255, b / 255
-            else:
-                cr, cg, cb = 0.8, 0.8, 0.8
-
-            ex, ey = ent.x, ent.y
-            fh = 0.0
-            row, col = int(ey), int(ex)
-            if 0 <= row < zone.height and 0 <= col < zone.width:
-                fh = zone.floor_heights[row][col] if zone.floor_heights else 0.0
-
-            # Diamond marker on the floor
-            y = fh + 0.02
-            s = 0.3  # half-size
             is_selected = ent.uid == self.selected_uid
             is_hovered = ent.uid == self._hover_entity_uid
-            alpha = 0.8 if is_selected else (0.6 if is_hovered else 0.4)
-
-            verts = [
-                (ex, y, ey - s),
-                (ex + s, y, ey),
-                (ex, y, ey + s),
-                (ex - s, y, ey),
-            ]
-            # Two triangles for diamond
-            tri_verts = [verts[0], verts[1], verts[2],
-                         verts[0], verts[2], verts[3]]
-            ovls.append(Overlay(
-                mode=OverlayMode.TRIS,
-                verts=tri_verts,
-                color=(cr, cg, cb, alpha),
+            ovls.extend(_entity_marker(
+                ent, zone, is_selected, is_hovered, detailed=True,
             ))
 
-            # Facing direction line
-            if is_selected or is_hovered:
-                dx = math.cos(ent.angle) * 0.5
-                dy = math.sin(ent.angle) * 0.5
-                ovls.append(Overlay(
-                    mode=OverlayMode.LINES,
-                    verts=[(ex, y + 0.01, ey),
-                           (ex + dx, y + 0.01, ey + dy)],
-                    color=(1.0, 1.0, 0.0, 0.8),
+        # ── Placement preview ghost ───────────────────────────
+        wx, wz = self._hover_wx, self._hover_wz
+        hit = self.hover_hit
+        if hit is not None and wx is not None and wz is not None:
+            fh = self._hover_fh
+
+            # Only show ghost if we have a type selected and no entity
+            # is already being hovered (avoids stacking ghost on existing)
+            if self.current_type and self._hover_entity_uid is None:
+                ovls.extend(_placement_ghost(
+                    self.current_type, wx, wz, fh, zone, hit,
+                    snap=self.snap_resolution,
                 ))
 
-        # Hover cell highlight
-        hit = self.hover_hit
-        if hit is not None:
+            # Hover cell outline — use hit_y for wall parts so the
+            # outline sits at the wall top, not inside the mesh.
             r, c = hit.row, hit.col
-            fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
-            y = fh + 0.01
+            y = (hit.hit_y + 0.01) if hit.part == "wall" else (fh + 0.01)
             ovls.append(Overlay(
                 mode=OverlayMode.LINES,
                 verts=[

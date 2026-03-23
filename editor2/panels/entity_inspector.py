@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QDoubleSpinBox, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -18,6 +18,10 @@ class EntityInspector(QWidget):
     - Entity type palette (tree grouped by category)
     - Selected entity inspector (type, position, angle)
     """
+
+    # Emitted after the user selects an entity type in the palette.
+    # The parent window connects this to restore viewport focus.
+    type_selected = Signal()
 
     def __init__(self, tool, parent=None) -> None:
         super().__init__(parent)
@@ -38,6 +42,7 @@ class EntityInspector(QWidget):
         self._tree.setHeaderHidden(True)
         self._tree.setRootIsDecorated(True)
         self._tree.currentItemChanged.connect(self._on_select)
+        self._tree.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         lay.addWidget(self._tree, 3)
 
         self._populate_tree()
@@ -56,16 +61,10 @@ class EntityInspector(QWidget):
         pos_lay = QHBoxLayout(pos_row)
         pos_lay.setContentsMargins(0, 0, 0, 0)
         pos_lay.addWidget(QLabel("X:"))
-        self._pos_x = QDoubleSpinBox()
-        self._pos_x.setRange(-999, 999)
-        self._pos_x.setDecimals(2)
-        self._pos_x.setReadOnly(True)
+        self._pos_x = QLabel("—")
         pos_lay.addWidget(self._pos_x)
         pos_lay.addWidget(QLabel("Y:"))
-        self._pos_y = QDoubleSpinBox()
-        self._pos_y.setRange(-999, 999)
-        self._pos_y.setDecimals(2)
-        self._pos_y.setReadOnly(True)
+        self._pos_y = QLabel("—")
         pos_lay.addWidget(self._pos_y)
         grp_lay.addWidget(pos_row)
 
@@ -73,12 +72,8 @@ class EntityInspector(QWidget):
         angle_lay = QHBoxLayout(angle_row)
         angle_lay.setContentsMargins(0, 0, 0, 0)
         angle_lay.addWidget(QLabel("Angle:"))
-        self._angle_spin = QDoubleSpinBox()
-        self._angle_spin.setRange(0, 360)
-        self._angle_spin.setDecimals(1)
-        self._angle_spin.setSuffix("°")
-        self._angle_spin.setReadOnly(True)
-        angle_lay.addWidget(self._angle_spin)
+        self._angle_label = QLabel("—")
+        angle_lay.addWidget(self._angle_label)
         grp_lay.addWidget(angle_row)
 
         lay.addWidget(grp)
@@ -88,9 +83,13 @@ class EntityInspector(QWidget):
             "<small>"
             "LMB: place / select entity<br>"
             "Shift+LMB: always place<br>"
-            "RMB: delete entity<br>"
+            "X / Delete: delete selected<br>"
             "R: rotate selected 90°<br>"
-            "Delete: delete selected"
+            "Shift+Scroll: rotate 15° steps<br>"
+            "M: move to cursor<br>"
+            "[ / ]: prev / next entity type<br>"
+            "F: quick search entities<br>"
+            "S: cycle snap mode"
             "</small>"
         )
         help_lbl.setWordWrap(True)
@@ -137,6 +136,26 @@ class EntityInspector(QWidget):
         eid = current.data(0, Qt.ItemDataRole.UserRole)
         if eid and self._tool:
             self._tool.current_type = eid
+            self.type_selected.emit()
+
+    def select_type_in_tree(self, etype: str) -> None:
+        """Programmatically select an entity type in the tree.
+
+        Called when the user cycles types via keyboard so the
+        panel stays in sync without stealing focus.
+        """
+        self._tree.blockSignals(True)
+        it = self._tree.invisibleRootItem()
+        for ci in range(it.childCount()):
+            cat = it.child(ci)
+            for ei in range(cat.childCount()):
+                child = cat.child(ei)
+                if child.data(0, Qt.ItemDataRole.UserRole) == etype:
+                    self._tree.setCurrentItem(child)
+                    self._tree.scrollToItem(child)
+                    self._tree.blockSignals(False)
+                    return
+        self._tree.blockSignals(False)
 
     def refresh(self) -> None:
         """Update the selected entity inspector from tool state."""
@@ -146,9 +165,9 @@ class EntityInspector(QWidget):
         if uid is None:
             self._sel_type_label.setText("Type: —")
             self._sel_uid_label.setText("UID: —")
-            self._pos_x.setValue(0)
-            self._pos_y.setValue(0)
-            self._angle_spin.setValue(0)
+            self._pos_x.setText("—")
+            self._pos_y.setText("—")
+            self._angle_label.setText("—")
             return
 
         ent = self._tool._entity_by_uid(uid)
@@ -160,6 +179,6 @@ class EntityInspector(QWidget):
         import math
         self._sel_type_label.setText(f"Type: {ent.type}")
         self._sel_uid_label.setText(f"UID: {ent.uid}")
-        self._pos_x.setValue(ent.x)
-        self._pos_y.setValue(ent.y)
-        self._angle_spin.setValue(math.degrees(ent.angle))
+        self._pos_x.setText(f"{ent.x:.2f}")
+        self._pos_y.setText(f"{ent.y:.2f}")
+        self._angle_label.setText(f"{math.degrees(ent.angle):.1f}°")

@@ -1,18 +1,8 @@
 """editor2/main.py — Qt + OpenGL zone editor entry point.
 
-This is the main window shell — it wires together:
-
-- **viewport.py**    — OpenGL 3D viewport & camera
-- **tools/**         — 7 editing tools (paint, sculpt, select, ...)
-- **panels/**        — inspector panels for each tool
-- **theme.py**       — dark editor stylesheet & palette
-- **dialogs.py**     — all modal dialogs (new zone, open, help, ...)
-- **hud.py**         — viewport HUD overlay builder
-- **zone_ops.py**    — zone-level operations (resize, export, validate)
-- **clipboard.py**   — copy/paste for cell data
-
 Usage:
     python -m editor2.main [zone_name]
+    python -m editor2.main test
 """
 
 from __future__ import annotations
@@ -25,9 +15,10 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QFont, QKeySequence, QSurfaceFormat
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QDockWidget, QLabel,
-    QMainWindow, QMenu, QMessageBox,
-    QStackedWidget, QToolBar, QWidget,
+    QApplication, QDialog, QDialogButtonBox, QDockWidget,
+    QFormLayout, QHBoxLayout, QLabel, QLineEdit,
+    QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
+    QSpinBox, QStackedWidget, QToolBar, QVBoxLayout, QWidget,
 )
 
 log = logging.getLogger(__name__)
@@ -38,16 +29,11 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from core.zones import load_zone, list_zones, Zone, ZONES_DIR
+from core.tiles import tile_def
 from core.tiles.registry import rebuild_derived
 from editor.app.session_cfg import load_session, save_session, push_recent
 from editor2.atlas import TileAtlas
-from editor2.clipboard import copy_cells, paste_cells
 from editor2.core import CommandBus
-from editor2.dialogs import (
-    FindReplaceDialog, HelpDialog, NewZoneDialog, OpenZoneDialog,
-    ResizeZoneDialog, ZoneSettingsDialog,
-)
-from editor2.hud import build_hud_lines
 from editor2.panels.inspector import PaintInspector
 from editor2.panels.sculpt_inspector import SculptInspector
 from editor2.panels.cell_inspector import CellInspector
@@ -60,7 +46,6 @@ from editor2.panels.minimap import MinimapPanel
 from editor2.panels.raycaster_mini import RaycasterMiniView
 from editor2.raycaster_preview import RaycasterPreview
 from editor2.selection import SelectionState
-from editor2.theme import apply_dark_theme
 from editor2.tools.erase import EraseTool
 from editor2.tools.entity import EntityTool, ENTITY_SNAP_LABELS
 from editor2.tools.light import LightTool
@@ -69,16 +54,441 @@ from editor2.tools.sculpt import SculptTool, SNAP_LABELS, SNAP_PRESETS
 from editor2.tools.select import SelectTool
 from editor2.tools.tile_type import TileTypeTool
 from editor2.viewport import ZoneViewport
-from editor2.zone_ops import (
-    create_empty_zone, duplicate_zone, export_topdown,
-    find_replace_texture, resize_zone, validate_zone_issues,
-    zone_info_text,
-)
 
 
-# ═══════════════════════════════════════════════════════════════════
-#  EditorWindow
-# ═══════════════════════════════════════════════════════════════════
+# ── Dark editor theme ─────────────────────────────────────────────
+
+_DARK_STYLE = """
+/* ── Global ── */
+QMainWindow, QDialog, QMessageBox {
+    background-color: #2b2b2b;
+}
+
+/* ── Menu bar ── */
+QMenuBar {
+    background-color: #2d2d2d;
+    color: #ccc;
+    border-bottom: 1px solid #3a3a3a;
+    padding: 2px 0;
+}
+QMenuBar::item {
+    padding: 4px 10px;
+    background: transparent;
+    border-radius: 3px;
+}
+QMenuBar::item:selected {
+    background-color: #404040;
+}
+QMenuBar::item:pressed {
+    background-color: #4a4a4a;
+}
+
+/* ── Menus ── */
+QMenu {
+    background-color: #2d2d2d;
+    color: #ccc;
+    border: 1px solid #404040;
+    padding: 4px 0;
+}
+QMenu::item {
+    padding: 5px 28px 5px 22px;
+}
+QMenu::item:selected {
+    background-color: #3a6ea5;
+}
+QMenu::item:disabled {
+    color: #666;
+}
+QMenu::separator {
+    height: 1px;
+    background: #404040;
+    margin: 4px 10px;
+}
+QMenu::indicator {
+    width: 14px;
+    height: 14px;
+    margin-left: 6px;
+}
+
+/* ── Toolbar ── */
+QToolBar {
+    background-color: #303030;
+    border: none;
+    border-bottom: 1px solid #222;
+    spacing: 3px;
+    padding: 3px 6px;
+}
+QToolBar QToolButton {
+    background: #3a3a3a;
+    color: #b0b0b0;
+    border: 1px solid #4a4a4a;
+    border-radius: 3px;
+    padding: 5px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    min-width: 44px;
+}
+QToolBar QToolButton:hover {
+    background: #484848;
+    border-color: #5a5a5a;
+    color: #eee;
+}
+QToolBar QToolButton:checked {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #4a9eff, stop:1 #3a8eef);
+    color: #fff;
+    border-color: #5aa4ff;
+}
+QToolBar QToolButton:pressed {
+    background: #2a2a2a;
+}
+QToolBar::separator {
+    width: 1px;
+    background: #505050;
+    margin: 4px 6px;
+}
+
+/* ── Dock widgets ── */
+QDockWidget {
+    color: #ccc;
+    font-weight: bold;
+    font-size: 11px;
+}
+QDockWidget::title {
+    background: #353535;
+    padding: 6px 8px;
+    border-bottom: 2px solid #4a9eff;
+    text-align: left;
+}
+QDockWidget::close-button, QDockWidget::float-button {
+    background: transparent;
+    border: none;
+    padding: 2px;
+}
+QDockWidget::close-button:hover, QDockWidget::float-button:hover {
+    background: #505050;
+    border-radius: 2px;
+}
+QDockWidget > QWidget {
+    background-color: #2e2e2e;
+}
+
+/* ── Status bar ── */
+QStatusBar {
+    background: #252525;
+    color: #999;
+    border-top: 1px solid #3a3a3a;
+    font-size: 11px;
+    min-height: 22px;
+}
+QStatusBar::item {
+    border: none;
+}
+QStatusBar QLabel {
+    color: #999;
+    padding: 0 6px;
+}
+
+/* ── Group boxes ── */
+QGroupBox {
+    border: 1px solid #444;
+    border-radius: 4px;
+    margin-top: 12px;
+    padding: 12px 6px 6px 6px;
+    font-weight: bold;
+    font-size: 11px;
+    color: #aaa;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 5px;
+    color: #bbb;
+}
+
+/* ── Tree / list widgets ── */
+QTreeWidget, QListWidget, QTreeView, QListView {
+    background-color: #1e1e1e;
+    color: #ccc;
+    border: 1px solid #3a3a3a;
+    alternate-background-color: #242424;
+    outline: none;
+}
+QTreeWidget::item, QListWidget::item {
+    padding: 3px 0;
+}
+QTreeWidget::item:selected, QListWidget::item:selected {
+    background-color: #2a5a8a;
+    color: #fff;
+}
+QTreeWidget::item:hover, QListWidget::item:hover {
+    background-color: #333;
+}
+QTreeWidget::branch {
+    background-color: transparent;
+}
+QHeaderView::section {
+    background-color: #333;
+    color: #ccc;
+    border: 1px solid #3a3a3a;
+    padding: 3px 6px;
+}
+
+/* ── Inputs ── */
+QLineEdit, QSpinBox, QDoubleSpinBox {
+    background-color: #1e1e1e;
+    color: #ccc;
+    border: 1px solid #444;
+    border-radius: 3px;
+    padding: 3px 6px;
+    selection-background-color: #2a5a8a;
+}
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {
+    border-color: #4a9eff;
+}
+QComboBox {
+    background-color: #1e1e1e;
+    color: #ccc;
+    border: 1px solid #444;
+    border-radius: 3px;
+    padding: 3px 6px;
+    min-height: 20px;
+}
+QComboBox::drop-down {
+    border: none;
+    width: 20px;
+}
+QComboBox QAbstractItemView {
+    background-color: #2d2d2d;
+    color: #ccc;
+    selection-background-color: #2a5a8a;
+    border: 1px solid #444;
+}
+
+/* ── Buttons ── */
+QPushButton {
+    background-color: #3a3a3a;
+    color: #ccc;
+    border: 1px solid #505050;
+    border-radius: 3px;
+    padding: 5px 14px;
+    min-height: 20px;
+}
+QPushButton:hover {
+    background-color: #454545;
+    border-color: #5a5a5a;
+}
+QPushButton:pressed {
+    background-color: #2e2e2e;
+}
+QPushButton:disabled {
+    background-color: #333;
+    color: #666;
+    border-color: #3a3a3a;
+}
+
+/* ── Checkboxes & Radio ── */
+QCheckBox, QRadioButton {
+    color: #ccc;
+    spacing: 6px;
+}
+QCheckBox::indicator, QRadioButton::indicator {
+    width: 15px;
+    height: 15px;
+    border: 1px solid #555;
+    background: #1e1e1e;
+}
+QCheckBox::indicator {
+    border-radius: 3px;
+}
+QRadioButton::indicator {
+    border-radius: 8px;
+}
+QCheckBox::indicator:checked, QRadioButton::indicator:checked {
+    background: #4a9eff;
+    border-color: #4a9eff;
+}
+
+/* ── Sliders ── */
+QSlider::groove:horizontal {
+    height: 4px;
+    background: #333;
+    border-radius: 2px;
+}
+QSlider::handle:horizontal {
+    background: #4a9eff;
+    width: 14px;
+    height: 14px;
+    margin: -5px 0;
+    border-radius: 7px;
+}
+QSlider::groove:vertical {
+    width: 4px;
+    background: #333;
+    border-radius: 2px;
+}
+QSlider::handle:vertical {
+    background: #4a9eff;
+    width: 14px;
+    height: 14px;
+    margin: 0 -5px;
+    border-radius: 7px;
+}
+
+/* ── Scrollbars ── */
+QScrollBar:vertical {
+    background: #2b2b2b;
+    width: 10px;
+    margin: 0;
+}
+QScrollBar::handle:vertical {
+    background: #505050;
+    min-height: 24px;
+    border-radius: 4px;
+    margin: 1px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #636363;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: none;
+}
+QScrollBar:horizontal {
+    background: #2b2b2b;
+    height: 10px;
+}
+QScrollBar::handle:horizontal {
+    background: #505050;
+    min-width: 24px;
+    border-radius: 4px;
+    margin: 1px;
+}
+QScrollBar::handle:horizontal:hover {
+    background: #636363;
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0;
+}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    background: none;
+}
+
+/* ── Tabs ── */
+QTabWidget::pane {
+    border: 1px solid #3a3a3a;
+    background: #2b2b2b;
+}
+QTabBar::tab {
+    background: #333;
+    color: #999;
+    padding: 5px 14px;
+    border: 1px solid #3a3a3a;
+    border-bottom: none;
+    margin-right: 1px;
+}
+QTabBar::tab:selected {
+    background: #2b2b2b;
+    color: #ccc;
+    border-bottom: 2px solid #4a9eff;
+}
+QTabBar::tab:hover {
+    background: #3a3a3a;
+    color: #ccc;
+}
+
+/* ── Plain text / text edits ── */
+QPlainTextEdit, QTextEdit {
+    background-color: #1e1e1e;
+    color: #ccc;
+    border: 1px solid #3a3a3a;
+    selection-background-color: #2a5a8a;
+}
+
+/* ── Tooltips ── */
+QToolTip {
+    background-color: #3a3a3a;
+    color: #ddd;
+    border: 1px solid #555;
+    padding: 4px;
+}
+
+/* ── Splitter handles ── */
+QSplitter::handle {
+    background-color: #3a3a3a;
+}
+QSplitter::handle:horizontal {
+    width: 2px;
+}
+QSplitter::handle:vertical {
+    height: 2px;
+}
+
+/* ── Labels ── */
+QLabel {
+    color: #ccc;
+}
+"""
+
+
+def _apply_dark_theme(app: QApplication) -> None:
+    """Apply a dark editor theme (Fusion base + custom palette + stylesheet)."""
+    from PySide6.QtGui import QPalette, QColor
+
+    app.setStyle("Fusion")
+
+    p = QPalette()
+    p.setColor(QPalette.ColorRole.Window,          QColor(43, 43, 43))
+    p.setColor(QPalette.ColorRole.WindowText,      QColor(204, 204, 204))
+    p.setColor(QPalette.ColorRole.Base,            QColor(30, 30, 30))
+    p.setColor(QPalette.ColorRole.AlternateBase,   QColor(53, 53, 53))
+    p.setColor(QPalette.ColorRole.ToolTipBase,     QColor(58, 58, 58))
+    p.setColor(QPalette.ColorRole.ToolTipText,     QColor(204, 204, 204))
+    p.setColor(QPalette.ColorRole.Text,            QColor(204, 204, 204))
+    p.setColor(QPalette.ColorRole.Button,          QColor(53, 53, 53))
+    p.setColor(QPalette.ColorRole.ButtonText,      QColor(204, 204, 204))
+    p.setColor(QPalette.ColorRole.BrightText,      QColor(255, 255, 255))
+    p.setColor(QPalette.ColorRole.Link,            QColor(74, 158, 255))
+    p.setColor(QPalette.ColorRole.Highlight,       QColor(74, 158, 255))
+    p.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
+
+    # Muted disabled state
+    p.setColor(QPalette.ColorGroup.Disabled,
+               QPalette.ColorRole.WindowText, QColor(128, 128, 128))
+    p.setColor(QPalette.ColorGroup.Disabled,
+               QPalette.ColorRole.Text, QColor(128, 128, 128))
+    p.setColor(QPalette.ColorGroup.Disabled,
+               QPalette.ColorRole.ButtonText, QColor(128, 128, 128))
+
+    app.setPalette(p)
+    app.setStyleSheet(_DARK_STYLE)
+
+
+def _create_empty_zone(w: int = 20, h: int = 20) -> Zone:
+    """Create a blank in-memory zone (not saved to disk)."""
+    return Zone(
+        name="untitled", width=w, height=h,
+        anchor=(h / 2.0, w / 2.0),
+        first_person=True,
+        tiles=[["grass"] * w for _ in range(h)],
+        floor_heights=[[0.0] * w for _ in range(h)],
+        ceil_heights=[[10.0] * w for _ in range(h)],
+        floor_textures=[[""] * w for _ in range(h)],
+        ceil_textures=[[""] * w for _ in range(h)],
+        wall_textures=[[""] * w for _ in range(h)],
+        face_textures=[[[""] * 4 for _ in range(w)] for _ in range(h)],
+        light_levels=[[1.0] * w for _ in range(h)],
+        rotations=[[0] * w for _ in range(h)],
+        wall_segments=[[[[], [], [], []] for _ in range(w)] for _ in range(h)],
+        floor_step_textures=[[[""] * 4 for _ in range(w)] for _ in range(h)],
+        ceil_step_textures=[[[""] * 4 for _ in range(w)] for _ in range(h)],
+        floor_step_segments=[[[[], [], [], []] for _ in range(w)] for _ in range(h)],
+        ceil_step_segments=[[[[], [], [], []] for _ in range(w)] for _ in range(h)],
+        upper_wall_height=[[0.0] * w for _ in range(h)],
+    )
+
 
 class EditorWindow(QMainWindow):
     def __init__(self, zone: Zone, zone_name: str = "") -> None:
@@ -138,7 +548,7 @@ class EditorWindow(QMainWindow):
         self._clipboard: list[dict] | None = None
         self._clipboard_origin: tuple[int, int] = (0, 0)
 
-        # ── Camera bookmarks (Shift+1..9 save, Alt+1..9 recall) ──
+        # ── Camera bookmarks (Shift+1..9 save, 1..9 recall in select) ──
         self._cam_bookmarks: dict[int, tuple[float, ...]] = {}
 
         # ── Inspector dock ──
@@ -182,7 +592,7 @@ class EditorWindow(QMainWindow):
         self._minimap_stack = QStackedWidget(self)
         self._minimap_stack.addWidget(self._mini_preview)  # index 0 = 2.5D preview
         self._minimap_stack.addWidget(self._minimap)        # index 1 = minimap
-        self._minimap_stack.setCurrentIndex(0)
+        self._minimap_stack.setCurrentIndex(0)  # start with preview (3D editing mode)
 
         self._minimap_dock = QDockWidget("Preview", self)
         self._minimap_dock.setObjectName("MinimapDock")
@@ -229,6 +639,9 @@ class EditorWindow(QMainWindow):
         # ── Toolbar ──
         self._build_toolbar()
 
+        # ── Shortcuts ──
+        # (Tool shortcuts handled by toolbar actions)
+
         # ── Status bar ──
         self._cell_label = QLabel("Cell: —")
         self._height_label = QLabel("Heights: —")
@@ -256,21 +669,22 @@ class EditorWindow(QMainWindow):
         super().showEvent(event)
         if self._first_show:
             self._first_show = False
-            # Only adjust dock proportions if no saved state was restored
+            # Only set default proportions if no saved state exists
             if not self._session.get("editor2_state"):
-                total_w = self.width()
-                left_w = int(total_w * 0.18)
-                right_w = int(total_w * 0.18)
+                # Horizontal: left docks ~220px, right inspector ~260px
                 self.resizeDocks(
-                    [self._cell_dock, self._minimap_dock,
-                     self._inspector_dock],
-                    [left_w, left_w, right_w],
+                    [self._cell_dock, self._inspector_dock],
+                    [220, 260],
                     Qt.Orientation.Horizontal,
                 )
+                # Vertical split: cell info gets more, minimap less
+                self.resizeDocks(
+                    [self._cell_dock, self._minimap_dock],
+                    [400, 260],
+                    Qt.Orientation.Vertical,
+                )
 
-    # ══════════════════════════════════════════════════════════════
-    #  Menu construction
-    # ══════════════════════════════════════════════════════════════
+    # ── Menu construction ─────────────────────────────────────────
 
     def _build_menus(self) -> None:
         mb = self.menuBar()
@@ -285,6 +699,7 @@ class EditorWindow(QMainWindow):
         open_act.setShortcut(QKeySequence.StandardKey.Open)
         open_act.triggered.connect(self._on_open_zone)
 
+        # ── Recent zones submenu ──
         self._recent_menu = QMenu("Recent Zones", self)
         file_menu.addMenu(self._recent_menu)
         self._rebuild_recent_menu()
@@ -335,17 +750,28 @@ class EditorWindow(QMainWindow):
         # ── Tools menu ──
         tools_menu = mb.addMenu("&Tools")
 
-        for label, name in [("&Paint", "paint"), ("&Sculpt", "sculpt"),
-                            ("Se&lect", "select"), ("&Erase", "erase"),
-                            ("&Tile Type", "tile_type")]:
-            act = tools_menu.addAction(label)
-            act.triggered.connect(lambda checked=False, n=name: self._switch_tool(n))
+        paint_act = tools_menu.addAction("&Paint")
+        paint_act.triggered.connect(lambda: self._switch_tool("paint"))
+
+        sculpt_act = tools_menu.addAction("&Sculpt")
+        sculpt_act.triggered.connect(lambda: self._switch_tool("sculpt"))
+
+        select_act = tools_menu.addAction("Se&lect")
+        select_act.triggered.connect(lambda: self._switch_tool("select"))
+
+        erase_act = tools_menu.addAction("&Erase")
+        erase_act.triggered.connect(lambda: self._switch_tool("erase"))
+
+        tile_type_act = tools_menu.addAction("&Tile Type")
+        tile_type_act.triggered.connect(lambda: self._switch_tool("tile_type"))
 
         tools_menu.addSeparator()
 
-        for label, name in [("E&ntity", "entity"), ("&Light", "light")]:
-            act = tools_menu.addAction(label)
-            act.triggered.connect(lambda checked=False, n=name: self._switch_tool(n))
+        entity_act = tools_menu.addAction("E&ntity")
+        entity_act.triggered.connect(lambda: self._switch_tool("entity"))
+
+        light_act = tools_menu.addAction("&Light")
+        light_act.triggered.connect(lambda: self._switch_tool("light"))
 
         # ── View menu ──
         view_menu = mb.addMenu("&View")
@@ -466,9 +892,7 @@ class EditorWindow(QMainWindow):
             act = self._recent_menu.addAction(name)
             act.triggered.connect(lambda checked=False, n=name: self._switch_zone(n))
 
-    # ══════════════════════════════════════════════════════════════
-    #  Toolbar
-    # ══════════════════════════════════════════════════════════════
+    # ── Toolbar ───────────────────────────────────────────────────
 
     def _build_toolbar(self) -> None:
         tb = QToolBar("Tools", self)
@@ -480,26 +904,56 @@ class EditorWindow(QMainWindow):
         self._tool_group = QActionGroup(self)
         self._tool_group.setExclusive(True)
 
-        tool_defs = [
-            ("Paint",     "1", "Paint textures (1)"),
-            ("Sculpt",    "2", "Sculpt heights (2)"),
-            ("Select",    "3", "Select cells (3)"),
-            ("Erase",     "4", "Erase cells (4)"),
-            ("Tile Type", "5", "Set tile type (5)"),
-            ("Entity",    "6", "Place / edit entities (6)"),
-            ("Light",     "7", "Paint light levels (7)"),
-        ]
-        self._toolbar_tool_acts: list[QAction] = []
-        for label, shortcut, tooltip in tool_defs:
-            act = QAction(label, self)
-            act.setCheckable(True)
-            act.setShortcut(QKeySequence(shortcut))
-            act.setToolTip(tooltip)
-            self._tool_group.addAction(act)
-            tb.addAction(act)
-            self._toolbar_tool_acts.append(act)
+        self._paint_act = QAction("Paint", self)
+        self._paint_act.setCheckable(True)
+        self._paint_act.setChecked(True)
+        self._paint_act.setShortcut(QKeySequence("1"))
+        self._paint_act.setToolTip("Paint textures (1)")
+        self._tool_group.addAction(self._paint_act)
+        tb.addAction(self._paint_act)
 
-        self._toolbar_tool_acts[0].setChecked(True)  # Paint default
+        self._sculpt_act = QAction("Sculpt", self)
+        self._sculpt_act.setCheckable(True)
+        self._sculpt_act.setShortcut(QKeySequence("2"))
+        self._sculpt_act.setToolTip("Sculpt heights (2)")
+        self._tool_group.addAction(self._sculpt_act)
+        tb.addAction(self._sculpt_act)
+
+        self._select_act = QAction("Select", self)
+        self._select_act.setCheckable(True)
+        self._select_act.setShortcut(QKeySequence("3"))
+        self._select_act.setToolTip("Select cells (3)")
+        self._tool_group.addAction(self._select_act)
+        tb.addAction(self._select_act)
+
+        self._erase_act = QAction("Erase", self)
+        self._erase_act.setCheckable(True)
+        self._erase_act.setShortcut(QKeySequence("4"))
+        self._erase_act.setToolTip("Erase cells (4)")
+        self._tool_group.addAction(self._erase_act)
+        tb.addAction(self._erase_act)
+
+        self._tile_type_act = QAction("Tile Type", self)
+        self._tile_type_act.setCheckable(True)
+        self._tile_type_act.setShortcut(QKeySequence("5"))
+        self._tile_type_act.setToolTip("Set tile type (5)")
+        self._tool_group.addAction(self._tile_type_act)
+        tb.addAction(self._tile_type_act)
+
+        self._entity_act_tb = QAction("Entity", self)
+        self._entity_act_tb.setCheckable(True)
+        self._entity_act_tb.setShortcut(QKeySequence("6"))
+        self._entity_act_tb.setToolTip("Place / edit entities (6)")
+        self._tool_group.addAction(self._entity_act_tb)
+        tb.addAction(self._entity_act_tb)
+
+        self._light_act_tb = QAction("Light", self)
+        self._light_act_tb.setCheckable(True)
+        self._light_act_tb.setShortcut(QKeySequence("7"))
+        self._light_act_tb.setToolTip("Paint light levels (7)")
+        self._tool_group.addAction(self._light_act_tb)
+        tb.addAction(self._light_act_tb)
+
         self._tool_group.triggered.connect(self._on_toolbar_tool)
 
         tb.addSeparator()
@@ -524,6 +978,7 @@ class EditorWindow(QMainWindow):
         grid_act.setToolTip("Toggle grid")
         grid_act.toggled.connect(self._toggle_grid)
         tb.addAction(grid_act)
+        # Sync with View menu item
         self._toolbar_grid_act = grid_act
 
         wire_act = QAction("Wire", self)
@@ -543,32 +998,32 @@ class EditorWindow(QMainWindow):
         tb.addAction(snap_act)
         self._toolbar_snap_act = snap_act
 
-    # Map toolbar names to internal tool names
-    _TOOL_NAME_MAP = {
-        "Paint": "paint", "Sculpt": "sculpt", "Select": "select",
-        "Erase": "erase", "Tile Type": "tile_type",
-        "Entity": "entity", "Light": "light",
-    }
-
     def _on_toolbar_tool(self, action: QAction) -> None:
         # Ignore tool-switch shortcuts while camera is active
         if self.viewport.mouse_captured:
             return
-        name = self._TOOL_NAME_MAP.get(action.text())
-        if name:
-            self._switch_tool(name)
+        if action == self._paint_act:
+            self._switch_tool("paint")
+        elif action == self._sculpt_act:
+            self._switch_tool("sculpt")
+        elif action == self._select_act:
+            self._switch_tool("select")
+        elif action == self._erase_act:
+            self._switch_tool("erase")
+        elif action == self._tile_type_act:
+            self._switch_tool("tile_type")
+        elif action == self._entity_act_tb:
+            self._switch_tool("entity")
+        elif action == self._light_act_tb:
+            self._switch_tool("light")
 
-    # ══════════════════════════════════════════════════════════════
-    #  Title bar
-    # ══════════════════════════════════════════════════════════════
+    # ── Title bar ─────────────────────────────────────────────────
 
     def _update_title(self) -> None:
         dirty = " *" if self._dirty else ""
         self.setWindowTitle(f"Zone Editor — {self._zone_name}{dirty}")
 
-    # ══════════════════════════════════════════════════════════════
-    #  Zone switching
-    # ══════════════════════════════════════════════════════════════
+    # ── Zone switching ────────────────────────────────────────────
 
     def _attach_zone(self, zone: Zone, name: str) -> None:
         """Wire a new zone into the editor, replacing the current one."""
@@ -640,9 +1095,7 @@ class EditorWindow(QMainWindow):
         save_session(self._session)
         self._rebuild_recent_menu()
 
-    # ══════════════════════════════════════════════════════════════
-    #  File menu actions
-    # ══════════════════════════════════════════════════════════════
+    # ── File menu actions ─────────────────────────────────────────
 
     def _on_new_zone(self) -> None:
         if not self._guard_unsaved():
@@ -650,7 +1103,7 @@ class EditorWindow(QMainWindow):
         dlg = NewZoneDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             w, h = dlg.zone_size()
-            zone = create_empty_zone(w, h)
+            zone = _create_empty_zone(w, h)
             self._attach_zone(zone, "untitled")
 
     def _on_open_zone(self) -> None:
@@ -730,6 +1183,7 @@ class EditorWindow(QMainWindow):
             ev.ignore()
 
     def _save_geometry(self) -> None:
+        """Persist window geometry to session."""
         import base64
         self._session["editor2_geometry"] = base64.b64encode(
             bytes(self.saveGeometry())).decode("ascii")
@@ -737,6 +1191,7 @@ class EditorWindow(QMainWindow):
             bytes(self.saveState())).decode("ascii")
 
     def _restore_geometry(self) -> None:
+        """Restore window geometry from session."""
         import base64
         from PySide6.QtCore import QByteArray
         geo = self._session.get("editor2_geometry")
@@ -746,15 +1201,14 @@ class EditorWindow(QMainWindow):
         if state:
             self.restoreState(QByteArray(base64.b64decode(state)))
 
-    # ══════════════════════════════════════════════════════════════
-    #  Signal handlers
-    # ══════════════════════════════════════════════════════════════
+    # ── Signals ───────────────────────────────────────────────────
 
     def _on_zone_changed(self) -> None:
         self._dirty = True
         self._update_title()
         self.viewport.mark_mesh_dirty()
         self._refresh_inspector()
+        # Push changes to raycaster(s)
         if self._view_mode == "2d":
             self._raycaster.update_zone(self._bus.zone)
         self._mini_preview.update_zone(self._bus.zone)
@@ -768,14 +1222,12 @@ class EditorWindow(QMainWindow):
         if hasattr(w, 'refresh'):
             w.refresh()
 
-    # ══════════════════════════════════════════════════════════════
-    #  Status bar + HUD
-    # ══════════════════════════════════════════════════════════════
-
     def _update_status_bar(self) -> None:
+        """Update status bar, cell inspector, and viewport HUD."""
         tool = self.viewport.tool
         hit = getattr(tool, 'hover_hit', None) if tool else None
 
+        # Persistent status indicators
         snap_label = SNAP_LABELS[self._sculpt_tool.snap_idx]
         self._snap_label.setText(f"Snap: {snap_label}")
         tex = self._paint_tool.current_texture or '—'
@@ -799,61 +1251,98 @@ class EditorWindow(QMainWindow):
         self._cell_inspector.update_cell(r, c)
         self._build_hud(hit)
 
-    def _build_hud(self, hit) -> None:
-        """Delegate HUD building to the hud module."""
-        self.viewport.hud_lines = build_hud_lines(
-            active_tool_name=self._active_tool_name,
-            camera_captured=self.viewport.mouse_captured,
-            sculpt_tool=self._sculpt_tool,
-            entity_tool=self._entity_tool,
-            light_tool=self._light_tool,
-            selection=self._selection,
-            zone=self._bus.zone,
-            snap_labels=SNAP_LABELS,
-            entity_snap_labels=ENTITY_SNAP_LABELS,
-            paint_texture=self._paint_tool.current_texture,
-            hit=hit,
-        )
+    # ── Viewport HUD ──────────────────────────────────────────────
 
-    # ══════════════════════════════════════════════════════════════
-    #  Tool switching
-    # ══════════════════════════════════════════════════════════════
+    _HUD_TITLE = (255, 200, 80)
+    _HUD_VALUE = (120, 220, 255)
+    _HUD_TEXT  = (220, 220, 200)
+
+    def _build_hud(self, hit) -> None:
+        """Build HUD overlay lines for the viewport."""
+        lines: list[tuple[str, tuple[int, int, int]]] = []
+
+        # Tool line
+        tool_name = self._active_tool_name.replace("_", " ").title()
+        lines.append((f"Tool: {tool_name}", self._HUD_TITLE))
+
+        # Camera mode indicator
+        if self.viewport.mouse_captured:
+            lines.append(("Camera Active (Esc to exit)", (255, 120, 80)))
+
+        # Snap (sculpt only)
+        if self._active_tool_name == "sculpt":
+            snap_label = SNAP_LABELS[self._sculpt_tool.snap_idx]
+            lines.append((f"Snap: {snap_label}", self._HUD_VALUE))
+
+        # Current texture (paint only)
+        if self._active_tool_name == "paint":
+            tex = self._paint_tool.current_texture or '—'
+            lines.append((f"Texture: {tex}", self._HUD_VALUE))
+
+        # Entity type (entity tool only)
+        if self._active_tool_name == "entity":
+            etype = self._entity_tool.current_type or '—'
+            lines.append((f"Entity: {etype}", self._HUD_VALUE))
+            snap_lbl = ENTITY_SNAP_LABELS[self._entity_tool.snap_idx]
+            lines.append((f"Snap: {snap_lbl}", self._HUD_VALUE))
+            if self._entity_tool.selected_uid is not None:
+                lines.append((f"Selected UID: {self._entity_tool.selected_uid}",
+                              self._HUD_VALUE))
+
+        # Light step (light tool only)
+        if self._active_tool_name == "light":
+            lines.append((f"Light step: {self._light_tool.step}",
+                          self._HUD_VALUE))
+
+        # Selection count
+        if self._selection.has_cells():
+            n = len(self._selection.cells)
+            mode = "Ceil" if self._selection.ceiling_mode else "Floor"
+            lines.append((f"Selection: {n} cells ({mode})", self._HUD_VALUE))
+
+        # Cell info
+        if hit is not None:
+            zone = self._bus.zone
+            r, c = hit.row, hit.col
+            fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
+            ch = zone.ceil_heights[r][c] if zone.ceil_heights else 10.0
+            ll = zone.light_levels[r][c] if zone.light_levels else 1.0
+            tile = zone.tiles[r][c]
+            lines.append(("", (0, 0, 0)))  # blank separator
+            lines.append((f"Cell: ({c}, {r})  {tile}", self._HUD_TEXT))
+            lines.append((f"Floor: {fh:.2f}  Ceil: {ch:.2f}  Light: {ll:.2f}",
+                          self._HUD_TEXT))
+            lines.append((f"Face: {hit.part}.{hit.face.name}", self._HUD_TEXT))
+
+        self.viewport.hud_lines = lines
+
+    # ── Tool switching ────────────────────────────────────────────
 
     def _switch_tool(self, name: str) -> None:
         self._active_tool_name = name
         tool_map = {
-            "paint":     (self._paint_tool, self._paint_inspector),
-            "sculpt":    (self._sculpt_tool, self._sculpt_inspector),
-            "select":    (self._select_tool, self._select_inspector),
-            "erase":     (self._erase_tool, self._erase_inspector),
-            "tile_type": (self._tile_type_tool, self._tile_type_inspector),
-            "entity":    (self._entity_tool, self._entity_inspector),
-            "light":     (self._light_tool, self._light_inspector),
+            "paint":     (self._paint_tool, self._paint_inspector, self._paint_act),
+            "sculpt":    (self._sculpt_tool, self._sculpt_inspector, self._sculpt_act),
+            "select":    (self._select_tool, self._select_inspector, self._select_act),
+            "erase":     (self._erase_tool, self._erase_inspector, self._erase_act),
+            "tile_type": (self._tile_type_tool, self._tile_type_inspector, self._tile_type_act),
+            "entity":    (self._entity_tool, self._entity_inspector, self._entity_act_tb),
+            "light":     (self._light_tool, self._light_inspector, self._light_act_tb),
         }
-        tool, panel = tool_map.get(name, tool_map["paint"])
+        tool, panel, act = tool_map.get(name, tool_map["paint"])
         self.viewport.tool = tool
         if panel is not None:
             self._inspector_dock.setWidget(panel)
         self._inspector_dock.setWindowTitle(name.replace("_", " ").title())
-
-        # Sync toolbar check state
-        name_to_label = {v: k for k, v in self._TOOL_NAME_MAP.items()}
-        label = name_to_label.get(name)
-        if label:
-            for act in self._toolbar_tool_acts:
-                if act.text() == label:
-                    act.setChecked(True)
-                    break
-
+        act.setChecked(True)
         self.statusBar().showMessage(f"Tool: {name.replace('_', ' ').title()}", 2000)
         self.viewport.update()
 
-    # ══════════════════════════════════════════════════════════════
-    #  View actions
-    # ══════════════════════════════════════════════════════════════
+    # ── View actions ──────────────────────────────────────────────
 
     def _toggle_grid(self, on: bool) -> None:
         self.viewport.show_grid = on
+        # Keep menu and toolbar in sync
         self._grid_act.blockSignals(True)
         self._grid_act.setChecked(on)
         self._grid_act.blockSignals(False)
@@ -873,6 +1362,7 @@ class EditorWindow(QMainWindow):
         self.viewport.update()
 
     def _cycle_entity_snap_toolbar(self) -> None:
+        """Cycle entity snap mode from the toolbar button."""
         self._entity_tool.cycle_snap()
         snap_lbl = ENTITY_SNAP_LABELS[self._entity_tool.snap_idx]
         self._toolbar_snap_act.setText(f"Snap: {snap_lbl}")
@@ -880,11 +1370,14 @@ class EditorWindow(QMainWindow):
         self.viewport.update()
 
     def _restore_viewport_focus(self) -> None:
+        """Return keyboard focus to the viewport after a panel interaction."""
         self.viewport.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _show_entity_quick_search(self) -> None:
+        """Show a floating quick-search popup for entity type selection."""
         popup = EntityQuickSearch(self._entity_tool, self._entity_inspector,
                                  self.viewport)
+        # Position centred horizontally on the viewport, near the top
         vp_rect = self.viewport.rect()
         popup_w = min(320, vp_rect.width() - 40)
         popup.setFixedWidth(popup_w)
@@ -907,48 +1400,56 @@ class EditorWindow(QMainWindow):
         self.viewport.update()
 
     def _toggle_layer_vis(self, layer: str, on: bool) -> None:
+        """Toggle visibility of walls/floors/ceilings."""
         self.viewport.set_layer_vis(layer, on)
 
     def _toggle_entity_vis(self, on: bool) -> None:
+        """Toggle entity marker visibility."""
         self._show_entities = on
         self.viewport.update()
 
     def _toggle_view_mode(self) -> None:
+        """Toggle between 3D editor and 2.5D raycaster (fullscreen swap)."""
         if self._view_mode == "3d":
-            self._raycaster.set_enabled(True)
-            self._raycaster.update_zone(self._bus.zone)
+            # Switch to 2.5D raycaster
+            self._raycaster.set_enabled(True)      # creates renderer if needed
+            self._raycaster.update_zone(self._bus.zone)  # push latest zone
             self._raycaster.sync_from_editor_camera(self.viewport.camera)
             self._central_stack.setCurrentIndex(1)
             self._raycaster.setFocus()
             self._view_mode = "2d"
+            # Dock: show minimap while in fullscreen 2.5D
             self._minimap_stack.setCurrentIndex(1)
             self._minimap_dock.setWindowTitle("Minimap")
             self.statusBar().showMessage("2.5D Preview — Tab to return", 2000)
         else:
+            # Switch back to 3D editor
             self._raycaster.sync_to_editor_camera(self.viewport.camera)
             self._raycaster.set_enabled(False)
             self._central_stack.setCurrentIndex(0)
             self.viewport.setFocus()
             self._view_mode = "3d"
+            # Dock: show live 2.5D preview while in 3D editor
             self._minimap_stack.setCurrentIndex(0)
             self._minimap_dock.setWindowTitle("Preview")
             self.statusBar().showMessage("3D Editor", 1500)
 
     def _update_minimap(self) -> None:
+        """Periodic refresh — minimap camera + live 2.5D mini-preview."""
         if self._view_mode == "2d":
+            # In fullscreen 2.5D mode: track raycaster position on minimap
             rc = self._raycaster
             self._minimap.set_camera(rc.px, rc.py, rc.angle - math.pi * 0.5)
         else:
             cam = self.viewport.camera
             self._minimap.set_camera(cam.x, cam.z, cam.yaw)
+            # Sync mini-preview if visible
             if self._minimap_stack.currentIndex() == 0:
                 self._mini_preview.ensure_ready()
                 self._mini_preview.sync_camera(cam)
         self._minimap.set_selection(self._selection.cells)
 
-    # ══════════════════════════════════════════════════════════════
-    #  Zone menu actions  (delegate to zone_ops module)
-    # ══════════════════════════════════════════════════════════════
+    # ── Zone menu actions ─────────────────────────────────────────
 
     def _on_resize_zone(self) -> None:
         zone = self._bus.zone
@@ -957,16 +1458,74 @@ class EditorWindow(QMainWindow):
             nw, nh = dlg.zone_size()
             if nw == zone.width and nh == zone.height:
                 return
-            ow, oh = zone.width, zone.height
-            resize_zone(zone, nw, nh)
-            self._dirty = True
-            self._update_title()
-            self.viewport.rebuild_mesh()
-            self.statusBar().showMessage(
-                f"Resized {ow}×{oh} → {nw}×{nh}", 3000)
+            self._resize_zone(nw, nh)
+
+    def _resize_zone(self, nw: int, nh: int) -> None:
+        """Resize the current zone, preserving existing cell data."""
+        zone = self._bus.zone
+        ow, oh = zone.width, zone.height
+
+        def _resize_grid(grid, default):
+            """Resize a 2D grid, keeping existing data where it overlaps."""
+            new = [[default] * nw for _ in range(nh)]
+            for r in range(min(oh, nh)):
+                for c in range(min(ow, nw)):
+                    new[r][c] = grid[r][c]
+            return new
+
+        def _resize_4face(grid, default=""):
+            new = [[[default] * 4 for _ in range(nw)] for _ in range(nh)]
+            for r in range(min(oh, nh)):
+                for c in range(min(ow, nw)):
+                    new[r][c] = list(grid[r][c])
+            return new
+
+        def _resize_4seg(grid):
+            new = [[[[], [], [], []] for _ in range(nw)] for _ in range(nh)]
+            for r in range(min(oh, nh)):
+                for c in range(min(ow, nw)):
+                    new[r][c] = [list(s) for s in grid[r][c]]
+            return new
+
+        zone.width = nw
+        zone.height = nh
+        zone.tiles = _resize_grid(zone.tiles, "grass")
+        zone.floor_heights = _resize_grid(zone.floor_heights, 0.0)
+        zone.ceil_heights = _resize_grid(zone.ceil_heights, 10.0)
+        zone.floor_textures = _resize_grid(zone.floor_textures, "")
+        zone.ceil_textures = _resize_grid(zone.ceil_textures, "")
+        zone.wall_textures = _resize_grid(zone.wall_textures, "")
+        zone.light_levels = _resize_grid(zone.light_levels, 1.0)
+        zone.rotations = _resize_grid(zone.rotations, 0)
+        zone.face_textures = _resize_4face(zone.face_textures)
+        zone.wall_segments = _resize_4seg(zone.wall_segments)
+        zone.floor_step_textures = _resize_4face(zone.floor_step_textures)
+        zone.ceil_step_textures = _resize_4face(zone.ceil_step_textures)
+        zone.floor_step_segments = _resize_4seg(zone.floor_step_segments)
+        zone.ceil_step_segments = _resize_4seg(zone.ceil_step_segments)
+        zone.upper_wall_height = _resize_grid(
+            zone.upper_wall_height if zone.upper_wall_height else
+            [[0.0] * ow for _ in range(oh)], 0.0)
+
+        self._dirty = True
+        self._update_title()
+        self.viewport.rebuild_mesh()
+        self.statusBar().showMessage(
+            f"Resized {ow}×{oh} → {nw}×{nh}", 3000)
 
     def _on_zone_info(self) -> None:
-        info = zone_info_text(self._bus.zone, self._zone_name)
+        zone = self._bus.zone
+        wall_count = sum(
+            1 for r in range(zone.height) for c in range(zone.width)
+            if tile_def(zone.tiles[r][c]) and tile_def(zone.tiles[r][c]).wall
+        )
+        info = (
+            f"Name: {self._zone_name}\n"
+            f"Size: {zone.width} × {zone.height}\n"
+            f"Cells: {zone.width * zone.height}\n"
+            f"Walls: {wall_count}\n"
+            f"Entities: {len(zone.entities)}"
+        )
         QMessageBox.information(self, "Zone Info", info)
 
     def _on_zone_settings(self) -> None:
@@ -983,6 +1542,8 @@ class EditorWindow(QMainWindow):
             self.statusBar().showMessage("Zone settings updated", 2000)
 
     def _on_duplicate_zone(self) -> None:
+        """Deep-copy the current zone, prompt for a name, and save it."""
+        import copy
         from PySide6.QtWidgets import QInputDialog
         name, ok = QInputDialog.getText(
             self, "Duplicate Zone", "New zone name:",
@@ -990,7 +1551,9 @@ class EditorWindow(QMainWindow):
         if not ok or not name.strip():
             return
         name = name.strip()
-        dup = duplicate_zone(self._bus.zone, name)
+        zone = self._bus.zone
+        dup = copy.deepcopy(zone)
+        dup.name = name
 
         from core.zones import GameRegistry
         registry = GameRegistry()
@@ -1004,9 +1567,11 @@ class EditorWindow(QMainWindow):
         self.statusBar().showMessage(f"Duplicated → {name} ✓", 3000)
 
     def _on_validate_zone(self) -> None:
-        from PySide6.QtWidgets import QDialogButtonBox
-        from PySide6.QtGui import QFont as _QFont
-        issues = validate_zone_issues(self._bus.zone)
+        """Run zone validation and show results in a dialog."""
+        from core.zones.validation import validate_zone
+        from core.entity_defs import entity_registry
+        zone = self._bus.zone
+        issues = validate_zone(zone, entity_registry=entity_registry())
         if not issues:
             QMessageBox.information(self, "Validate Zone",
                                     "No issues found ✓")
@@ -1027,20 +1592,60 @@ class EditorWindow(QMainWindow):
         dlg = QDialog(self)
         dlg.setWindowTitle(f"Validate Zone — {len(issues)} issue(s)")
         dlg.resize(520, 400)
-        from PySide6.QtWidgets import QVBoxLayout, QPlainTextEdit
         layout = QVBoxLayout(dlg)
         text = QPlainTextEdit()
         text.setPlainText("\n".join(lines))
         text.setReadOnly(True)
-        text.setFont(_QFont("Consolas", 10))
+        text.setFont(QFont("Consolas", 10))
         layout.addWidget(text)
+        from PySide6.QtWidgets import QDialogButtonBox
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(dlg.reject)
         layout.addWidget(buttons)
         dlg.exec()
 
     def _on_export_topdown(self) -> None:
-        out_path = export_topdown(self._bus.zone, self._zone_name)
+        """Export a top-down tile-colour image of the zone."""
+        from PIL import Image
+        zone = self._bus.zone
+        w, h = zone.width, zone.height
+        scale = 8  # pixels per cell
+        img = Image.new("RGB", (w * scale, h * scale), (30, 30, 30))
+
+        for r in range(h):
+            for c in range(w):
+                td = tile_def(zone.tiles[r][c])
+                if td:
+                    color = td.color if hasattr(td, 'color') and td.color else (80, 80, 80)
+                else:
+                    color = (80, 80, 80)
+                ll = zone.light_levels[r][c] if zone.light_levels else 1.0
+                rc = tuple(max(0, min(255, int(ch * ll))) for ch in color)
+                for py in range(scale):
+                    for px in range(scale):
+                        img.putpixel((c * scale + px, r * scale + py), rc)
+
+        # Mark entities with red crosses
+        for ent in zone.entities:
+            ex, ey = int(ent.x * scale), int(ent.y * scale)
+            for d in range(-2, 3):
+                for xy in [(ex + d, ey), (ex, ey + d)]:
+                    if 0 <= xy[0] < w * scale and 0 <= xy[1] < h * scale:
+                        img.putpixel(xy, (255, 50, 50))
+
+        # Mark anchor with green circle
+        if zone.anchor:
+            ar, ac = zone.anchor
+            ax, ay = int(ac * scale), int(ar * scale)
+            for d in range(-3, 4):
+                for xy in [(ax + d, ay), (ax, ay + d)]:
+                    if 0 <= xy[0] < w * scale and 0 <= xy[1] < h * scale:
+                        img.putpixel(xy, (50, 255, 50))
+
+        out_dir = Path("debug_renders")
+        out_dir.mkdir(exist_ok=True)
+        out_path = out_dir / f"{self._zone_name}_topdown.png"
+        img.save(str(out_path))
         self.statusBar().showMessage(f"Exported → {out_path}", 4000)
 
     # ── Find / Replace Texture ────────────────────────────────────
@@ -1052,26 +1657,46 @@ class EditorWindow(QMainWindow):
         find_tex, replace_tex = dlg.values()
         if not find_tex or not replace_tex:
             return
-        count = find_replace_texture(self._bus.zone, find_tex, replace_tex,
-                                     self._bus)
+        count = self._do_find_replace(find_tex, replace_tex)
         self.statusBar().showMessage(
             f"Replaced {count} occurrence(s) of '{find_tex}' → '{replace_tex}'",
             4000)
 
-    # ── Help ──────────────────────────────────────────────────────
+    def _do_find_replace(self, find: str, replace: str) -> int:
+        """Replace all occurrences of a texture name across all zone grids."""
+        zone = self._bus.zone
+        from editor2.core import BatchCmd, SetCellFieldCmd, SetFaceFieldCmd
+        cmds: list = []
+        for r in range(zone.height):
+            for c in range(zone.width):
+                if zone.tiles[r][c] == find:
+                    cmds.append(SetCellFieldCmd(r, c, "tiles", replace))
+                if zone.floor_textures and zone.floor_textures[r][c] == find:
+                    cmds.append(SetCellFieldCmd(r, c, "floor_textures", replace))
+                if zone.ceil_textures and zone.ceil_textures[r][c] == find:
+                    cmds.append(SetCellFieldCmd(r, c, "ceil_textures", replace))
+                if zone.wall_textures and zone.wall_textures[r][c] == find:
+                    cmds.append(SetCellFieldCmd(r, c, "wall_textures", replace))
+                if zone.face_textures and zone.face_textures[r][c]:
+                    for i in range(4):
+                        if zone.face_textures[r][c][i] == find:
+                            cmds.append(SetFaceFieldCmd(r, c, i, "face_textures", replace))
+        if cmds:
+            self._bus.execute(BatchCmd(cmds, f"Replace '{find}' → '{replace}'"))
+        return len(cmds)
+
+    # ── Help window ───────────────────────────────────────────────
 
     def _show_help(self) -> None:
         dlg = HelpDialog(self)
         dlg.exec()
 
-    # ══════════════════════════════════════════════════════════════
-    #  Debug / Profiling
-    # ══════════════════════════════════════════════════════════════
+    # ── Debug / Profiling ─────────────────────────────────────────
 
     def _toggle_perf(self, on: bool) -> None:
         self.viewport.show_perf = on
         if on:
-            self._perf_timer.start(500)
+            self._perf_timer.start(500)  # update twice per second
             self._perf_label.show()
         else:
             self._perf_timer.stop()
@@ -1110,19 +1735,16 @@ class EditorWindow(QMainWindow):
         log.info("Stats dump:\n%s", text)
         QMessageBox.information(self, "Editor Stats", text)
 
-    # ══════════════════════════════════════════════════════════════
-    #  Key handling
-    # ══════════════════════════════════════════════════════════════
-
     def keyPressEvent(self, ev) -> None:
         key = ev.key()
         mods = ev.modifiers()
         camera_active = self.viewport.mouse_captured
 
         # ── Escape: release camera → clear selection → do nothing ──
+        # Escape NEVER closes the application.
         if key == Qt.Key.Key_Escape:
             if camera_active:
-                self.viewport.keyPressEvent(ev)
+                self.viewport.keyPressEvent(ev)  # releases camera
                 return
             if self._selection.has_cells():
                 self._selection.clear()
@@ -1134,10 +1756,13 @@ class EditorWindow(QMainWindow):
                 self._selection.cancel_rect()
                 self.viewport.update()
                 return
+            # Nothing to cancel — just consume the key
             return
 
         # ── While camera is active, only handle Ctrl+ combos ──
+        # All letter/symbol keys go to the viewport for camera movement.
         if camera_active:
+            # Still allow Ctrl+ shortcuts (save, undo, etc.)
             if mods & Qt.KeyboardModifier.ControlModifier:
                 if key == Qt.Key.Key_Z:
                     self._bus.undo()
@@ -1150,6 +1775,7 @@ class EditorWindow(QMainWindow):
                 if key == Qt.Key.Key_S:
                     self._on_save()
                     return
+            # Everything else → viewport for camera
             self.viewport.keyPressEvent(ev)
             return
 
@@ -1211,7 +1837,7 @@ class EditorWindow(QMainWindow):
                 self.statusBar().showMessage(f"Selection mode: {mode}", 1500)
                 return
             if key == Qt.Key.Key_Delete:
-                self._select_tool.reset_cells()
+                n = self._select_tool.reset_cells()
                 self.statusBar().showMessage(
                     f"Reset {len(self._selection.cells)} cell(s)", 1500)
                 return
@@ -1308,15 +1934,13 @@ class EditorWindow(QMainWindow):
 
         self.viewport.keyPressEvent(ev)
 
-    # ══════════════════════════════════════════════════════════════
-    #  Selection batch helpers
-    # ══════════════════════════════════════════════════════════════
+    # ── Selection batch helpers (button wiring) ───────────────────
 
     def _sel_fill(self) -> None:
         tex = self._select_inspector.selected_texture
         if not tex:
             tex = self._paint_tool.current_texture
-        self._select_tool.fill_texture(tex)
+        n = self._select_tool.fill_texture(tex)
         self.statusBar().showMessage(
             f"Filled {len(self._selection.cells)} cell(s) with '{tex}'", 2000)
 
@@ -1334,6 +1958,7 @@ class EditorWindow(QMainWindow):
         self.statusBar().showMessage(f"Flattened {mode} heights", 1500)
 
     def _sel_toggle_ceiling(self) -> None:
+        """Toggle ceiling on/off for all selected cells."""
         sel = self._selection
         if not sel.has_cells():
             return
@@ -1344,8 +1969,10 @@ class EditorWindow(QMainWindow):
             ch = zone.ceil_heights[r][c] if zone.ceil_heights else 10.0
             fh = zone.floor_heights[r][c] if zone.floor_heights else 0.0
             if ch >= 10.0:
+                # Sky → close at fh + 1.0
                 cmds.append(SetCellFieldCmd(r, c, "ceil_heights", fh + 1.0))
             else:
+                # Closed → sky
                 cmds.append(SetCellFieldCmd(r, c, "ceil_heights", 10.0))
         if cmds:
             self._bus.execute(BatchCmd(cmds, "Toggle ceiling"))
@@ -1357,14 +1984,18 @@ class EditorWindow(QMainWindow):
             len(self._selection.cells), self._selection.ceiling_mode)
 
     def _get_selection_overlays(self) -> list:
+        """Return selection + entity overlays when not drawn by the active tool."""
         ovls: list = []
+        # Selection overlays (select tool draws its own)
         if self._active_tool_name != "select" and self._selection.has_cells():
             ovls.extend(self._select_tool.overlays())
+        # Entity overlays (entity tool draws its own)
         if self._show_entities and self._active_tool_name != "entity":
             ovls.extend(self._build_entity_overlays())
         return ovls
 
     def _build_entity_overlays(self) -> list:
+        """Build 3D pillar-marker overlays for all entities (passive view)."""
         from editor2.tools.entity_shapes import _entity_marker
         zone = self._bus.zone
         ovls: list = []
@@ -1375,16 +2006,31 @@ class EditorWindow(QMainWindow):
             ))
         return ovls
 
-    # ══════════════════════════════════════════════════════════════
-    #  Clipboard  (delegates to clipboard module)
-    # ══════════════════════════════════════════════════════════════
+    # ── Clipboard (copy / paste) ──────────────────────────────────
 
     def _copy_selection(self) -> None:
-        result = copy_cells(self._bus.zone, self._selection)
-        if result is None:
+        if not self._selection.has_cells():
             self.statusBar().showMessage("Nothing to copy", 1500)
             return
-        self._clipboard, self._clipboard_origin = result
+        zone = self._bus.zone
+        bounds = self._selection.bounds()
+        if not bounds:
+            return
+        rmin, cmin, _, _ = bounds
+        self._clipboard_origin = (rmin, cmin)
+        self._clipboard = []
+        for r, c in self._selection.iter_cells():
+            cell = {
+                "dr": r - rmin, "dc": c - cmin,
+                "tile": zone.tiles[r][c],
+                "fh": zone.floor_heights[r][c] if zone.floor_heights else 0.0,
+                "ch": zone.ceil_heights[r][c] if zone.ceil_heights else 10.0,
+                "ft": zone.floor_textures[r][c] if zone.floor_textures else "",
+                "ct": zone.ceil_textures[r][c] if zone.ceil_textures else "",
+                "wt": zone.wall_textures[r][c] if zone.wall_textures else "",
+                "face_tex": list(zone.face_textures[r][c]) if zone.face_textures else [""] * 4,
+            }
+            self._clipboard.append(cell)
         self.statusBar().showMessage(
             f"Copied {len(self._clipboard)} cell(s)", 1500)
 
@@ -1392,11 +2038,39 @@ class EditorWindow(QMainWindow):
         if not self._clipboard:
             self.statusBar().showMessage("Clipboard empty", 1500)
             return
+        # Paste at the hovered cell, or at the original position
         tool = self.viewport.tool
         hit = getattr(tool, 'hover_hit', None) if tool else None
-        target = (hit.row, hit.col) if hit is not None else None
-        count = paste_cells(self._clipboard, self._clipboard_origin,
-                            self._bus.zone, self._bus, target)
+        if hit is not None:
+            base_r, base_c = hit.row, hit.col
+        else:
+            base_r, base_c = self._clipboard_origin
+
+        zone = self._bus.zone
+        from editor2.core import BatchCmd, SetCellFieldCmd, SetFaceFieldCmd
+        cmds: list = []
+        count = 0
+        for cell in self._clipboard:
+            r = base_r + cell["dr"]
+            c = base_c + cell["dc"]
+            if not (0 <= r < zone.height and 0 <= c < zone.width):
+                continue
+            count += 1
+            cmds.append(SetCellFieldCmd(r, c, "tiles", cell["tile"]))
+            cmds.append(SetCellFieldCmd(r, c, "floor_heights", cell["fh"]))
+            cmds.append(SetCellFieldCmd(r, c, "ceil_heights", cell["ch"]))
+            if zone.floor_textures:
+                cmds.append(SetCellFieldCmd(r, c, "floor_textures", cell["ft"]))
+            if zone.ceil_textures:
+                cmds.append(SetCellFieldCmd(r, c, "ceil_textures", cell["ct"]))
+            if zone.wall_textures:
+                cmds.append(SetCellFieldCmd(r, c, "wall_textures", cell["wt"]))
+            if zone.face_textures:
+                for fi in range(4):
+                    cmds.append(SetFaceFieldCmd(r, c, fi, "face_textures",
+                                                cell["face_tex"][fi]))
+        if cmds:
+            self._bus.execute(BatchCmd(cmds, f"Paste {count} cells"))
         self.statusBar().showMessage(f"Pasted {count} cell(s)", 1500)
 
     # ── Camera bookmarks ──────────────────────────────────────────
@@ -1411,15 +2085,17 @@ class EditorWindow(QMainWindow):
         self.viewport.update()
         self.statusBar().showMessage(f"Bookmark {idx + 1} recalled", 1500)
 
-    # ══════════════════════════════════════════════════════════════
-    #  Viewport scroll callback
-    # ══════════════════════════════════════════════════════════════
+    # ── Viewport scroll callback ──────────────────────────────────
 
     def _on_viewport_scroll(self, direction: int, mods: int = 0) -> bool:
-        """Called by viewport wheelEvent. Return True to consume scroll."""
+        """Called by viewport wheelEvent. Return True to consume scroll.
+
+        *mods* is the raw Qt keyboard modifier flags so we can dispatch
+        scroll actions that require Shift, Ctrl, etc.
+        """
         shift = bool(mods & int(Qt.KeyboardModifier.ShiftModifier))
 
-        # Entity tool: Shift+Scroll = rotate selected entity
+        # ── Entity tool: Shift+Scroll = rotate selected entity ──
         if self._active_tool_name == "entity" and shift:
             step = math.pi / 12  # 15° increments
             self._entity_tool.rotate_selected(step * direction)
@@ -1427,7 +2103,7 @@ class EditorWindow(QMainWindow):
             self.statusBar().showMessage(f"Entity rotated {degrees:+d}°", 1500)
             return True
 
-        # Select / Sculpt: plain scroll = raise/lower
+        # ── Select / Sculpt: plain scroll = raise/lower ──
         if (self._active_tool_name in ("select", "sculpt")
                 and self._selection.has_cells()):
             snap = SNAP_PRESETS[self._sculpt_tool.snap_idx]
@@ -1436,29 +2112,242 @@ class EditorWindow(QMainWindow):
 
         return False
 
-    # ── Eyedropper ────────────────────────────────────────────────
-
     def _on_eyedrop(self, sx: float, sy: float,
                     vp_w: int, vp_h: int) -> None:
-        from editor2.picking import pick_cell
-        from editor2.tools._surface import sample_surface_texture
+        """Global middle-click eyedropper — pick texture from any face."""
+        from editor2.picking import pick_cell, Face
         hit = pick_cell(sx, sy, vp_w, vp_h,
                         self.viewport.camera, self._bus.zone)
         if hit is None:
             return
-        tex = sample_surface_texture(self._bus.zone, hit)
+        zone = self._bus.zone
+        r, c = hit.row, hit.col
+        tex = ""
+        if hit.face == Face.TOP:
+            tex = (zone.floor_textures[r][c] if zone.floor_textures else "")
+        elif hit.face == Face.BOTTOM:
+            tex = (zone.ceil_textures[r][c] if zone.ceil_textures else "")
+        elif hit.face in (Face.NORTH, Face.SOUTH, Face.EAST, Face.WEST):
+            fi = {Face.NORTH: 0, Face.SOUTH: 1, Face.WEST: 2, Face.EAST: 3}[hit.face]
+            if zone.face_textures and zone.face_textures[r][c][fi]:
+                tex = zone.face_textures[r][c][fi]
+            elif zone.wall_textures:
+                tex = zone.wall_textures[r][c]
         if tex:
             self._paint_tool.current_texture = tex
             self.statusBar().showMessage(f"Picked: {tex}", 1500)
 
 
-# ═══════════════════════════════════════════════════════════════════
-#  EntityQuickSearch  (floating popup — kept here because it's tightly
-#  coupled to EditorWindow's entity tool / inspector)
-# ═══════════════════════════════════════════════════════════════════
+# ── Dialogs ──────────────────────────────────────────────────────
+
+
+class NewZoneDialog(QDialog):
+    """Simple dialog to pick width × height for a new zone."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("New Zone")
+        layout = QFormLayout(self)
+
+        self._w_spin = QSpinBox()
+        self._w_spin.setRange(4, 128)
+        self._w_spin.setValue(20)
+        layout.addRow("Width:", self._w_spin)
+
+        self._h_spin = QSpinBox()
+        self._h_spin.setRange(4, 128)
+        self._h_spin.setValue(20)
+        layout.addRow("Height:", self._h_spin)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+
+    def zone_size(self) -> tuple[int, int]:
+        return self._w_spin.value(), self._h_spin.value()
+
+
+class OpenZoneDialog(QDialog):
+    """Dialog listing all available .zone files to pick from."""
+
+    def __init__(self, zones: list[str], parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Open Zone")
+        self.resize(300, 400)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Select a zone to open:"))
+
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem
+        self._list = QListWidget()
+        for name in zones:
+            self._list.addItem(QListWidgetItem(name))
+        self._list.itemDoubleClicked.connect(self.accept)
+        layout.addWidget(self._list)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Open
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def selected_zone(self) -> str | None:
+        item = self._list.currentItem()
+        return item.text() if item else None
+
+
+class ResizeZoneDialog(QDialog):
+    """Dialog to resize the current zone."""
+
+    def __init__(self, cur_w: int, cur_h: int, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Resize Zone")
+        layout = QFormLayout(self)
+
+        layout.addRow(QLabel(f"Current size: {cur_w} × {cur_h}"))
+
+        self._w_spin = QSpinBox()
+        self._w_spin.setRange(4, 128)
+        self._w_spin.setValue(cur_w)
+        layout.addRow("New Width:", self._w_spin)
+
+        self._h_spin = QSpinBox()
+        self._h_spin.setRange(4, 128)
+        self._h_spin.setValue(cur_h)
+        layout.addRow("New Height:", self._h_spin)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+
+    def zone_size(self) -> tuple[int, int]:
+        return self._w_spin.value(), self._h_spin.value()
+
+
+class FindReplaceDialog(QDialog):
+    """Dialog with two text inputs to find and replace texture names."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Find / Replace Texture")
+        layout = QFormLayout(self)
+
+        self._find_edit = QLineEdit()
+        self._find_edit.setPlaceholderText("e.g. grass")
+        layout.addRow("Find:", self._find_edit)
+
+        self._replace_edit = QLineEdit()
+        self._replace_edit.setPlaceholderText("e.g. dirt")
+        layout.addRow("Replace:", self._replace_edit)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+
+    def values(self) -> tuple[str, str]:
+        return self._find_edit.text().strip(), self._replace_edit.text().strip()
+
+
+class ZoneSettingsDialog(QDialog):
+    """Edit zone-level settings: first_person, skybox, sky_color, anchor."""
+
+    def __init__(self, zone: Zone, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Zone Settings")
+        layout = QFormLayout(self)
+
+        from PySide6.QtWidgets import QCheckBox, QDoubleSpinBox
+
+        self._fp_check = QCheckBox()
+        self._fp_check.setChecked(zone.first_person)
+        layout.addRow("First Person:", self._fp_check)
+
+        self._skybox_edit = QLineEdit()
+        self._skybox_edit.setText(zone.skybox if zone.skybox else "")
+        self._skybox_edit.setPlaceholderText("(empty = procedural gradient)")
+        layout.addRow("Skybox:", self._skybox_edit)
+
+        sky = zone.sky_color if zone.sky_color else (0, 0, 0)
+        self._sky_r = QSpinBox()
+        self._sky_r.setRange(0, 255)
+        self._sky_r.setValue(sky[0] if len(sky) >= 1 else 0)
+        self._sky_g = QSpinBox()
+        self._sky_g.setRange(0, 255)
+        self._sky_g.setValue(sky[1] if len(sky) >= 2 else 0)
+        self._sky_b = QSpinBox()
+        self._sky_b.setRange(0, 255)
+        self._sky_b.setValue(sky[2] if len(sky) >= 3 else 0)
+        from PySide6.QtWidgets import QHBoxLayout, QWidget
+        sky_row = QWidget()
+        sky_layout = QHBoxLayout(sky_row)
+        sky_layout.setContentsMargins(0, 0, 0, 0)
+        sky_layout.addWidget(QLabel("R"))
+        sky_layout.addWidget(self._sky_r)
+        sky_layout.addWidget(QLabel("G"))
+        sky_layout.addWidget(self._sky_g)
+        sky_layout.addWidget(QLabel("B"))
+        sky_layout.addWidget(self._sky_b)
+        layout.addRow("Sky Color:", sky_row)
+
+        anchor = zone.anchor if zone.anchor else (0.0, 0.0)
+        self._anchor_r = QDoubleSpinBox()
+        self._anchor_r.setRange(0.0, zone.height - 1)
+        self._anchor_r.setDecimals(2)
+        self._anchor_r.setValue(anchor[0] if len(anchor) >= 1 else 0.0)
+        self._anchor_c = QDoubleSpinBox()
+        self._anchor_c.setRange(0.0, zone.width - 1)
+        self._anchor_c.setDecimals(2)
+        self._anchor_c.setValue(anchor[1] if len(anchor) >= 2 else 0.0)
+        anchor_row = QWidget()
+        anchor_layout = QHBoxLayout(anchor_row)
+        anchor_layout.setContentsMargins(0, 0, 0, 0)
+        anchor_layout.addWidget(QLabel("Row"))
+        anchor_layout.addWidget(self._anchor_r)
+        anchor_layout.addWidget(QLabel("Col"))
+        anchor_layout.addWidget(self._anchor_c)
+        layout.addRow("Spawn Anchor:", anchor_row)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+
+    def values(self) -> dict:
+        sky = (self._sky_r.value(), self._sky_g.value(), self._sky_b.value())
+        if sky == (0, 0, 0):
+            sky = ()
+        return {
+            "first_person": self._fp_check.isChecked(),
+            "skybox": self._skybox_edit.text().strip(),
+            "sky_color": sky,
+            "anchor": (self._anchor_r.value(), self._anchor_c.value()),
+        }
+
 
 class EntityQuickSearch(QWidget):
-    """Floating search popup for quickly picking an entity type."""
+    """Floating search popup for quickly picking an entity type.
+
+    Appears over the viewport when the user presses ``F`` in entity mode.
+    Type-ahead filtering narrows the list; Enter or click selects the
+    highlighted item; Escape dismisses without changes.
+    """
 
     accepted = Signal()
 
@@ -1468,15 +2357,19 @@ class EntityQuickSearch(QWidget):
         self._inspector = inspector
 
         self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint | Qt.WindowType.Popup)
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.Popup
+        )
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
+        # Dark semi-transparent background
         self.setStyleSheet(
             "EntityQuickSearch {"
             "  background: rgba(30, 30, 30, 240);"
-            "  border: 1px solid #555; border-radius: 6px;"
-            "}")
-
-        from PySide6.QtWidgets import QVBoxLayout, QLineEdit, QListWidget
+            "  border: 1px solid #555;"
+            "  border-radius: 6px;"
+            "}"
+        )
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 8, 8, 8)
@@ -1489,22 +2382,27 @@ class EntityQuickSearch(QWidget):
         self._search.setPlaceholderText("Type to filter...")
         self._search.setStyleSheet(
             "QLineEdit { background: #222; color: #eee; border: 1px solid #666;"
-            " border-radius: 3px; padding: 4px; }")
+            " border-radius: 3px; padding: 4px; }"
+        )
         self._search.textChanged.connect(self._filter)
         lay.addWidget(self._search)
+
+        from PySide6.QtWidgets import QListWidget
 
         self._list = QListWidget()
         self._list.setStyleSheet(
             "QListWidget { background: #1a1a1a; color: #ddd;"
             " border: 1px solid #444; }"
             "QListWidget::item:selected { background: #3a5a8a; }"
-            "QListWidget::item:hover { background: #2a3a5a; }")
+            "QListWidget::item:hover { background: #2a3a5a; }"
+        )
         self._list.setMaximumHeight(260)
         self._list.itemDoubleClicked.connect(self._accept_item)
         lay.addWidget(self._list)
 
         hint = QLabel(
-            "<small style='color:#888;'>Enter: select  |  Esc: cancel</small>")
+            "<small style='color:#888;'>Enter: select  |  Esc: cancel</small>"
+        )
         lay.addWidget(hint)
 
         self._populate()
@@ -1512,8 +2410,6 @@ class EntityQuickSearch(QWidget):
 
     def _populate(self, filter_text: str = "") -> None:
         from core.entity_defs import entity_registry
-        from PySide6.QtWidgets import QListWidgetItem
-        from PySide6.QtGui import QColor
         self._list.clear()
         reg = entity_registry()
         ft = filter_text.lower()
@@ -1521,6 +2417,8 @@ class EntityQuickSearch(QWidget):
             edef = reg[eid]
             if ft and ft not in eid.lower() and ft not in edef.display_name.lower():
                 continue
+            from PySide6.QtWidgets import QListWidgetItem
+            from PySide6.QtGui import QColor
             item = QListWidgetItem(f"{edef.display_name}  ({eid})")
             item.setData(Qt.ItemDataRole.UserRole, eid)
             r, g, b = edef.color
@@ -1563,9 +2461,136 @@ class EntityQuickSearch(QWidget):
         super().keyPressEvent(ev)
 
 
-# ═══════════════════════════════════════════════════════════════════
-#  Entry point
-# ═══════════════════════════════════════════════════════════════════
+class HelpDialog(QDialog):
+    """Dialog showing all keyboard shortcuts."""
+
+    _SHORTCUTS = """\
+─── General ───────────────────────────
+1              Paint tool
+2              Sculpt tool
+3              Select tool
+4              Erase tool
+5              Tile Type tool
+6              Entity tool
+7              Light tool
+Ctrl+Z         Undo
+Ctrl+Y / Ctrl+Shift+Z   Redo
+Ctrl+S         Save
+Ctrl+Shift+S   Save As
+Ctrl+N         New Zone
+Ctrl+O         Open Zone
+Ctrl+F         Find / Replace Texture
+Ctrl+A         Select all cells
+Ctrl+C         Copy selection
+Ctrl+V         Paste at hovered cell
+Escape         Release camera / clear selection
+Home           Reset Camera
+Tab            Toggle 2.5D raycaster preview
+
+─── Camera ────────────────────────────
+Right-click hold   Look / orbit (release to exit)
+Enter          Toggle free-fly camera mode
+W / A / S / D  Move (while in camera)
+Q / E          Yaw left / right
+Space          Move up
+Ctrl / C       Move down
+Shift          Sprint
+Scroll wheel   Zoom in / out
+Shift+1..9     Save camera bookmark
+Alt+1..9       Recall camera bookmark
+
+Note: tool shortcuts are paused while
+camera is active. Release right-click
+or press Escape to use tool keys.
+
+─── Paint Tool ────────────────────────
+Click          Paint face
+Shift+Click    Paint all faces of cell
+Ctrl+Click     Flood fill
+Middle-click   Eyedropper (pick texture)
+
+─── Sculpt Tool ───────────────────────
+Click + drag   Raise (floor) / Lower (ceiling)
+Shift+Click    Lower (floor) / Raise (ceiling)
+G              Cycle snap grid
+H              Make cell a wall
+Shift+H        Make cell open (grass)
+T              Toggle ceiling (sky / closed)
+R              Reset floor or ceiling height
+U              Raise upper wall height
+Shift+U        Lower upper wall height
+Ctrl+U         Reset upper wall height
+Delete         Clear cell (all defaults)
+
+─── Select Tool ───────────────────────
+Click          Set rectangle corners (2-click)
+Ctrl+Click     Toggle individual cell
+Shift+Click    Select line (Bresenham)
+Scroll wheel   Raise / lower selected heights
+X              Toggle floor / ceiling mode
+Delete         Reset selected cells
+H              Make selected cells walls
+Shift+H        Make selected cells open
+
+─── Entity Tool ───────────────────────
+Click          Place / select entity
+Shift+Click    Always place (ignore existing)
+X / Delete     Delete selected entity
+R              Rotate selected 90°
+Shift+Scroll   Rotate selected 15° steps
+M              Move selected to hovered cell
+[ / ]          Prev / next entity type
+F              Quick search entity types
+S              Cycle snap mode
+
+─── Light Tool ─────────────────────────
+Click + drag   Increase light level
+Shift+Click    Decrease light level
+[ / ]          Decrease / increase step size
+Middle-click   Sample light level
+
+─── Erase Tool ────────────────────────
+Click          Full cell reset
+Shift+Click    Clear textures only
+Ctrl+Click     Reset height only
+
+─── View ──────────────────────────────
+Ctrl+1         Toggle walls visibility
+Ctrl+2         Toggle floors visibility
+Ctrl+3         Toggle ceilings visibility
+Ctrl+4         Toggle entities visibility
+Ctrl+5         Toggle wireframe
+G              Toggle grid / cycle snap (sculpt)
+F3             Toggle performance overlay
+F4             Dump stats
+
+─── Raycaster Preview ─────────────────
+Tab            Return to 3D editor
+Click          Enter FPS mode
+W / A / S / D  Move
+Shift          Sprint
+Escape         Release mouse
+"""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Keyboard Shortcuts")
+        self.resize(480, 520)
+        layout = QVBoxLayout(self)
+
+        text = QPlainTextEdit()
+        text.setPlainText(self._SHORTCUTS)
+        text.setReadOnly(True)
+        text.setFont(QFont("Consolas", 10))
+        layout.addWidget(text)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    # Import QFont locally if needed
+    pass
+
 
 def main() -> None:
     logging.basicConfig(
@@ -1584,7 +2609,9 @@ def main() -> None:
     QSurfaceFormat.setDefaultFormat(fmt)
 
     app = QApplication(sys.argv)
-    apply_dark_theme(app)
+
+    # ── Apply dark theme ──
+    _apply_dark_theme(app)
     app.setFont(QFont("Segoe UI", 9))
 
     # Determine which zone to load
@@ -1608,7 +2635,7 @@ def main() -> None:
             zone_name = ""
 
     if zone is None:
-        zone = create_empty_zone()
+        zone = _create_empty_zone()
         zone_name = "untitled"
         print("Starting with empty 20×20 zone")
 

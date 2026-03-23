@@ -27,7 +27,7 @@ class Command(Protocol):
 # ── Generic commands ─────────────────────────────────────────────
 
 
-@dataclass(slots=True)
+@dataclass()
 class SetCellFieldCmd:
     """Set zone.<field>[row][col] = new_value.
 
@@ -53,7 +53,7 @@ class SetCellFieldCmd:
         getattr(zone, self.field)[self.row][self.col] = self._old_value
 
 
-@dataclass(slots=True)
+@dataclass()
 class SetFaceFieldCmd:
     """Set zone.<field>[row][col][face_idx] = new_value.
 
@@ -78,7 +78,7 @@ class SetFaceFieldCmd:
         getattr(zone, self.field)[self.row][self.col][self.face_idx] = self._old_value
 
 
-@dataclass(slots=True)
+@dataclass()
 class BatchCmd:
     """Group multiple commands into one undo step."""
     commands: list[Command] = field(default_factory=list)
@@ -100,7 +100,7 @@ class BatchCmd:
 # ── Entity commands ──────────────────────────────────────────────
 
 
-@dataclass(slots=True)
+@dataclass()
 class EntityPlaceCmd:
     """Place a new entity into the zone."""
     entity: object  # EntityDescriptor
@@ -120,7 +120,7 @@ class EntityPlaceCmd:
         zone.entities[:] = [e for e in zone.entities if e.uid != uid]
 
 
-@dataclass(slots=True)
+@dataclass()
 class EntityDeleteCmd:
     """Delete an entity from the zone by uid."""
     uid: int
@@ -150,7 +150,7 @@ class EntityDeleteCmd:
             zone.entities.insert(idx, self._entity)
 
 
-@dataclass(slots=True)
+@dataclass()
 class EntityRotateCmd:
     """Rotate an entity's angle by delta radians."""
     uid: int
@@ -175,7 +175,7 @@ class EntityRotateCmd:
                 return
 
 
-@dataclass(slots=True)
+@dataclass()
 class EntityMoveCmd:
     """Move an entity to a new position."""
     uid: int

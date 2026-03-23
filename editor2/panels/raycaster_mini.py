@@ -52,11 +52,24 @@ class RaycasterMiniView(QWidget):
     def sync_camera(self, cam) -> None:
         """Update the preview camera from the 3D editor camera.
 
-        Called periodically by the minimap timer.
+        Called periodically by the minimap timer.  The XZ position and
+        yaw come directly from the editor camera.  The height is
+        computed from the floor at the camera's XZ position plus
+        ``EYE_HEIGHT`` so the preview always shows a realistic
+        first-person perspective — the raw editor camera Y (which can
+        be 5+ units when editing from above) would push every entity
+        off the bottom of the screen.
         """
         px = cam.x
         py = cam.z
-        cam_h = cam.y  # use editor camera height directly
+        # Use floor height at the camera position + fixed eye height
+        # rather than the 3D editor camera's raw Y, which is far too
+        # high when editing from above.
+        if self._renderer is not None:
+            fh = self._renderer.floor_height_at(px, py)
+            cam_h = fh + EYE_HEIGHT
+        else:
+            cam_h = EYE_HEIGHT
         angle = cam.yaw + math.pi * 0.5
         pitch = max(-PITCH_MAX, min(PITCH_MAX, cam.pitch))
 

@@ -258,6 +258,9 @@ def build_zone_mesh(zone: Zone, atlas: TileAtlas,
 
     for r in range(H):
         for c in range(W):
+            # Per-cell light level multiplier
+            ll = zone.light_levels[r][c] if zone.light_levels else 1.0
+
             for part, yb, yt in compute_cell_boxes(zone, r, c):
                 if part == "wall" and not show_walls:
                     continue
@@ -280,7 +283,7 @@ def build_zone_mesh(zone: Zone, atlas: TileAtlas,
                 face_keys = _get_face_tex_keys(zone, r, c, part)
 
                 for fi, (tri_indices, _normal, bright_idx, uv_map) in enumerate(_BOX_FACES):
-                    brightness = _FACE_BRIGHTNESS[bright_idx]
+                    brightness = _FACE_BRIGHTNESS[bright_idx] * ll
 
                     tex_layer = float(atlas.layer(face_keys[bright_idx]))
 
